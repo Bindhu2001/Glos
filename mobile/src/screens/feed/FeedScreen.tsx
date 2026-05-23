@@ -64,21 +64,12 @@ export default function FeedScreen() {
     <View style={[s.container, { paddingTop: insets.top }]}>
       <View style={s.header}>
         <Text style={s.title}>Team Feed</Text>
-        <View style={s.headerBtns}>
-          <TouchableOpacity
-            style={s.appreciateBtn}
-            onPress={() => setShowAppreciation(true)}
-          >
-            <Ionicons name="star-outline" size={17} color={colors.warning} />
-            <Text style={s.appreciateBtnText}>Appreciate</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={s.addBtn}
-            onPress={() => navigation.navigate('CreatePost', { appId: workspace!.id })}
-          >
-            <Ionicons name="add" size={20} color="#ffffff" />
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity
+          style={s.addBtn}
+          onPress={() => navigation.navigate('CreatePost', { appId: workspace!.id })}
+        >
+          <Ionicons name="add" size={22} color="#ffffff" />
+        </TouchableOpacity>
       </View>
 
       <GiveAppreciationModal
@@ -118,15 +109,8 @@ function makeStyles(c: AppColors) {
       paddingTop: 10, borderBottomWidth: 1, borderBottomColor: c.border,
     },
     title: { fontSize: 20, fontWeight: '700', color: c.textPrimary },
-    headerBtns: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    appreciateBtn: {
-      flexDirection: 'row', alignItems: 'center', gap: 5,
-      paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10,
-      backgroundColor: c.warningLight, borderWidth: 1, borderColor: c.warning,
-    },
-    appreciateBtnText: { fontSize: 13, fontWeight: '600', color: c.warning },
     addBtn: {
-      width: 36, height: 36, borderRadius: 10, backgroundColor: c.primary,
+      width: 38, height: 38, borderRadius: 12, backgroundColor: c.primary,
       alignItems: 'center', justifyContent: 'center',
     },
     list: { padding: 16, paddingBottom: 32 },

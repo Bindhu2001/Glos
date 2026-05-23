@@ -17,7 +17,6 @@ export type MainTabParamList = {
   TasksTab: NavigatorScreenParams<TasksStackParamList> | undefined;
   FeedTab: NavigatorScreenParams<FeedStackParamList> | undefined;
   PerformanceTab: NavigatorScreenParams<PerformanceStackParamList> | undefined;
-  PeopleTab: NavigatorScreenParams<PeopleStackParamList> | undefined;
   ProfileTab: undefined;
 };
 

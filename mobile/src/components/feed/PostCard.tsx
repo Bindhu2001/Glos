@@ -58,6 +58,9 @@ export default function PostCard({ post, onPress, onReact }: Props) {
             <Text style={s.time}>{formatRelative(post.created_at)}</Text>
           </View>
         </View>
+        <TouchableOpacity hitSlop={12} style={s.moreBtn}>
+          <Ionicons name="ellipsis-vertical" size={16} color={colors.gray400} />
+        </TouchableOpacity>
       </View>
 
       <Text style={s.content} numberOfLines={4}>{preview}</Text>
@@ -91,13 +94,14 @@ function makeStyles(c: AppColors) {
       shadowRadius: 4,
       elevation: 2,
     },
-    header: { flexDirection: 'row', gap: 10, marginBottom: 12 },
+    header: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 12 },
     info: { flex: 1 },
     author: { fontSize: 14, fontWeight: '700', color: c.textPrimary },
     metaRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
     typeLabel: { fontSize: 12, fontWeight: '500' },
     dot: { color: c.gray400, fontSize: 12 },
     time: { fontSize: 12, color: c.gray400 },
+    moreBtn: { paddingTop: 2 },
     content: { fontSize: 14, color: c.gray700, lineHeight: 21, marginBottom: 12 },
     actions: { flexDirection: 'row', gap: 20, borderTopWidth: 1, borderTopColor: c.border, paddingTop: 10 },
     action: { flexDirection: 'row', alignItems: 'center', gap: 5 },
