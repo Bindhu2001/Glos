@@ -187,13 +187,13 @@ export default function TaskDetailScreen() {
             <Text style={s.dueText}>{formatDate(task.due_on)}</Text>
           </View>
         )}
-        {task.status !== 'done' && (
-          <TouchableOpacity style={s.completeBtn} onPress={markComplete}>
-            <Ionicons name="checkmark-circle-outline" size={14} color="#ffffff" />
-            <Text style={s.completeBtnText}>Mark Complete</Text>
-          </TouchableOpacity>
-        )}
       </View>
+      {task.status !== 'done' && (
+        <TouchableOpacity style={s.completeBtn} onPress={markComplete}>
+          <Ionicons name="checkmark-circle-outline" size={16} color="#ffffff" />
+          <Text style={s.completeBtnText}>Mark Complete</Text>
+        </TouchableOpacity>
+      )}
 
       <View style={s.tabs}>
         {TABS.map((tab) => (
@@ -352,8 +352,12 @@ function makeStyles(c: AppColors) {
     logUser: { flex: 1, fontSize: 13, color: c.textPrimary },
     logDur: { fontSize: 13, fontWeight: '700', color: c.primary },
     logDate: { fontSize: 12, color: c.gray400 },
-    completeBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: c.success, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 },
-    completeBtnText: { fontSize: 12, fontWeight: '700', color: '#ffffff' },
+    completeBtn: {
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+      backgroundColor: c.success, marginHorizontal: 16, marginVertical: 10,
+      paddingVertical: 13, borderRadius: 12,
+    },
+    completeBtnText: { fontSize: 15, fontWeight: '700', color: '#ffffff' },
     inputBar: {
       flexDirection: 'row', alignItems: 'flex-end', gap: 10,
       backgroundColor: c.surface, paddingHorizontal: 16, paddingTop: 10,

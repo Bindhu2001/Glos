@@ -80,6 +80,7 @@ export default function CreatePostScreen() {
             multiline
             numberOfLines={6}
           />
+          <Text style={s.charCount}>{content.length}/500</Text>
         </ScrollView>
       </View>
     </KeyboardAvoidingView>
@@ -101,5 +102,6 @@ function makeStyles(c: AppColors) {
     typeCardActive: { borderColor: c.primary, backgroundColor: c.primaryLight },
     typeEmoji: { fontSize: 15, fontWeight: '600', color: c.textPrimary },
     typeDesc: { fontSize: 13, color: c.gray500 },
+    charCount: { fontSize: 12, color: c.gray400, textAlign: 'right', marginTop: 4 },
   });
 }
