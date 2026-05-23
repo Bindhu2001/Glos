@@ -1,0 +1,40 @@
+{
+  "cli": {
+    "version": ">= 10.0.0"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY": "pk_test_d2lyZWQtY3ViLTY3LmNsZXJrLmFjY291bnRzLmRldiQ",
+        "EXPO_PUBLIC_API_URL": "https://glosonline.com/api"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY": "pk_test_d2lyZWQtY3ViLTY3LmNsZXJrLmFjY291bnRzLmRldiQ",
+        "EXPO_PUBLIC_API_URL": "https://glosonline.com/api"
+      }
+    },
+    "production": {
+      "android": {
+        "buildType": "apk"
+      },
+      "ios": {
+        "simulator": false
+      },
+      "env": {
+        "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY": "pk_test_d2lyZWQtY3ViLTY3LmNsZXJrLmFjY291bnRzLmRldiQ",
+        "EXPO_PUBLIC_API_URL": "https://glosonline.com/api"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

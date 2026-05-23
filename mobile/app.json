@@ -1,0 +1,45 @@
+{
+  "expo": {
+    "name": "Glos",
+    "slug": "glos",
+    "scheme": "com.greatleap.mobile",
+    "version": "1.0.0",
+    "owner": "athiraks",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#000000"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.greatleap.mobile"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#1a56db"
+      },
+      "package": "com.greatleap.mobile"
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "kotlinVersion": "2.0.21"
+          }
+        }
+      ],
+      "@react-native-community/datetimepicker"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "04eaec98-29d5-4cb3-99dc-c4c4f80b9f3a"
+      }
+    }
+  }
+}
