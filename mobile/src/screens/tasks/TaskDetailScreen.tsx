@@ -164,20 +164,9 @@ export default function TaskDetailScreen() {
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
     <View style={[s.container, { paddingTop: insets.top }]}>
-      <ScreenHeader title={task.title} showBack right={
-        <View style={s.timerGroup}>
-          {timerActive && (
-            <Text style={s.clockText}>{formatHMS(liveSeconds)}</Text>
-          )}
-          <TouchableOpacity onPress={toggleTimer} style={[s.timerBtn, timerActive && s.timerActive]}>
-            <Ionicons name={timerActive ? 'pause-circle-outline' : 'play-circle-outline'} size={18} color={timerActive ? colors.danger : colors.primary} />
-            <Text style={[s.timerText, timerActive && { color: colors.danger }]}>
-              {timerActive ? 'Pause' : 'Start'}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      } />
+      <ScreenHeader title={task.title} showBack />
 
+      {/* Badges row */}
       <View style={s.badges}>
         <Badge label={capitalize(task.status)} bg={statusColor.bg} color={statusColor.text} />
         <Badge label={capitalize(task.priority)} bg={priorityColor.bg} color={priorityColor.text} />
@@ -188,12 +177,25 @@ export default function TaskDetailScreen() {
           </View>
         )}
       </View>
-      {task.status !== 'done' && (
-        <TouchableOpacity style={s.completeBtn} onPress={markComplete}>
-          <Ionicons name="checkmark-circle-outline" size={16} color="#ffffff" />
-          <Text style={s.completeBtnText}>Mark Complete</Text>
+
+      {/* Action bar: timer + start/pause + mark complete — all one line */}
+      <View style={s.actionBar}>
+        {timerActive && (
+          <Text style={s.clockText}>{formatHMS(liveSeconds)}</Text>
+        )}
+        <TouchableOpacity onPress={toggleTimer} style={[s.timerBtn, timerActive && s.timerActive]}>
+          <Ionicons name={timerActive ? 'pause-circle-outline' : 'play-circle-outline'} size={18} color={timerActive ? colors.danger : colors.primary} />
+          <Text style={[s.timerText, timerActive && { color: colors.danger }]}>
+            {timerActive ? 'Pause' : 'Start'}
+          </Text>
         </TouchableOpacity>
-      )}
+        {task.status !== 'done' && (
+          <TouchableOpacity style={s.completeBtn} onPress={markComplete}>
+            <Ionicons name="checkmark-circle-outline" size={16} color="#ffffff" />
+            <Text style={s.completeBtnText}>Mark Complete</Text>
+          </TouchableOpacity>
+        )}
+      </View>
 
       <View style={s.tabs}>
         {TABS.map((tab) => (
@@ -329,9 +331,13 @@ function makeStyles(c: AppColors) {
     badges: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: c.surface, flexWrap: 'wrap', borderBottomWidth: 1, borderBottomColor: c.border },
     dueBadge: { flexDirection: 'row', alignItems: 'center', gap: 4 },
     dueText: { fontSize: 12, color: c.gray400 },
-    timerGroup: { alignItems: 'flex-end', gap: 4 },
-    clockText: { fontSize: 15, fontWeight: '800', color: c.danger, fontVariant: ['tabular-nums'] as any },
-    timerBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1.5, borderColor: c.primary },
+    actionBar: {
+      flexDirection: 'row', alignItems: 'center', gap: 8,
+      paddingHorizontal: 16, paddingVertical: 10,
+      backgroundColor: c.surface, borderBottomWidth: 1, borderBottomColor: c.border,
+    },
+    clockText: { fontSize: 14, fontWeight: '800', color: c.danger, fontVariant: ['tabular-nums'] as any },
+    timerBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 8, borderWidth: 1.5, borderColor: c.primary },
     timerActive: { borderColor: c.danger },
     timerText: { fontSize: 13, fontWeight: '600', color: c.primary },
     tabs: { flexDirection: 'row', backgroundColor: c.surface, borderBottomWidth: 1, borderBottomColor: c.border },
@@ -353,11 +359,10 @@ function makeStyles(c: AppColors) {
     logDur: { fontSize: 13, fontWeight: '700', color: c.primary },
     logDate: { fontSize: 12, color: c.gray400 },
     completeBtn: {
-      flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-      backgroundColor: c.success, marginHorizontal: 16, marginVertical: 10,
-      paddingVertical: 13, borderRadius: 12,
+      flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+      backgroundColor: c.success, paddingVertical: 9, borderRadius: 10,
     },
-    completeBtnText: { fontSize: 15, fontWeight: '700', color: '#ffffff' },
+    completeBtnText: { fontSize: 13, fontWeight: '700', color: '#ffffff' },
     inputBar: {
       flexDirection: 'row', alignItems: 'flex-end', gap: 10,
       backgroundColor: c.surface, paddingHorizontal: 16, paddingTop: 10,
