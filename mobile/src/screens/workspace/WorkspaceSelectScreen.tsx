@@ -45,7 +45,7 @@ export default function WorkspaceSelectScreen() {
   const api = useApi();
   const { setWorkspace } = useWorkspace();
   const { signOut } = useClerk();
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
 
@@ -136,37 +136,91 @@ export default function WorkspaceSelectScreen() {
     return colors.primary;
   };
 
-  const ListHeader = (
-    <View style={s.heroSection}>
-      {/* GLOS Logo */}
-      <View style={s.logoRow}>
-        <LinearGradient colors={['#4F6EF7', '#0e9f6e']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={s.logoBox}>
-          <Text style={s.logoText}>GLOS</Text>
-        </LinearGradient>
-      </View>
-      <Text style={s.logoTagline}>— Perform Better —</Text>
-
-      {/* Illustration */}
-      <View style={s.illustrationRing}>
-        <View style={[s.orbitDot, s.orbitTopLeft, { backgroundColor: colors.primary + '88' }]} />
-        <View style={[s.orbitDot, s.orbitTopRight, { backgroundColor: '#0e9f6e88' }]} />
-        <View style={[s.orbitDot, s.orbitBottomLeft, { backgroundColor: colors.warning + '88' }]} />
-        <View style={[s.orbitDot, s.orbitBottomRight, { backgroundColor: colors.info + '88' }]} />
-        <View style={[s.illustrationCircle, { backgroundColor: colors.primary + '18', borderColor: colors.primary + '40' }]}>
-          <Ionicons name="briefcase" size={44} color={colors.primary} />
+  /* ── Hero section ── */
+  const LightHero = (
+    <View style={s.lightHero}>
+      {/* Top row: logo left + illustration right */}
+      <View style={s.lightTopRow}>
+        <View style={s.lightLogoCol}>
+          <LinearGradient
+            colors={['#4F6EF7', '#0e9f6e']}
+            start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+            style={s.logoBox}
+          >
+            <Text style={s.logoText}>GLOS</Text>
+          </LinearGradient>
+          <Text style={s.logoTagline}>— Perform Better —</Text>
+        </View>
+        {/* 3D-style app illustration */}
+        <View style={s.lightIllustration}>
+          <View style={s.illOuter}>
+            <View style={s.illInner}>
+              <View style={s.illGrid}>
+                {[0,1,2,3,4,5].map(i => (
+                  <View key={i} style={[s.illTile, { backgroundColor: i % 2 === 0 ? '#4F6EF7' + '33' : '#0e9f6e' + '22' }]} />
+                ))}
+              </View>
+              <View style={s.illDot} />
+              <View style={[s.illDot, s.illDot2]} />
+              <View style={[s.illDot, s.illDot3]} />
+            </View>
+          </View>
         </View>
       </View>
 
-      {/* Title */}
-      <Text style={s.title}>Select Workspace</Text>
-      <Text style={s.subtitle}>Choose the workspace you want to enter</Text>
-
-      <TouchableOpacity onPress={() => { setWorkspace(null); signOut(); }} style={s.signOutBtn}>
-        <Ionicons name="log-out-outline" size={18} color={colors.danger} />
+      <Text style={s.lightTitle}>Select Workspace</Text>
+      <Text style={s.lightSubtitle}>Choose the workspace you want to enter</Text>
+      <TouchableOpacity onPress={() => { setWorkspace(null); signOut(); }} style={s.lightSignOut}>
+        <Ionicons name="log-out-outline" size={17} color={colors.danger} />
         <Text style={s.signOutText}>Sign Out</Text>
       </TouchableOpacity>
     </View>
   );
+
+  const DarkHero = (
+    <View style={s.darkHero}>
+      <LinearGradient
+        colors={['#4F6EF7', '#0e9f6e']}
+        start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+        style={s.logoBox}
+      >
+        <Text style={s.logoText}>GLOS</Text>
+      </LinearGradient>
+      <Text style={s.logoTaglineDark}>— Perform Better —</Text>
+
+      {/* Orbital illustration */}
+      <View style={s.orbitWrap}>
+        {/* Orbit ring */}
+        <View style={s.orbitRing} />
+        {/* Center briefcase */}
+        <View style={s.orbitCenter}>
+          <Ionicons name="briefcase" size={38} color="#4F6EF7" />
+        </View>
+        {/* Orbit dots with icons */}
+        <View style={[s.orbitIcon, s.orbitTL, { backgroundColor: '#4F6EF722' }]}>
+          <Ionicons name="people-outline" size={14} color="#4F6EF7" />
+        </View>
+        <View style={[s.orbitIcon, s.orbitTR, { backgroundColor: '#0e9f6e22' }]}>
+          <Ionicons name="folder-outline" size={14} color="#0e9f6e" />
+        </View>
+        <View style={[s.orbitIcon, s.orbitBL, { backgroundColor: '#c2780322' }]}>
+          <Ionicons name="apps-outline" size={14} color="#c27803" />
+        </View>
+        <View style={[s.orbitIcon, s.orbitBR, { backgroundColor: '#0694a222' }]}>
+          <Ionicons name="bar-chart-outline" size={14} color="#0694a2" />
+        </View>
+      </View>
+
+      <Text style={s.darkTitle}>Select Workspace</Text>
+      <Text style={s.darkSubtitle}>Choose the workspace{'\n'}you want to enter</Text>
+      <TouchableOpacity onPress={() => { setWorkspace(null); signOut(); }} style={s.darkSignOut}>
+        <Ionicons name="log-out-outline" size={17} color={colors.danger} />
+        <Text style={s.signOutText}>Sign Out</Text>
+      </TouchableOpacity>
+    </View>
+  );
+
+  const ListHeader = isDark ? DarkHero : LightHero;
 
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
@@ -253,8 +307,14 @@ export default function WorkspaceSelectScreen() {
           }
           ListFooterComponent={
             <View style={s.footer}>
-              <Ionicons name="shield-checkmark-outline" size={14} color={colors.gray400} />
-              <Text style={s.footerText}>Secure • Reliable • Trusted</Text>
+              <Ionicons
+                name={isDark ? 'lock-closed-outline' : 'shield-checkmark-outline'}
+                size={14}
+                color={colors.gray400}
+              />
+              <Text style={s.footerText}>
+                {isDark ? 'Your data is secure and encrypted' : 'Secure • Reliable • Trusted'}
+              </Text>
             </View>
           }
           renderItem={({ item }) => {
@@ -292,34 +352,60 @@ function makeStyles(c: AppColors) {
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: c.background },
 
-    // Hero / branding section
-    heroSection: { alignItems: 'center', paddingTop: 32, paddingBottom: 24, paddingHorizontal: 24 },
-    logoRow: { marginBottom: 4 },
-    logoBox: {
-      paddingHorizontal: 18, paddingVertical: 8, borderRadius: 12,
-    },
+    // ── Shared ──
+    logoBox: { paddingHorizontal: 18, paddingVertical: 8, borderRadius: 12 },
     logoText: { fontSize: 28, fontWeight: '900', color: '#ffffff', letterSpacing: 2 },
-    logoTagline: { fontSize: 12, color: c.textSecondary, marginBottom: 28, letterSpacing: 1 },
+    signOutText: { fontSize: 14, color: c.danger, fontWeight: '600' },
 
-    // Illustration
-    illustrationRing: {
-      width: 140, height: 140, alignItems: 'center', justifyContent: 'center',
+    // ── Light Hero ──
+    lightHero: { paddingTop: 28, paddingHorizontal: 24, paddingBottom: 20 },
+    lightTopRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 },
+    lightLogoCol: { gap: 4 },
+    logoTagline: { fontSize: 11, color: c.textSecondary, letterSpacing: 1, marginTop: 4 },
+    lightIllustration: { marginTop: 4 },
+    illOuter: {
+      width: 110, height: 90, backgroundColor: c.primaryLight,
+      borderRadius: 18, padding: 8, justifyContent: 'center',
+      shadowColor: c.primary, shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.15, shadowRadius: 12, elevation: 4,
+    },
+    illInner: { flex: 1, position: 'relative' },
+    illGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, flex: 1 },
+    illTile: { width: 26, height: 20, borderRadius: 5 },
+    illDot: {
+      position: 'absolute', width: 10, height: 10, borderRadius: 5,
+      backgroundColor: '#4F6EF7', bottom: 2, right: 2,
+    },
+    illDot2: { backgroundColor: '#0e9f6e', bottom: 2, right: 16 },
+    illDot3: { backgroundColor: '#c27803', bottom: 16, right: 2 },
+    lightTitle: { fontSize: 28, fontWeight: '800', color: c.textPrimary, marginBottom: 6 },
+    lightSubtitle: { fontSize: 14, color: c.textSecondary, marginBottom: 18, lineHeight: 20 },
+    lightSignOut: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+
+    // ── Dark Hero ──
+    darkHero: { alignItems: 'center', paddingTop: 32, paddingBottom: 24, paddingHorizontal: 24 },
+    logoTaglineDark: { fontSize: 12, color: c.textSecondary, marginBottom: 28, letterSpacing: 1, marginTop: 6 },
+    orbitWrap: {
+      width: 160, height: 160, alignItems: 'center', justifyContent: 'center',
       marginBottom: 24, position: 'relative',
     },
-    illustrationCircle: {
-      width: 96, height: 96, borderRadius: 48,
-      borderWidth: 2, alignItems: 'center', justifyContent: 'center',
+    orbitRing: {
+      position: 'absolute', width: 140, height: 140, borderRadius: 70,
+      borderWidth: 1.5, borderColor: '#4F6EF755', borderStyle: 'dashed',
     },
-    orbitDot: { position: 'absolute', width: 28, height: 28, borderRadius: 8 },
-    orbitTopLeft: { top: 8, left: 8 },
-    orbitTopRight: { top: 8, right: 8 },
-    orbitBottomLeft: { bottom: 8, left: 8 },
-    orbitBottomRight: { bottom: 8, right: 8 },
-
-    title: { fontSize: 26, fontWeight: '800', color: c.textPrimary, textAlign: 'center' },
-    subtitle: { fontSize: 14, color: c.textSecondary, textAlign: 'center', marginTop: 6, marginBottom: 20 },
-    signOutBtn: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-    signOutText: { fontSize: 14, color: c.danger, fontWeight: '600' },
+    orbitCenter: {
+      width: 88, height: 88, borderRadius: 44,
+      backgroundColor: '#4F6EF718', borderWidth: 2, borderColor: '#4F6EF740',
+      alignItems: 'center', justifyContent: 'center',
+    },
+    orbitIcon: { position: 'absolute', width: 32, height: 32, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
+    orbitTL: { top: 10, left: 10 },
+    orbitTR: { top: 10, right: 10 },
+    orbitBL: { bottom: 10, left: 10 },
+    orbitBR: { bottom: 10, right: 10 },
+    darkTitle: { fontSize: 26, fontWeight: '800', color: c.textPrimary, textAlign: 'center' },
+    darkSubtitle: { fontSize: 14, color: c.textSecondary, textAlign: 'center', marginTop: 6, marginBottom: 20, lineHeight: 22 },
+    darkSignOut: { flexDirection: 'row', alignItems: 'center', gap: 6 },
 
     list: { paddingHorizontal: 16, paddingBottom: 32 },
     workspacesLabel: {

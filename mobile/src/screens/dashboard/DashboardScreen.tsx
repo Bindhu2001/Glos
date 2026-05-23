@@ -290,7 +290,7 @@ function makeStyles(c: AppColors) {
       shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
       shadowOpacity: 0.05, shadowRadius: 4, elevation: 2,
     },
-    statIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
+    statIcon: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
     statValue: { fontSize: 24, fontWeight: '800', color: c.textPrimary },
     statLabel: { fontSize: 12, color: c.textSecondary, marginTop: 2 },
 

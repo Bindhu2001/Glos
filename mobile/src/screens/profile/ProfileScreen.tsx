@@ -12,8 +12,6 @@ import { useApi } from '../../hooks/useApi';
 import { useWorkspace } from '../../contexts/WorkspaceContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { AppColors } from '../../utils/colors';
-import GoalCard from '../../components/performance/GoalCard';
-import Badge from '../../components/common/Badge';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 
 function SectionCard({ title, children, s }: { title: string; children: React.ReactNode; s: ReturnType<typeof makeStyles> }) {
@@ -64,7 +62,6 @@ export default function ProfileScreen() {
   const [unread, setUnread] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [tab, setTab] = useState<'goals' | 'appraisals'>('goals');
 
   const load = useCallback(async () => {
     try {
@@ -189,50 +186,20 @@ export default function ProfileScreen() {
         {/* Performance */}
         {workspace && (
           <SectionCard title="PERFORMANCE" s={s}>
-            <View style={s.tabRow}>
-              <TouchableOpacity
-                style={[s.tabChip, tab === 'goals' && s.tabChipActive]}
-                onPress={() => setTab('goals')}
-              >
-                <Ionicons name="flag-outline" size={13} color={tab === 'goals' ? '#ffffff' : colors.gray500} />
-                <Text style={[s.tabChipText, tab === 'goals' && s.tabChipTextActive]}>
-                  Goals ({goals.length})
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[s.tabChip, tab === 'appraisals' && s.tabChipActive]}
-                onPress={() => setTab('appraisals')}
-              >
-                <Ionicons name="star-outline" size={13} color={tab === 'appraisals' ? '#ffffff' : colors.gray500} />
-                <Text style={[s.tabChipText, tab === 'appraisals' && s.tabChipTextActive]}>
-                  Appraisals ({appraisals.length})
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {tab === 'goals' && (
-              goals.length > 0
-                ? goals.map((g) => <GoalCard key={g.id} goal={g} />)
-                : <Text style={s.emptyText}>No goals set yet.</Text>
-            )}
-            {tab === 'appraisals' && (
-              appraisals.length > 0
-                ? appraisals.map((a: any) => (
-                  <View key={a.id} style={s.appraisalRow}>
-                    <Ionicons name="document-text-outline" size={18} color={colors.primary} />
-                    <View style={s.appraisalInfo}>
-                      <Text style={s.appraisalTitle}>{a.title ?? `Appraisal #${a.id}`}</Text>
-                      <Text style={s.appraisalDate}>{a.cycle_name ?? a.period}</Text>
-                    </View>
-                    <Badge
-                      label={a.status ?? 'pending'}
-                      bg={a.status === 'completed' ? colors.successLight : colors.warningLight}
-                      color={a.status === 'completed' ? colors.success : colors.warning}
-                    />
-                  </View>
-                ))
-                : <Text style={s.emptyText}>No appraisals yet.</Text>
-            )}
+            <MenuRow
+              icon="flag-outline"
+              label={`Goals (${goals.length})`}
+              onPress={() => navigation.navigate('PerformanceTab')}
+              colors={colors}
+              s={s}
+            />
+            <MenuRow
+              icon="star-outline"
+              label={`Appraisals (${appraisals.length})`}
+              onPress={() => navigation.navigate('PerformanceTab')}
+              colors={colors}
+              s={s}
+            />
           </SectionCard>
         )}
 
@@ -312,25 +279,6 @@ function makeStyles(c: AppColors) {
       borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4,
     },
     unreadText: { fontSize: 11, color: '#ffffff', fontWeight: '700' },
-
-    // Performance tabs
-    tabRow: { flexDirection: 'row', gap: 8, marginBottom: 14 },
-    tabChip: {
-      flexDirection: 'row', alignItems: 'center', gap: 5,
-      paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20,
-      backgroundColor: c.gray100, borderWidth: 1.5, borderColor: c.gray200,
-    },
-    tabChipActive: { backgroundColor: c.primary, borderColor: c.primary },
-    tabChipText: { fontSize: 13, fontWeight: '500', color: c.gray600 },
-    tabChipTextActive: { color: '#ffffff' },
-    emptyText: { fontSize: 14, color: c.gray400, textAlign: 'center', paddingVertical: 16 },
-    appraisalRow: {
-      flexDirection: 'row', alignItems: 'center', gap: 10,
-      paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: c.border,
-    },
-    appraisalInfo: { flex: 1 },
-    appraisalTitle: { fontSize: 14, fontWeight: '600', color: c.textPrimary },
-    appraisalDate: { fontSize: 12, color: c.textSecondary, marginTop: 2 },
 
     version: { fontSize: 12, color: c.gray400, textAlign: 'center', marginTop: 8 },
   });
