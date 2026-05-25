@@ -4,7 +4,11 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../contexts/ThemeContext';
-import { MainTabParamList, TasksStackParamList, FeedStackParamList, PerformanceStackParamList } from './types';
+import { useWorkspace } from '../contexts/WorkspaceContext';
+import {
+  MainTabParamList, TasksStackParamList, FeedStackParamList,
+  PerformanceStackParamList, AdminStackParamList,
+} from './types';
 
 import DashboardScreen from '../screens/dashboard/DashboardScreen';
 import TasksScreen from '../screens/tasks/TasksScreen';
@@ -16,11 +20,19 @@ import CreatePostScreen from '../screens/feed/CreatePostScreen';
 import PerformanceScreen from '../screens/performance/PerformanceScreen';
 import TaskReportsScreen from '../screens/performance/TaskReportsScreen';
 import ProfileScreen from '../screens/profile/ProfileScreen';
+import AdminHomeScreen from '../screens/admin/AdminHomeScreen';
+import MembersScreen from '../screens/admin/MembersScreen';
+import InviteMemberScreen from '../screens/admin/InviteMemberScreen';
+import OrganisationScreen from '../screens/admin/OrganisationScreen';
+import RolesScreen from '../screens/admin/RolesScreen';
+import PoliciesScreen from '../screens/admin/PoliciesScreen';
+import PolicyDetailScreen from '../screens/admin/PolicyDetailScreen';
 
 const Tab = createBottomTabNavigator<MainTabParamList>();
 const TasksStack = createNativeStackNavigator<TasksStackParamList>();
 const FeedStack = createNativeStackNavigator<FeedStackParamList>();
 const PerformanceStack = createNativeStackNavigator<PerformanceStackParamList>();
+const AdminStack = createNativeStackNavigator<AdminStackParamList>();
 
 function TasksNavigator() {
   return (
@@ -51,8 +63,24 @@ function PerformanceNavigator() {
   );
 }
 
+function AdminNavigator() {
+  return (
+    <AdminStack.Navigator screenOptions={{ headerShown: false }}>
+      <AdminStack.Screen name="AdminHome" component={AdminHomeScreen} />
+      <AdminStack.Screen name="Members" component={MembersScreen} />
+      <AdminStack.Screen name="InviteMember" component={InviteMemberScreen} />
+      <AdminStack.Screen name="Organisation" component={OrganisationScreen} />
+      <AdminStack.Screen name="Roles" component={RolesScreen} />
+      <AdminStack.Screen name="Policies" component={PoliciesScreen} />
+      <AdminStack.Screen name="PolicyDetail" component={PolicyDetailScreen} />
+    </AdminStack.Navigator>
+  );
+}
+
 export default function MainNavigator() {
   const { colors } = useTheme();
+  const { workspace } = useWorkspace();
+  const isSuperAdmin = workspace?.role === 'super_admin';
 
   return (
     <Tab.Navigator
@@ -77,6 +105,7 @@ export default function MainNavigator() {
             TasksTab: 'checkmark-circle-outline',
             FeedTab: 'newspaper-outline',
             PerformanceTab: 'trending-up-outline',
+            AdminTab: 'shield-outline',
             ProfileTab: 'person-outline',
           };
           const filledIcons: Record<string, keyof typeof Ionicons.glyphMap> = {
@@ -84,6 +113,7 @@ export default function MainNavigator() {
             TasksTab: 'checkmark-circle',
             FeedTab: 'newspaper',
             PerformanceTab: 'trending-up',
+            AdminTab: 'shield',
             ProfileTab: 'person',
           };
           const iconName = focused ? filledIcons[route.name] : outlineIcons[route.name];
@@ -105,6 +135,9 @@ export default function MainNavigator() {
       <Tab.Screen name="TasksTab" component={TasksNavigator} options={{ title: 'Tasks' }} />
       <Tab.Screen name="FeedTab" component={FeedNavigator} options={{ title: 'Feed' }} />
       <Tab.Screen name="PerformanceTab" component={PerformanceNavigator} options={{ title: 'Performance' }} />
+      {isSuperAdmin && (
+        <Tab.Screen name="AdminTab" component={AdminNavigator} options={{ title: 'Admin' }} />
+      )}
       <Tab.Screen name="ProfileTab" component={ProfileScreen} options={{ title: 'Profile' }} />
     </Tab.Navigator>
   );

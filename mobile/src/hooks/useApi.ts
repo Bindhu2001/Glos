@@ -15,6 +15,11 @@ import {
   employeesApi,
   appreciationsApi,
   timeLogsApi,
+  membersApi,
+  appInvitationsApi,
+  organisationApi,
+  rolesApi,
+  policiesApi,
 } from '../api';
 
 export function useApi() {
@@ -278,6 +283,80 @@ export function useApi() {
         getSummary: async (appId: number, params?: { period?: string; start_date?: string; end_date?: string }) => {
           const client = await mkClient();
           return timeLogsApi(client).getSummary(appId, params);
+        },
+      },
+      members: {
+        list: async (appId: number) => {
+          const client = await mkClient();
+          return membersApi(client).list(appId);
+        },
+        updateRole: async (appId: number, userId: number, role: string) => {
+          const client = await mkClient();
+          return membersApi(client).updateRole(appId, userId, role);
+        },
+        remove: async (appId: number, userId: number) => {
+          const client = await mkClient();
+          return membersApi(client).remove(appId, userId);
+        },
+      },
+      appInvitations: {
+        list: async (appId: number, status?: string) => {
+          const client = await mkClient();
+          return appInvitationsApi(client).list(appId, status);
+        },
+        send: async (appId: number, email: string, role: string) => {
+          const client = await mkClient();
+          return appInvitationsApi(client).send(appId, email, role);
+        },
+        revoke: async (appId: number, invId: number) => {
+          const client = await mkClient();
+          return appInvitationsApi(client).revoke(appId, invId);
+        },
+      },
+      organisation: {
+        get: async (appId: number) => {
+          const client = await mkClient();
+          return organisationApi(client).get(appId);
+        },
+        update: async (appId: number, data: Record<string, unknown>) => {
+          const client = await mkClient();
+          return organisationApi(client).update(appId, data);
+        },
+      },
+      roles: {
+        list: async (appId: number) => {
+          const client = await mkClient();
+          return rolesApi(client).list(appId);
+        },
+        get: async (appId: number, roleId: number) => {
+          const client = await mkClient();
+          return rolesApi(client).get(appId, roleId);
+        },
+        create: async (appId: number, data: Record<string, unknown>) => {
+          const client = await mkClient();
+          return rolesApi(client).create(appId, data);
+        },
+      },
+      policies: {
+        list: async (appId: number) => {
+          const client = await mkClient();
+          return policiesApi(client).list(appId);
+        },
+        get: async (appId: number, policyId: number) => {
+          const client = await mkClient();
+          return policiesApi(client).get(appId, policyId);
+        },
+        create: async (appId: number, data: Record<string, unknown>) => {
+          const client = await mkClient();
+          return policiesApi(client).create(appId, data);
+        },
+        update: async (appId: number, policyId: number, data: Record<string, unknown>) => {
+          const client = await mkClient();
+          return policiesApi(client).update(appId, policyId, data);
+        },
+        remove: async (appId: number, policyId: number) => {
+          const client = await mkClient();
+          return policiesApi(client).remove(appId, policyId);
         },
       },
     }),

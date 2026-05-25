@@ -140,3 +140,49 @@ export const timeLogsApi = (client: AxiosInstance) => ({
   getSummary: (appId: number, params?: { period?: string; start_date?: string; end_date?: string }) =>
     client.get(`/apps/${appId}/hr/time-logs/summary`, { params }),
 });
+
+// ── Members (platform-level) ─────────────────────────────────
+export const membersApi = (client: AxiosInstance) => ({
+  list: (appId: number) => client.get(`/apps/${appId}/members`),
+  updateRole: (appId: number, userId: number, role: string) =>
+    client.patch(`/apps/${appId}/members/${userId}`, { role }),
+  remove: (appId: number, userId: number) =>
+    client.delete(`/apps/${appId}/members/${userId}`),
+});
+
+// ── App Invitations ──────────────────────────────────────────
+export const appInvitationsApi = (client: AxiosInstance) => ({
+  list: (appId: number, status?: string) =>
+    client.get(`/apps/${appId}/invitations`, { params: status ? { status } : undefined }),
+  send: (appId: number, email: string, role: string) =>
+    client.post(`/apps/${appId}/invitations`, { email, role }),
+  revoke: (appId: number, invId: number) =>
+    client.post(`/apps/${appId}/invitations/${invId}/revoke`),
+});
+
+// ── Organisation ─────────────────────────────────────────────
+export const organisationApi = (client: AxiosInstance) => ({
+  get: (appId: number) => client.get(`/apps/${appId}/hr/organisation`),
+  update: (appId: number, data: Record<string, unknown>) =>
+    client.put(`/apps/${appId}/hr/organisation`, data),
+});
+
+// ── Roles ────────────────────────────────────────────────────
+export const rolesApi = (client: AxiosInstance) => ({
+  list: (appId: number) => client.get(`/apps/${appId}/hr/roles`),
+  get: (appId: number, roleId: number) => client.get(`/apps/${appId}/hr/roles/${roleId}`),
+  create: (appId: number, data: Record<string, unknown>) =>
+    client.post(`/apps/${appId}/hr/roles`, data),
+});
+
+// ── Policies ─────────────────────────────────────────────────
+export const policiesApi = (client: AxiosInstance) => ({
+  list: (appId: number) => client.get(`/apps/${appId}/hr/policies`),
+  get: (appId: number, policyId: number) => client.get(`/apps/${appId}/hr/policies/${policyId}`),
+  create: (appId: number, data: Record<string, unknown>) =>
+    client.post(`/apps/${appId}/hr/policies`, data),
+  update: (appId: number, policyId: number, data: Record<string, unknown>) =>
+    client.patch(`/apps/${appId}/hr/policies/${policyId}`, data),
+  remove: (appId: number, policyId: number) =>
+    client.delete(`/apps/${appId}/hr/policies/${policyId}`),
+});

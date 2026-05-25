@@ -17,6 +17,7 @@ export type MainTabParamList = {
   TasksTab: NavigatorScreenParams<TasksStackParamList> | undefined;
   FeedTab: NavigatorScreenParams<FeedStackParamList> | undefined;
   PerformanceTab: NavigatorScreenParams<PerformanceStackParamList> | undefined;
+  AdminTab: NavigatorScreenParams<AdminStackParamList> | undefined;
   ProfileTab: undefined;
 };
 
@@ -40,4 +41,14 @@ export type PerformanceStackParamList = {
 export type PeopleStackParamList = {
   EmployeesList: undefined;
   EmployeeDetail: { employeeId: number; appId: number };
+};
+
+export type AdminStackParamList = {
+  AdminHome: undefined;
+  Members: undefined;
+  InviteMember: undefined;
+  Organisation: undefined;
+  Roles: undefined;
+  Policies: undefined;
+  PolicyDetail: { policyId: number; appId: number };
 };
