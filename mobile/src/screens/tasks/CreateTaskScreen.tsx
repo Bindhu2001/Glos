@@ -3,6 +3,7 @@ import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
   Alert, KeyboardAvoidingView, Platform,
 } from 'react-native';
+import { showAlert } from '../../components/common/AlertModal';
 import { useRoute, RouteProp, useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useApi } from '../../hooks/useApi';
@@ -37,11 +38,11 @@ export default function CreateTaskScreen() {
 
   const handleCreate = async () => {
     if (!title.trim()) {
-      Alert.alert('Validation', 'Task title is required.');
+      showAlert('Validation', 'Task title is required.');
       return;
     }
     if (!dueDate.trim()) {
-      Alert.alert('Validation', 'Please select a deadline.');
+      showAlert('Validation', 'Please select a deadline.');
       return;
     }
     setSaving(true);
@@ -55,14 +56,14 @@ export default function CreateTaskScreen() {
       });
       navigation.goBack();
     } catch {
-      Alert.alert('Error', 'Could not create task.');
+      showAlert('Error', 'Could not create task.');
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <View style={[s.container, { paddingTop: insets.top }]}>
         <ScreenHeader
           title="New Task"

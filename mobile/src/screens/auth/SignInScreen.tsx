@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  KeyboardAvoidingView, Platform, Alert, ActivityIndicator,
+  KeyboardAvoidingView, Platform, ActivityIndicator,
 } from 'react-native';
 import { useSignIn, useSSO } from '@clerk/clerk-expo';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -17,6 +17,7 @@ import { AppColors } from '../../utils/colors';
 import Input from '../../components/common/Input';
 import Button from '../../components/common/Button';
 import Logo from '../../components/common/Logo';
+import { showAlert } from '../../components/common/AlertModal';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -38,7 +39,7 @@ export default function SignInScreen() {
   const handleSignIn = async () => {
     if (!isLoaded) return;
     if (!email.trim() || !password) {
-      Alert.alert('Missing Fields', 'Please enter your email and password.');
+      showAlert('Missing Fields', 'Please enter your email and password.');
       return;
     }
     setLoading(true);
@@ -48,7 +49,7 @@ export default function SignInScreen() {
         await setActive({ session: result.createdSessionId });
       }
     } catch (err: any) {
-      Alert.alert('Sign In Failed', err.errors?.[0]?.message ?? 'Please check your credentials.');
+      showAlert('Sign In Failed', 'Wrong email or password.');
     } finally {
       setLoading(false);
     }
@@ -74,12 +75,12 @@ export default function SignInScreen() {
       if (signUp?.status === 'complete') { await activate(signUp.createdSessionId ?? null); return; }
       if (signIn?.status === 'complete') { await activate(signIn.createdSessionId ?? null); return; }
       if (signIn || signUp) {
-        Alert.alert('Google Sign In Failed', 'Could not establish session. Please try again.');
+        showAlert('Connection Failed', 'Could not establish connection. Please allow this app to connect to your account.');
       }
     } catch (err: any) {
       const code = err?.errors?.[0]?.code ?? '';
       if (code === 'oauth_cancelled' || code === 'oauth_access_denied') return;
-      Alert.alert('Google Sign In Failed', err.errors?.[0]?.message ?? 'Something went wrong. Try again.');
+      showAlert('Google Sign In Failed', err.errors?.[0]?.message ?? 'Something went wrong. Try again.');
     } finally {
       setGoogleLoading(false);
     }
@@ -88,7 +89,7 @@ export default function SignInScreen() {
   return (
     <KeyboardAvoidingView
       style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <ScrollView
         style={s.container}
@@ -96,7 +97,7 @@ export default function SignInScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={s.brand}>
-          <Logo size={72} style={s.logo} />
+          <Logo size={100} style={s.logo} />
         </View>
 
         <View style={s.card}>

@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Avatar from '../common/Avatar';
+import { showAlert } from '../common/AlertModal';
 import { useTheme } from '../../contexts/ThemeContext';
 import { AppColors } from '../../utils/colors';
 import { formatRelative } from '../../utils/format';
@@ -23,9 +24,19 @@ interface Props {
   post: Post;
   onPress: () => void;
   onReact: () => void;
+  onDelete?: () => void;
+  liked?: boolean;
 }
 
-export default function PostCard({ post, onPress, onReact }: Props) {
+function decodeHtml(str: string) {
+  return str
+    .replace(/<[^>]*>/g, '')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ')
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
+}
+
+export default function PostCard({ post, onPress, onReact, onDelete, liked = false }: Props) {
   const { colors } = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
 
@@ -33,7 +44,7 @@ export default function PostCard({ post, onPress, onReact }: Props) {
   const authorName = post.author_name
     ?? ([post.author?.first_name, post.author?.last_name].filter(Boolean).join(' ') || post.author?.email || 'Unknown');
 
-  const preview = (post.content ?? '').replace(/<[^>]*>/g, '').substring(0, 180);
+  const preview = decodeHtml(post.content ?? '').substring(0, 180);
   const reactionCount = post.reaction_count ?? post.reactions?.reduce((sum, r) => sum + r.count, 0) ?? 0;
 
   const typeLabel = postType === 'appreciation' ? '⭐ Appreciation'
@@ -58,7 +69,22 @@ export default function PostCard({ post, onPress, onReact }: Props) {
             <Text style={s.time}>{formatRelative(post.created_at)}</Text>
           </View>
         </View>
-        <TouchableOpacity hitSlop={12} style={s.moreBtn}>
+        <TouchableOpacity
+          hitSlop={12}
+          style={s.moreBtn}
+          onPress={(e) => {
+            e.stopPropagation();
+            showAlert('Post Options', undefined, [
+              ...(onDelete ? [{ text: 'Delete Post', style: 'destructive' as const, onPress: () => {
+                showAlert('Delete Post', 'Are you sure you want to delete this post?', [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Delete', style: 'destructive', onPress: onDelete },
+                ]);
+              }}] : []),
+              { text: 'Cancel', style: 'cancel' },
+            ]);
+          }}
+        >
           <Ionicons name="ellipsis-vertical" size={16} color={colors.gray400} />
         </TouchableOpacity>
       </View>
@@ -67,8 +93,20 @@ export default function PostCard({ post, onPress, onReact }: Props) {
 
       <View style={s.actions}>
         <TouchableOpacity style={s.action} onPress={onReact}>
-          <Ionicons name="heart-outline" size={16} color={colors.gray500} />
-          <Text style={s.actionText}>{reactionCount}</Text>
+          {post.reactions && post.reactions.length > 0 ? (
+            <Text style={{ fontSize: 16, marginRight: -2 }}>
+              {post.reactions.slice(0, 3).map(r => r.emoji).join('')}
+            </Text>
+          ) : (
+            <Ionicons
+              name={liked ? 'heart' : 'heart-outline'}
+              size={16}
+              color={liked ? '#ef4444' : colors.gray500}
+            />
+          )}
+          <Text style={[s.actionText, (liked || (post.reactions && post.reactions.length > 0)) && { color: '#ef4444', fontWeight: '700' }]}>
+            {reactionCount}
+          </Text>
         </TouchableOpacity>
         <TouchableOpacity style={s.action} onPress={onPress}>
           <Ionicons name="chatbubble-outline" size={16} color={colors.gray500} />

@@ -80,6 +80,14 @@ export default function NotificationsScreen() {
       });
     } else if (
       (item.type === 'mention_feed_comment' || item.type === 'mention_feed_post') &&
+      item.app_id && item.entity_id
+    ) {
+      navigation.navigate('Main', {
+        screen: 'FeedTab',
+        params: { screen: 'PostDetail', params: { postId: item.entity_id, appId: item.app_id } },
+      });
+    } else if (
+      (item.type === 'mention_feed_comment' || item.type === 'mention_feed_post') &&
       item.app_id
     ) {
       navigation.navigate('Main', { screen: 'FeedTab' });

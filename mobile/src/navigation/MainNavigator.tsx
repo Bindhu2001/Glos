@@ -67,9 +67,10 @@ export default function MainNavigator() {
           paddingBottom: 12,
           paddingTop: 8,
           height: 72,
+          elevation: 0,
         },
         tabBarItemStyle: { paddingVertical: 2 },
-        tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
+        tabBarLabelStyle: { fontSize: 11, fontWeight: '700', letterSpacing: 0.2 },
         tabBarIcon: ({ color, size, focused }) => {
           const outlineIcons: Record<string, keyof typeof Ionicons.glyphMap> = {
             DashboardTab: 'home-outline',

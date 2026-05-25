@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, RefreshControl,
-  TouchableOpacity, Modal, TextInput, Alert, ActivityIndicator,
+  TouchableOpacity, Modal, TextInput, Alert, ActivityIndicator, Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -42,20 +43,20 @@ interface Appraisal {
 }
 
 const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
-  pending: { bg: '#fdf6b2', text: '#c27803' },
-  pending_self: { bg: '#e8f0fe', text: '#1a56db' },
-  approved: { bg: '#def7ec', text: '#0e9f6e' },
-  rejected: { bg: '#fde8e8', text: '#e02424' },
-  submitted: { bg: '#e8f0fe', text: '#1a56db' },
-  completed: { bg: '#def7ec', text: '#0e9f6e' },
-  draft: { bg: '#f3f4f6', text: '#374151' },
+  pending:      { bg: 'rgba(245,158,11,0.15)',  text: '#f59e0b' },
+  pending_self: { bg: 'rgba(59,130,246,0.15)',  text: '#60a5fa' },
+  approved:     { bg: 'rgba(16,185,129,0.15)',  text: '#10b981' },
+  rejected:     { bg: 'rgba(239,68,68,0.15)',   text: '#ef4444' },
+  submitted:    { bg: 'rgba(59,130,246,0.15)',  text: '#60a5fa' },
+  completed:    { bg: 'rgba(16,185,129,0.15)',  text: '#10b981' },
+  draft:        { bg: 'rgba(107,114,128,0.15)', text: '#9ca3af' },
 };
 
 function StatusBadge({ status }: { status: string }) {
-  const c = STATUS_COLORS[status] ?? { bg: '#f3f4f6', text: '#374151' };
+  const c = STATUS_COLORS[status] ?? { bg: 'rgba(107,114,128,0.15)', text: '#9ca3af' };
   return (
-    <View style={[{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, backgroundColor: c.bg }]}>
-      <Text style={[{ fontSize: 11, fontWeight: '600', textTransform: 'capitalize', color: c.text }]}>
+    <View style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, backgroundColor: c.bg }}>
+      <Text style={{ fontSize: 11, fontWeight: '600', textTransform: 'capitalize', color: c.text }}>
         {status.replace(/_/g, ' ')}
       </Text>
     </View>
@@ -79,6 +80,7 @@ export default function PerformanceScreen() {
   const [goals, setGoals] = useState<Goal[]>([]);
   const [allReviews, setAllReviews] = useState<Review[]>([]);
 
+  const [search, setSearch] = useState('');
   const [showCreateGoal, setShowCreateGoal] = useState(false);
   const [goalTitle, setGoalTitle] = useState('');
   const [goalDesc, setGoalDesc] = useState('');
@@ -179,24 +181,48 @@ export default function PerformanceScreen() {
 
   if (loading) return <LoadingSpinner />;
 
+  const q = search.toLowerCase();
+  const filteredPendingReviews = q
+    ? pendingReviews.filter((r) => (r.cycle_name ?? '').toLowerCase().includes(q))
+    : pendingReviews;
+  const filteredAppraisals = q
+    ? pendingAppraisals.filter((a) => (a.title ?? a.cycle_name ?? '').toLowerCase().includes(q))
+    : pendingAppraisals;
+  const filteredGoals = q
+    ? goals.filter((g) => g.goal_name.toLowerCase().includes(q))
+    : goals;
+  const filteredReviews = q
+    ? allReviews.filter((r) => (r.cycle_name ?? '').toLowerCase().includes(q))
+    : allReviews;
+
   const tabs: { key: Tab; label: string }[] = [
-    { key: 'work', label: 'My Work' },
-    { key: 'goals', label: 'My Goals' },
-    { key: 'reviews', label: 'My Reviews' },
+    { key: 'work', label: 'Overview' },
+    { key: 'goals', label: 'Goals' },
+    { key: 'reviews', label: 'Reviews' },
   ];
 
+  const latestReview = allReviews.find(r => r.final_rating != null) ?? allReviews[0];
+  const approvedGoals = goals.filter(g => g.status === 'approved').length;
+  const pendingGoals = goals.filter(g => g.status === 'pending').length;
+
   return (
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
     <View style={[s.container, { paddingTop: insets.top }]}>
-      <View style={s.header}>
-        <Text style={s.title}>Performance</Text>
-        <TouchableOpacity onPress={() => navigation.navigate('TaskReports')}>
-          <View style={s.reportsBtn}>
-            <Ionicons name="bar-chart-outline" size={16} color={colors.primary} />
-            <Text style={s.reportsBtnText}>Task Reports</Text>
-          </View>
-        </TouchableOpacity>
+      {/* Page header */}
+      <View style={s.pageHeader}>
+        <Text style={s.breadcrumb}>{workspace?.name?.toUpperCase() ?? 'WORKSPACE'} · PERFORMANCE</Text>
+        <View style={s.titleRow}>
+          <Text style={s.pageTitle}>Performance</Text>
+          <TouchableOpacity onPress={() => navigation.navigate('TaskReports')}>
+            <View style={s.reportsBtn}>
+              <Ionicons name="bar-chart-outline" size={15} color={colors.primary} />
+              <Text style={s.reportsBtnText}>Reports</Text>
+            </View>
+          </TouchableOpacity>
+        </View>
       </View>
 
+      {/* Tab bar */}
       <View style={s.tabBar}>
         {tabs.map((t) => (
           <TouchableOpacity
@@ -211,6 +237,23 @@ export default function PerformanceScreen() {
         ))}
       </View>
 
+      {/* Search bar */}
+      <View style={s.searchBar}>
+        <Ionicons name="search-outline" size={16} color={colors.gray400} />
+        <TextInput
+          style={s.searchInput}
+          placeholder="Search..."
+          placeholderTextColor={colors.gray400}
+          value={search}
+          onChangeText={setSearch}
+        />
+        {search.length > 0 && (
+          <TouchableOpacity onPress={() => setSearch('')}>
+            <Ionicons name="close-circle" size={16} color={colors.gray400} />
+          </TouchableOpacity>
+        )}
+      </View>
+
       <ScrollView
         contentContainerStyle={s.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
@@ -218,11 +261,55 @@ export default function PerformanceScreen() {
       >
         {activeTab === 'work' && (
           <>
+            {/* Rating card */}
+            {latestReview && (
+              <View style={s.ratingCard}>
+                <Text style={s.ratingCycle}>{latestReview.cycle_name?.toUpperCase() ?? 'CURRENT CYCLE'}</Text>
+                <View style={s.ratingRow}>
+                  <View>
+                    <Text style={s.ratingNum}>
+                      {latestReview.final_rating != null
+                        ? latestReview.final_rating
+                        : latestReview.self_rating != null
+                          ? latestReview.self_rating
+                          : '—'}
+                      <Text style={s.ratingMax}>/5</Text>
+                    </Text>
+                    <Text style={s.ratingLabel}>
+                      {latestReview.final_rating != null ? 'Final Rating' : 'Self Rating'}
+                    </Text>
+                  </View>
+                  <View style={s.ratingBadge}>
+                    <StatusBadge status={latestReview.status} />
+                  </View>
+                </View>
+              </View>
+            )}
+
+            {/* Action cards */}
+            <View style={s.actionCards}>
+              <View style={s.actionCard}>
+                <Ionicons name="flag-outline" size={20} color={colors.primary} />
+                <Text style={s.actionNum}>{approvedGoals}</Text>
+                <Text style={s.actionCardLabel}>Approved Goals</Text>
+              </View>
+              <View style={[s.actionCard, s.actionCardMid]}>
+                <Ionicons name="time-outline" size={20} color={colors.warning} />
+                <Text style={[s.actionNum, { color: colors.warning }]}>{pendingGoals}</Text>
+                <Text style={s.actionCardLabel}>Pending Goals</Text>
+              </View>
+              <View style={s.actionCard}>
+                <Ionicons name="document-text-outline" size={20} color={colors.success} />
+                <Text style={[s.actionNum, { color: colors.success }]}>{allReviews.length}</Text>
+                <Text style={s.actionCardLabel}>Reviews</Text>
+              </View>
+            </View>
+
             <Text style={s.sectionLabel}>Pending Self-Ratings</Text>
-            {pendingReviews.length === 0 ? (
+            {filteredPendingReviews.length === 0 ? (
               <EmptyState icon="checkmark-circle-outline" title="No pending self-ratings" />
             ) : (
-              pendingReviews.map((r) => (
+              filteredPendingReviews.map((r) => (
                 <View key={r.id} style={s.card}>
                   <View style={s.cardRow}>
                     <Text style={s.cardTitle}>{r.cycle_name ?? `Review #${r.id}`}</Text>
@@ -236,10 +323,10 @@ export default function PerformanceScreen() {
             )}
 
             <Text style={[s.sectionLabel, { marginTop: 20 }]}>My Appraisals</Text>
-            {pendingAppraisals.length === 0 ? (
+            {filteredAppraisals.length === 0 ? (
               <EmptyState icon="document-text-outline" title="No appraisals found" />
             ) : (
-              pendingAppraisals.map((a) => (
+              filteredAppraisals.map((a) => (
                 <View key={a.id} style={s.card}>
                   <View style={s.cardRow}>
                     <Text style={s.cardTitle}>{a.title ?? a.cycle_name ?? `Appraisal #${a.id}`}</Text>
@@ -261,10 +348,10 @@ export default function PerformanceScreen() {
               </TouchableOpacity>
             </View>
 
-            {goals.length === 0 ? (
+            {filteredGoals.length === 0 ? (
               <EmptyState icon="flag-outline" title="No goals yet" subtitle="Add your first goal." />
             ) : (
-              goals.map((g) => (
+              filteredGoals.map((g) => (
                 <View key={g.id} style={s.card}>
                   <View style={s.cardRow}>
                     <Text style={s.cardTitle} numberOfLines={2}>{g.goal_name}</Text>
@@ -286,10 +373,10 @@ export default function PerformanceScreen() {
         {activeTab === 'reviews' && (
           <>
             <Text style={s.sectionLabel}>My Performance Reviews</Text>
-            {allReviews.length === 0 ? (
+            {filteredReviews.length === 0 ? (
               <EmptyState icon="document-text-outline" title="No reviews found" />
             ) : (
-              allReviews.map((r) => (
+              filteredReviews.map((r) => (
                 <View key={r.id} style={s.card}>
                   <View style={s.cardRow}>
                     <Text style={s.cardTitle}>{r.cycle_name ?? `Review #${r.id}`}</Text>
@@ -304,9 +391,10 @@ export default function PerformanceScreen() {
         )}
       </ScrollView>
 
-      <Modal visible={showCreateGoal} animationType="slide" transparent>
-        <View style={s.modalOverlay}>
-          <ScrollView style={s.modalSheet} keyboardShouldPersistTaps="handled">
+      <Modal visible={showCreateGoal} animationType="slide" transparent onRequestClose={() => setShowCreateGoal(false)}>
+        <KeyboardAvoidingView style={s.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <View style={s.modalSheetWrapper}>
+          <ScrollView style={s.modalSheet} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
             <View style={s.modalHeader}>
               <Text style={s.modalTitle}>New Goal</Text>
               <TouchableOpacity onPress={() => setShowCreateGoal(false)}>
@@ -381,26 +469,32 @@ export default function PerformanceScreen() {
               </>
             )}
           </ScrollView>
-        </View>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
+    </KeyboardAvoidingView>
   );
 }
 
 function makeStyles(c: AppColors) {
+  const SERIF = Platform.OS === 'ios' ? 'Georgia' : 'serif';
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: c.background },
-    header: {
-      flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-      backgroundColor: c.surface, paddingHorizontal: 20, paddingVertical: 14,
+
+    pageHeader: {
+      backgroundColor: c.surface, paddingHorizontal: 20, paddingTop: 16, paddingBottom: 14,
       borderBottomWidth: 1, borderBottomColor: c.border,
     },
-    title: { fontSize: 20, fontWeight: '700', color: c.textPrimary },
+    breadcrumb: { fontSize: 10, fontWeight: '700', color: c.textMuted, letterSpacing: 1, marginBottom: 6 },
+    titleRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    pageTitle: { fontSize: 30, fontFamily: SERIF, color: c.textPrimary, flex: 1 },
     reportsBtn: {
       flexDirection: 'row', alignItems: 'center', gap: 4,
       backgroundColor: c.primaryLight, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8,
     },
     reportsBtnText: { fontSize: 13, color: c.primary, fontWeight: '600' },
+
     tabBar: {
       flexDirection: 'row', backgroundColor: c.surface,
       borderBottomWidth: 1, borderBottomColor: c.border,
@@ -409,7 +503,30 @@ function makeStyles(c: AppColors) {
     tabActive: { borderBottomWidth: 2, borderBottomColor: c.primary },
     tabText: { fontSize: 13, fontWeight: '500', color: c.textSecondary },
     tabTextActive: { color: c.primary, fontWeight: '700' },
+
     content: { padding: 16, paddingBottom: 32 },
+
+    ratingCard: {
+      backgroundColor: c.surface, borderRadius: 14, padding: 18, marginBottom: 14,
+      borderWidth: 1, borderColor: c.border,
+    },
+    ratingCycle: { fontSize: 10, fontWeight: '700', color: c.textMuted, letterSpacing: 1, marginBottom: 8 },
+    ratingRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' },
+    ratingNum: { fontSize: 44, fontWeight: '800', color: c.secondary, letterSpacing: -2 },
+    ratingMax: { fontSize: 22, fontWeight: '600', color: c.textMuted },
+    ratingLabel: { fontSize: 11, color: c.textSecondary, marginTop: 2 },
+    ratingBadge: { alignSelf: 'flex-start' },
+
+    actionCards: {
+      flexDirection: 'row', marginBottom: 20,
+      backgroundColor: c.surface, borderRadius: 14,
+      borderWidth: 1, borderColor: c.border, overflow: 'hidden',
+    },
+    actionCard: { flex: 1, alignItems: 'center', padding: 14, gap: 4 },
+    actionCardMid: { borderLeftWidth: 1, borderRightWidth: 1, borderColor: c.border },
+    actionNum: { fontSize: 24, fontWeight: '800', color: c.primary, letterSpacing: -0.5 },
+    actionCardLabel: { fontSize: 10, fontWeight: '600', color: c.textSecondary, textAlign: 'center' },
+
     sectionLabel: {
       fontSize: 12, fontWeight: '700', color: c.textSecondary,
       textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10,
@@ -434,11 +551,13 @@ function makeStyles(c: AppColors) {
       backgroundColor: c.primaryLight, alignItems: 'center',
     },
     submitBtnText: { fontSize: 13, color: c.primary, fontWeight: '600' },
+
     modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-    modalSheet: {
+    modalSheetWrapper: {
       backgroundColor: c.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20,
-      padding: 20, paddingBottom: 40,
+      maxHeight: '85%',
     },
+    modalSheet: { padding: 20, paddingBottom: 40 },
     modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
     modalTitle: { fontSize: 17, fontWeight: '700', color: c.textPrimary },
     fieldLabel: { fontSize: 13, fontWeight: '600', color: c.textSecondary, marginBottom: 6, marginTop: 12 },
@@ -455,6 +574,14 @@ function makeStyles(c: AppColors) {
     saveBtnDisabled: { backgroundColor: c.gray300 },
     saveBtnText: { fontSize: 15, color: '#ffffff', fontWeight: '700' },
     hintText: { fontSize: 13, color: c.gray500, marginBottom: 12, fontStyle: 'italic' },
+    searchBar: {
+      flexDirection: 'row', alignItems: 'center', gap: 8,
+      backgroundColor: c.surface, marginHorizontal: 16, marginTop: 8, marginBottom: 0,
+      borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9,
+      borderWidth: 1.5, borderColor: c.border,
+    },
+    searchInput: { flex: 1, fontSize: 14, color: c.textPrimary },
+
     cycleChip: {
       paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, marginRight: 8, marginBottom: 12,
       borderWidth: 1.5, borderColor: c.border, backgroundColor: c.surface,

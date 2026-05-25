@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl,
-  ActivityIndicator, Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useClerk } from '@clerk/clerk-expo';
@@ -12,6 +12,7 @@ import { useWorkspace } from '../../contexts/WorkspaceContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { AppColors } from '../../utils/colors';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
+import { showAlert } from '../../components/common/AlertModal';
 
 interface App {
   id: number;
@@ -46,7 +47,7 @@ export default function WorkspaceSelectScreen() {
   const api = useApi();
   const { setWorkspace } = useWorkspace();
   const { signOut } = useClerk();
-  const { colors, isDark } = useTheme();
+  const { colors } = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
 
@@ -104,14 +105,14 @@ export default function WorkspaceSelectScreen() {
       await api.invitations.accept(inv.token);
       await loadApps(true);
     } catch (err: any) {
-      Alert.alert('Error', err?.response?.data?.error ?? 'Failed to accept invitation');
+      showAlert('Error', err?.response?.data?.error ?? 'Failed to accept invitation');
     } finally {
       setAcceptingToken(null);
     }
   };
 
   const handleDecline = async (inv: Invitation) => {
-    Alert.alert('Decline Invitation', `Decline invitation to ${inv.app_name}?`, [
+    showAlert('Decline Invitation', `Decline invitation to ${inv.app_name}?`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Decline', style: 'destructive',
@@ -121,7 +122,7 @@ export default function WorkspaceSelectScreen() {
             await api.invitations.decline(inv.token);
             setInvitations((prev) => prev.filter((i) => i.token !== inv.token));
           } catch (err: any) {
-            Alert.alert('Error', err?.response?.data?.error ?? 'Failed to decline invitation');
+            showAlert('Error', err?.response?.data?.error ?? 'Failed to decline invitation');
           } finally { setDecliningToken(null); }
         },
       },
@@ -140,84 +141,33 @@ export default function WorkspaceSelectScreen() {
   };
 
   /* ── Hero section ── */
-  const LightHero = (
-    <View style={s.lightHero}>
-      {/* Top row: logo left + illustration right */}
-      <View style={s.lightTopRow}>
-        <View style={s.lightLogoCol}>
-          <Image
-            source={require('../../../assets/logo.png')}
-            style={s.logoImg}
-            resizeMode="contain"
-          />
-        </View>
-        {/* 3D-style app illustration */}
-        <View style={s.lightIllustration}>
-          <View style={s.illOuter}>
-            <View style={s.illInner}>
-              <View style={s.illGrid}>
-                {[0,1,2,3,4,5].map(i => (
-                  <View key={i} style={[s.illTile, { backgroundColor: i % 2 === 0 ? '#4F6EF7' + '33' : '#0e9f6e' + '22' }]} />
-                ))}
-              </View>
-              <View style={s.illDot} />
-              <View style={[s.illDot, s.illDot2]} />
-              <View style={[s.illDot, s.illDot3]} />
-            </View>
-          </View>
-        </View>
-      </View>
-
-      <Text style={s.lightTitle}>Select Workspace</Text>
-      <Text style={s.lightSubtitle}>Choose the workspace you want to enter</Text>
-      <TouchableOpacity onPress={() => { setWorkspace(null); signOut(); }} style={s.lightSignOut}>
-        <Ionicons name="log-out-outline" size={17} color={colors.danger} />
-        <Text style={s.signOutText}>Sign Out</Text>
-      </TouchableOpacity>
-    </View>
-  );
-
-  const DarkHero = (
-    <View style={s.darkHero}>
-      <Image
-        source={require('../../../assets/logo.png')}
-        style={s.logoImg}
-        resizeMode="contain"
-      />
-
-      {/* Orbital illustration */}
+  const Hero = (
+    <View style={s.hero}>
+      <Image source={require('../../../assets/logo.png')} style={s.logoImg} resizeMode="contain" />
       <View style={s.orbitWrap}>
-        {/* Orbit ring */}
         <View style={s.orbitRing} />
-        {/* Center briefcase */}
         <View style={s.orbitCenter}>
-          <Ionicons name="briefcase" size={38} color="#4F6EF7" />
+          <Ionicons name="briefcase" size={38} color="#3b82f6" />
         </View>
-        {/* Orbit dots with icons */}
-        <View style={[s.orbitIcon, s.orbitTL, { backgroundColor: '#4F6EF722' }]}>
-          <Ionicons name="people-outline" size={14} color="#4F6EF7" />
+        <View style={[s.orbitIcon, s.orbitTL, { backgroundColor: '#3b82f622' }]}>
+          <Ionicons name="people-outline" size={14} color="#3b82f6" />
         </View>
-        <View style={[s.orbitIcon, s.orbitTR, { backgroundColor: '#0e9f6e22' }]}>
-          <Ionicons name="folder-outline" size={14} color="#0e9f6e" />
+        <View style={[s.orbitIcon, s.orbitTR, { backgroundColor: '#22d3ee22' }]}>
+          <Ionicons name="folder-outline" size={14} color="#22d3ee" />
         </View>
-        <View style={[s.orbitIcon, s.orbitBL, { backgroundColor: '#c2780322' }]}>
-          <Ionicons name="apps-outline" size={14} color="#c27803" />
+        <View style={[s.orbitIcon, s.orbitBL, { backgroundColor: '#f59e0b22' }]}>
+          <Ionicons name="apps-outline" size={14} color="#f59e0b" />
         </View>
-        <View style={[s.orbitIcon, s.orbitBR, { backgroundColor: '#0694a222' }]}>
-          <Ionicons name="bar-chart-outline" size={14} color="#0694a2" />
+        <View style={[s.orbitIcon, s.orbitBR, { backgroundColor: '#5eead422' }]}>
+          <Ionicons name="bar-chart-outline" size={14} color="#5eead4" />
         </View>
       </View>
-
-      <Text style={s.darkTitle}>Select Workspace</Text>
-      <Text style={s.darkSubtitle}>Choose the workspace{'\n'}you want to enter</Text>
-      <TouchableOpacity onPress={() => { setWorkspace(null); signOut(); }} style={s.darkSignOut}>
-        <Ionicons name="log-out-outline" size={17} color={colors.danger} />
-        <Text style={s.signOutText}>Sign Out</Text>
-      </TouchableOpacity>
+      <Text style={s.heroTitle}>Select Workspace</Text>
+      <Text style={s.heroSubtitle}>Choose the workspace{'\n'}you want to enter</Text>
     </View>
   );
 
-  const ListHeader = isDark ? DarkHero : LightHero;
+  const ListHeader = Hero;
 
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
@@ -302,18 +252,6 @@ export default function WorkspaceSelectScreen() {
               </View>
             ) : null
           }
-          ListFooterComponent={
-            <View style={s.footer}>
-              <Ionicons
-                name={isDark ? 'lock-closed-outline' : 'shield-checkmark-outline'}
-                size={14}
-                color={colors.gray400}
-              />
-              <Text style={s.footerText}>
-                {isDark ? 'Your data is secure and encrypted' : 'Secure • Reliable • Trusted'}
-              </Text>
-            </View>
-          }
           renderItem={({ item }) => {
             const isSuspended = item.billing_status === 'suspended' || item.billing_status === 'cancelled';
             const iconColor = isSuspended ? colors.gray400 : colorForName(item.name);
@@ -329,8 +267,8 @@ export default function WorkspaceSelectScreen() {
                 activeOpacity={isSuspended ? 1 : 0.8}
                 disabled={isSuspended}
               >
-                <View style={[s.appIcon, { backgroundColor: iconColor }]}>
-                  <Text style={s.appIconText}>{item.name[0]?.toUpperCase()}</Text>
+                <View style={[s.appIcon, { backgroundColor: iconColor + '22', borderWidth: 1.5, borderColor: iconColor + '44' }]}>
+                  <Text style={[s.appIconText, { color: iconColor }]}>{item.name[0]?.toUpperCase()}</Text>
                 </View>
                 <View style={s.appInfo}>
                   <Text style={[s.appName, isSuspended && s.appNameDisabled]}>{item.name}</Text>
@@ -354,6 +292,18 @@ export default function WorkspaceSelectScreen() {
           }}
         />
       )}
+      {!loading && !error && (
+        <View style={s.footer}>
+          <TouchableOpacity onPress={() => { setWorkspace(null); signOut(); }} style={s.signOutBtn}>
+            <Ionicons name="log-out-outline" size={16} color={colors.danger} />
+            <Text style={s.signOutText}>Sign Out</Text>
+          </TouchableOpacity>
+          <View style={s.footerTrust}>
+            <Ionicons name="shield-checkmark-outline" size={13} color={colors.gray400} />
+            <Text style={s.footerText}>Secure • Reliable • Trusted</Text>
+          </View>
+        </View>
+      )}
     </View>
   );
 }
@@ -363,48 +313,22 @@ function makeStyles(c: AppColors) {
     container: { flex: 1, backgroundColor: c.background },
 
     // ── Shared ──
-    logoImg: { width: 130, height: 48 },
+    logoImg: { width: 180, height: 64 },
     signOutText: { fontSize: 14, color: c.danger, fontWeight: '600' },
 
-    // ── Light Hero ──
-    lightHero: { paddingTop: 28, paddingHorizontal: 24, paddingBottom: 20 },
-    lightTopRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 },
-    lightLogoCol: { gap: 4 },
-    logoTagline: { fontSize: 11, color: c.textSecondary, letterSpacing: 1, marginTop: 4 },
-    lightIllustration: { marginTop: 4 },
-    illOuter: {
-      width: 110, height: 90, backgroundColor: c.primaryLight,
-      borderRadius: 18, padding: 8, justifyContent: 'center',
-      shadowColor: c.primary, shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.15, shadowRadius: 12, elevation: 4,
-    },
-    illInner: { flex: 1, position: 'relative' },
-    illGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, flex: 1 },
-    illTile: { width: 26, height: 20, borderRadius: 5 },
-    illDot: {
-      position: 'absolute', width: 10, height: 10, borderRadius: 5,
-      backgroundColor: '#4F6EF7', bottom: 2, right: 2,
-    },
-    illDot2: { backgroundColor: '#0e9f6e', bottom: 2, right: 16 },
-    illDot3: { backgroundColor: '#c27803', bottom: 16, right: 2 },
-    lightTitle: { fontSize: 28, fontWeight: '800', color: c.textPrimary, marginBottom: 6 },
-    lightSubtitle: { fontSize: 14, color: c.textSecondary, marginBottom: 18, lineHeight: 20 },
-    lightSignOut: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-
-    // ── Dark Hero ──
-    darkHero: { alignItems: 'center', paddingTop: 32, paddingBottom: 24, paddingHorizontal: 24 },
-    logoTaglineDark: { fontSize: 12, color: c.textSecondary, marginBottom: 28, letterSpacing: 1, marginTop: 6 },
+    // ── Hero ──
+    hero: { alignItems: 'center', paddingTop: 32, paddingBottom: 24, paddingHorizontal: 24 },
     orbitWrap: {
       width: 160, height: 160, alignItems: 'center', justifyContent: 'center',
-      marginBottom: 24, position: 'relative',
+      marginTop: 20, marginBottom: 20, position: 'relative',
     },
     orbitRing: {
       position: 'absolute', width: 140, height: 140, borderRadius: 70,
-      borderWidth: 1.5, borderColor: '#4F6EF755', borderStyle: 'dashed',
+      borderWidth: 1.5, borderColor: '#3b82f655', borderStyle: 'dashed',
     },
     orbitCenter: {
       width: 88, height: 88, borderRadius: 44,
-      backgroundColor: '#4F6EF718', borderWidth: 2, borderColor: '#4F6EF740',
+      backgroundColor: '#3b82f618', borderWidth: 2, borderColor: '#3b82f640',
       alignItems: 'center', justifyContent: 'center',
     },
     orbitIcon: { position: 'absolute', width: 32, height: 32, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
@@ -412,9 +336,8 @@ function makeStyles(c: AppColors) {
     orbitTR: { top: 10, right: 10 },
     orbitBL: { bottom: 10, left: 10 },
     orbitBR: { bottom: 10, right: 10 },
-    darkTitle: { fontSize: 26, fontWeight: '800', color: c.textPrimary, textAlign: 'center' },
-    darkSubtitle: { fontSize: 14, color: c.textSecondary, textAlign: 'center', marginTop: 6, marginBottom: 20, lineHeight: 22 },
-    darkSignOut: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    heroTitle: { fontSize: 26, fontWeight: '800', color: c.textPrimary, textAlign: 'center' },
+    heroSubtitle: { fontSize: 14, color: c.textSecondary, textAlign: 'center', marginTop: 6, lineHeight: 22 },
 
     list: { paddingHorizontal: 16, paddingBottom: 32 },
     workspacesLabel: {
@@ -456,8 +379,8 @@ function makeStyles(c: AppColors) {
       shadowOpacity: 0.06, shadowRadius: 4, elevation: 2,
     },
     appCardDisabled: { opacity: 0.5 },
-    appIcon: { width: 46, height: 46, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-    appIconText: { fontSize: 20, fontWeight: '800', color: '#ffffff' },
+    appIcon: { width: 54, height: 54, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+    appIconText: { fontSize: 26, fontWeight: '800' },
     appInfo: { flex: 1 },
     appName: { fontSize: 15, fontWeight: '700', color: c.textPrimary },
     appNameDisabled: { color: c.textMuted },
@@ -481,7 +404,9 @@ function makeStyles(c: AppColors) {
     emptySubtitle: { fontSize: 13, color: c.textSecondary, textAlign: 'center' },
 
     // Footer
-    footer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 24, paddingBottom: 8 },
+    footer: { alignItems: 'center', gap: 16, paddingVertical: 16, paddingHorizontal: 20, backgroundColor: c.background, borderTopWidth: 1, borderTopColor: c.border },
+    signOutBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 20, borderRadius: 10, borderWidth: 1, borderColor: c.danger + '44', backgroundColor: c.dangerLight },
+    footerTrust: { flexDirection: 'row', alignItems: 'center', gap: 6 },
     footerText: { fontSize: 12, color: c.gray400 },
   });
 }

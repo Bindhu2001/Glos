@@ -48,15 +48,21 @@ function formatMinutes(mins?: number) {
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 const STATUS_BG: Record<string, string> = {
-  todo: '#f3f4f6', in_progress: '#e8f0fe', in_review: '#fdf6b2',
-  done: '#def7ec', blocked: '#fde8e8',
+  todo:        'rgba(107,114,128,0.15)',
+  in_progress: 'rgba(59,130,246,0.15)',
+  in_review:   'rgba(245,158,11,0.15)',
+  done:        'rgba(16,185,129,0.15)',
+  blocked:     'rgba(239,68,68,0.15)',
 };
 const STATUS_TEXT: Record<string, string> = {
-  todo: '#374151', in_progress: '#1a56db', in_review: '#c27803',
-  done: '#0e9f6e', blocked: '#e02424',
+  todo:        '#9ca3af',
+  in_progress: '#60a5fa',
+  in_review:   '#f59e0b',
+  done:        '#10b981',
+  blocked:     '#ef4444',
 };
-const statusBg = (status: string) => STATUS_BG[status] ?? '#f3f4f6';
-const statusColor = (status: string) => STATUS_TEXT[status] ?? '#374151';
+const statusBg = (status: string) => STATUS_BG[status] ?? 'rgba(107,114,128,0.15)';
+const statusColor = (status: string) => STATUS_TEXT[status] ?? '#9ca3af';
 
 export default function TaskReportsScreen() {
   const api = useApi();

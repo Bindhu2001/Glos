@@ -1,9 +1,10 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View, Text, FlatList, StyleSheet, TouchableOpacity,
-  TextInput, RefreshControl,
+  TextInput, RefreshControl, ScrollView, Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -52,6 +53,8 @@ export default function TasksScreen() {
     load().finally(() => setLoading(false));
   }, [load]);
 
+  useFocusEffect(useCallback(() => { load(); }, [load]));
+
   const onRefresh = async () => {
     setRefreshing(true);
     await load();
@@ -70,18 +73,56 @@ export default function TasksScreen() {
 
   if (loading) return <LoadingSpinner />;
 
+  const now = new Date();
+  const inProgressCount = tasks.filter(t => t.status === 'in_progress').length;
+  const doneCount = tasks.filter(t => t.status === 'done').length;
+  const overdueCount = tasks.filter(t =>
+    t.deadline && new Date(t.deadline) < now && t.status !== 'done' && t.status !== 'cancelled'
+  ).length;
+  const blockedCount = tasks.filter(t => t.status === 'blocked').length;
+
+  const stats = [
+    { label: 'TOTAL', count: tasks.length, color: colors.textPrimary },
+    { label: 'IN PROGRESS', count: inProgressCount, color: colors.primary },
+    { label: 'COMPLETED', count: doneCount, color: colors.success },
+    { label: 'OVERDUE', count: overdueCount, color: colors.danger },
+    { label: 'BLOCKED', count: blockedCount, color: colors.warning },
+  ];
+
   return (
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
     <View style={[s.container, { paddingTop: insets.top }]}>
-      <View style={s.header}>
-        <Text style={s.title}>Tasks</Text>
-        <TouchableOpacity
-          style={s.addBtn}
-          onPress={() => navigation.navigate('CreateTask', { appId: workspace!.id })}
-        >
-          <Ionicons name="add" size={20} color={colors.primary} />
-        </TouchableOpacity>
+      {/* Page header */}
+      <View style={s.pageHeader}>
+        <Text style={s.breadcrumb}>{workspace?.name?.toUpperCase() ?? 'WORKSPACE'} · TASKS</Text>
+        <View style={s.titleRow}>
+          <Text style={s.pageTitle}>Tasks</Text>
+          {overdueCount > 0 && (
+            <View style={s.overdueBadge}>
+              <Text style={s.overdueText}>{overdueCount} overdue</Text>
+            </View>
+          )}
+          <TouchableOpacity
+            style={s.addBtn}
+            onPress={() => navigation.navigate('CreateTask', { appId: workspace!.id })}
+          >
+            <Ionicons name="add" size={20} color={colors.primary} />
+          </TouchableOpacity>
+        </View>
+        <Text style={s.subtitle}>Your work, organized. Stay on track.</Text>
       </View>
 
+      {/* Stats bar */}
+      <View style={s.statsRow}>
+        {stats.map((stat, i) => (
+          <View key={stat.label} style={[s.statItem, i > 0 && s.statItemBorder]}>
+            <Text style={[s.statCount, { color: stat.color }]}>{stat.count}</Text>
+            <Text style={s.statLabel}>{stat.label}</Text>
+          </View>
+        ))}
+      </View>
+
+      {/* Search bar */}
       <View style={s.searchBar}>
         <Ionicons name="search-outline" size={16} color={colors.gray400} />
         <TextInput
@@ -98,7 +139,12 @@ export default function TasksScreen() {
         )}
       </View>
 
-      <View style={s.filters}>
+      {/* Filter chips */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={s.filtersContent}
+      >
         {FILTERS.map((f) => (
           <TouchableOpacity
             key={f}
@@ -108,8 +154,9 @@ export default function TasksScreen() {
             <Text style={[s.chipText, activeFilter === f && s.chipTextActive]}>{f}</Text>
           </TouchableOpacity>
         ))}
-      </View>
+      </ScrollView>
 
+      {/* Task list */}
       <FlatList
         data={filtered}
         keyExtractor={(item) => String(item.id)}
@@ -127,38 +174,58 @@ export default function TasksScreen() {
         )}
       />
     </View>
+    </KeyboardAvoidingView>
   );
 }
 
 function makeStyles(c: AppColors) {
+  const SERIF = Platform.OS === 'ios' ? 'Georgia' : 'serif';
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: c.background },
-    header: {
-      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-      backgroundColor: c.surface, paddingHorizontal: 20, paddingBottom: 14,
-      paddingTop: 10, borderBottomWidth: 1, borderBottomColor: c.border,
+
+    pageHeader: {
+      backgroundColor: c.surface, paddingHorizontal: 20, paddingTop: 16, paddingBottom: 14,
+      borderBottomWidth: 1, borderBottomColor: c.border,
     },
-    title: { fontSize: 20, fontWeight: '700', color: c.textPrimary },
+    breadcrumb: { fontSize: 10, fontWeight: '700', color: c.textMuted, letterSpacing: 1, marginBottom: 6 },
+    titleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6 },
+    pageTitle: { fontSize: 30, fontFamily: SERIF, color: c.textPrimary, flex: 1 },
+    overdueBadge: { backgroundColor: c.dangerLight, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
+    overdueText: { fontSize: 11, fontWeight: '700', color: c.danger },
     addBtn: {
-      width: 36, height: 36, borderRadius: 10, backgroundColor: c.primaryLight,
+      width: 34, height: 34, borderRadius: 10, backgroundColor: c.primaryLight,
       alignItems: 'center', justifyContent: 'center',
-      borderWidth: 1, borderColor: c.primary + '33',
     },
+    subtitle: { fontSize: 12, color: c.textSecondary },
+
+    statsRow: {
+      flexDirection: 'row', backgroundColor: c.surface,
+      borderBottomWidth: 1, borderBottomColor: c.border,
+      paddingVertical: 10,
+    },
+    statItem: { flex: 1, alignItems: 'center' },
+    statItemBorder: { borderLeftWidth: 1, borderLeftColor: c.border },
+    statCount: { fontSize: 20, fontWeight: '800', letterSpacing: -0.5 },
+    statLabel: { fontSize: 9, fontWeight: '700', color: c.textMuted, letterSpacing: 0.5, marginTop: 2 },
+
     searchBar: {
       flexDirection: 'row', alignItems: 'center', gap: 8,
-      backgroundColor: c.surface, marginHorizontal: 16, marginTop: 12,
-      borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10,
+      backgroundColor: c.surface, marginHorizontal: 16, marginTop: 8, marginBottom: 0,
+      borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9,
       borderWidth: 1.5, borderColor: c.border,
     },
     searchInput: { flex: 1, fontSize: 14, color: c.textPrimary },
-    filters: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingVertical: 10 },
+
+    filtersContent: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 8 },
     chip: {
-      paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20,
-      backgroundColor: c.surface, borderWidth: 1, borderColor: c.border,
+      paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20,
+      backgroundColor: c.surface, borderWidth: 1.5, borderColor: c.border,
+      alignItems: 'center',
     },
-    chipActive: { backgroundColor: c.primaryLight, borderColor: c.primary + '66' },
-    chipText: { fontSize: 13, fontWeight: '600', color: c.textMuted },
-    chipTextActive: { color: c.primary, fontWeight: '700' },
-    list: { padding: 16, paddingBottom: 32 },
+    chipActive: { backgroundColor: c.primary, borderColor: c.primary },
+    chipText: { fontSize: 14, fontWeight: '600', color: c.gray600 },
+    chipTextActive: { color: '#ffffff', fontWeight: '800' },
+
+    list: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 32 },
   });
 }

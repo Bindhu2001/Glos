@@ -10,6 +10,7 @@ import MainNavigator from './MainNavigator';
 import WorkspaceSelectScreen from '../screens/workspace/WorkspaceSelectScreen';
 import NotificationsScreen from '../screens/notifications/NotificationsScreen';
 import LoadingSpinner from '../components/common/LoadingSpinner';
+import AlertModal, { alertRef } from '../components/common/AlertModal';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -26,24 +27,27 @@ function Navigator() {
   if (!isLoaded || workspaceLoading) return <LoadingSpinner />;
 
   return (
-    <NavigationContainer>
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
-        {!isSignedIn ? (
-          <Stack.Screen name="Auth" component={AuthNavigator} />
-        ) : !workspace ? (
-          <Stack.Screen name="WorkspaceSelect" component={WorkspaceSelectScreen} />
-        ) : (
-          <>
-            <Stack.Screen name="Main" component={MainNavigator} />
-            <Stack.Screen
-              name="Notifications"
-              component={NotificationsScreen}
-              options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
-            />
-          </>
-        )}
-      </Stack.Navigator>
-    </NavigationContainer>
+    <>
+      <NavigationContainer>
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          {!isSignedIn ? (
+            <Stack.Screen name="Auth" component={AuthNavigator} />
+          ) : !workspace ? (
+            <Stack.Screen name="WorkspaceSelect" component={WorkspaceSelectScreen} />
+          ) : (
+            <>
+              <Stack.Screen name="Main" component={MainNavigator} />
+              <Stack.Screen
+                name="Notifications"
+                component={NotificationsScreen}
+                options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+              />
+            </>
+          )}
+        </Stack.Navigator>
+      </NavigationContainer>
+      <AlertModal ref={alertRef} />
+    </>
   );
 }
 

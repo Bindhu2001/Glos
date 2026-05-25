@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View, Text, FlatList, StyleSheet, TouchableOpacity,
-  TextInput, RefreshControl,
+  TextInput, RefreshControl, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -50,13 +50,16 @@ export default function EmployeesScreen() {
     setRefreshing(false);
   };
 
-  const filtered = employees.filter((e) =>
-    !search || e.full_name?.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = employees.filter((e) => {
+    if (!search) return true;
+    const name = e.full_name ?? ([e.first_name, e.last_name].filter(Boolean).join(' '));
+    return name.toLowerCase().includes(search.toLowerCase());
+  });
 
   if (loading) return <LoadingSpinner />;
 
   return (
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
     <View style={[s.container, { paddingTop: insets.top }]}>
       <View style={s.header}>
         <Text style={s.title}>People</Text>
@@ -99,6 +102,7 @@ export default function EmployeesScreen() {
         )}
       />
     </View>
+    </KeyboardAvoidingView>
   );
 }
 

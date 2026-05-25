@@ -4,7 +4,7 @@
     "slug": "glos",
     "scheme": "com.greatleap.mobile",
     "version": "1.0.0",
-    "owner": "athiraks",
+    "owner": "athiraglos",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -38,7 +38,7 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "04eaec98-29d5-4cb3-99dc-c4c4f80b9f3a"
+        "projectId": "bb35f5c1-d86a-4e6d-8ee3-0d36eb5fcf51"
       }
     }
   }

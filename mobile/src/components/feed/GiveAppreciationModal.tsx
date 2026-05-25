@@ -8,6 +8,7 @@ import { useApi } from '../../hooks/useApi';
 import { useTheme } from '../../contexts/ThemeContext';
 import { AppColors } from '../../utils/colors';
 import Avatar from '../common/Avatar';
+import { showAlert } from '../common/AlertModal';
 
 const BADGES = [
   { key: 'teamwork', label: 'Teamwork', emoji: '🤝' },
@@ -42,8 +43,16 @@ export default function GiveAppreciationModal({ visible, onClose, onSuccess, app
   useEffect(() => {
     if (!visible) return;
     setLoadingMembers(true);
-    api.employees.list(appId)
-      .then((r) => setEmployees(r.data?.items ?? []))
+    api.workspace.getMembers(appId)
+      .then((r) => {
+        const items: any[] = r.data?.items ?? r.data ?? [];
+        setEmployees(items.map((m) => ({
+          id: m.user_id,
+          platform_user_id: m.user_id,
+          full_name: `${m.first_name ?? ''} ${m.last_name ?? ''}`.trim() || m.email,
+          role_title: m.role,
+        })));
+      })
       .catch(() => {})
       .finally(() => setLoadingMembers(false));
   }, [visible, appId]);
@@ -58,10 +67,10 @@ export default function GiveAppreciationModal({ visible, onClose, onSuccess, app
   const handleClose = () => { reset(); onClose(); };
 
   const handleSubmit = async () => {
-    if (!selected) { Alert.alert('Select someone to appreciate'); return; }
-    if (!message.trim()) { Alert.alert('Add a message'); return; }
+    if (!selected) { showAlert('Select someone to appreciate'); return; }
+    if (!message.trim()) { showAlert('Add a message'); return; }
     const recipientId = selected.platform_user_id;
-    if (!recipientId) { Alert.alert('This person has not joined the app yet'); return; }
+    if (!recipientId) { showAlert('This person has not joined the app yet'); return; }
     setSubmitting(true);
     try {
       await api.appreciations.give(appId, {
@@ -73,21 +82,23 @@ export default function GiveAppreciationModal({ visible, onClose, onSuccess, app
       onSuccess();
       onClose();
     } catch (err: any) {
-      Alert.alert('Failed', err?.response?.data?.error ?? 'Something went wrong');
+      showAlert('Failed', err?.response?.data?.error ?? 'Something went wrong');
     } finally {
       setSubmitting(false);
     }
   };
 
-  const filtered = employees.filter((e) =>
-    !search || e.full_name?.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = employees.filter((e) => {
+    if (!search) return true;
+    const name = e.full_name ?? [e.first_name, e.last_name].filter(Boolean).join(' ');
+    return name.toLowerCase().includes(search.toLowerCase());
+  });
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={handleClose}>
       <KeyboardAvoidingView
         style={s.overlay}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         <View style={s.sheet}>
           <View style={s.sheetHeader}>
@@ -122,22 +133,25 @@ export default function GiveAppreciationModal({ visible, onClose, onSuccess, app
                   <ActivityIndicator style={{ marginVertical: 16 }} color={colors.primary} />
                 ) : (
                   <View style={s.memberList}>
-                    {filtered.slice(0, 8).map((e) => (
+                    {filtered.slice(0, 50).map((e) => {
+                      const displayName = e.full_name ?? ([e.first_name, e.last_name].filter(Boolean).join(' ') || 'Unknown');
+                      return (
                       <TouchableOpacity
                         key={e.id}
                         style={s.memberRow}
-                        onPress={() => { setSelected(e); setSearch(''); }}
+                        onPress={() => { setSelected({ ...e, full_name: displayName }); setSearch(''); }}
                       >
-                        <Avatar name={e.full_name ?? 'Unknown'} size={34} />
+                        <Avatar name={displayName} size={34} />
                         <View style={{ flex: 1 }}>
-                          <Text style={s.memberName}>{e.full_name}</Text>
+                          <Text style={s.memberName}>{displayName}</Text>
                           {e.role_title ? <Text style={s.memberRole}>{e.role_title}</Text> : null}
                         </View>
                         {!e.platform_user_id && (
                           <Text style={s.notJoined}>Not joined</Text>
                         )}
                       </TouchableOpacity>
-                    ))}
+                      );
+                    })}
                     {filtered.length === 0 && (
                       <Text style={s.emptyText}>No members found</Text>
                     )}

@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  KeyboardAvoidingView, Platform, Alert, ActivityIndicator,
+  KeyboardAvoidingView, Platform, ActivityIndicator,
 } from 'react-native';
 import { useSignUp, useSSO } from '@clerk/clerk-expo';
 import * as WebBrowser from 'expo-web-browser';
@@ -16,6 +16,7 @@ import { AppColors } from '../../utils/colors';
 import Input from '../../components/common/Input';
 import Button from '../../components/common/Button';
 import Logo from '../../components/common/Logo';
+import { showAlert } from '../../components/common/AlertModal';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -41,11 +42,11 @@ export default function SignUpScreen() {
   const handleSignUp = async () => {
     if (!isLoaded) return;
     if (!firstName.trim() || !lastName.trim() || !email.trim() || !password) {
-      Alert.alert('Missing Fields', 'Please fill in all fields.');
+      showAlert('Missing Fields', 'Please fill in all fields.');
       return;
     }
     if (password.length < 8) {
-      Alert.alert('Weak Password', 'Password must be at least 8 characters.');
+      showAlert('Weak Password', 'Password must be at least 8 characters.');
       return;
     }
     setLoading(true);
@@ -54,7 +55,7 @@ export default function SignUpScreen() {
       await signUp.prepareEmailAddressVerification({ strategy: 'email_code' });
       setPendingVerification(true);
     } catch (err: any) {
-      Alert.alert('Sign Up Failed', err.errors?.[0]?.message ?? 'Something went wrong.');
+      showAlert('Sign Up Failed', err.errors?.[0]?.message ?? 'Something went wrong.');
     } finally {
       setLoading(false);
     }
@@ -63,7 +64,7 @@ export default function SignUpScreen() {
   const handleVerify = async () => {
     if (!isLoaded) return;
     if (!code.trim()) {
-      Alert.alert('Enter Code', 'Please enter the verification code from your email.');
+      showAlert('Enter Code', 'Please enter the verification code from your email.');
       return;
     }
     setLoading(true);
@@ -73,7 +74,7 @@ export default function SignUpScreen() {
         await setActive({ session: result.createdSessionId });
       }
     } catch (err: any) {
-      Alert.alert('Verification Failed', err.errors?.[0]?.message ?? 'Invalid code.');
+      showAlert('Verification Failed', err.errors?.[0]?.message ?? 'Invalid code.');
     } finally {
       setLoading(false);
     }
@@ -88,7 +89,7 @@ export default function SignUpScreen() {
       });
 
       if (!result) {
-        Alert.alert('Google Sign Up Failed', 'No response from Google. Try again.');
+        showAlert('Google Sign Up Failed', 'No response from Google. Try again.');
         return;
       }
 
@@ -100,24 +101,24 @@ export default function SignUpScreen() {
       if (signIn?.createdSessionId && setActiveSession) { await setActiveSession({ session: signIn.createdSessionId }); return; }
       if (signIn?.status === 'complete' && signIn.createdSessionId) { await setActiveSession?.({ session: signIn.createdSessionId }); return; }
 
-      Alert.alert('Google Sign Up Failed', 'Could not establish session. Please try again.');
+      showAlert('Connection Failed', 'Could not establish connection. Please allow this app to connect to your account.');
     } catch (err: any) {
       console.error('[GoogleSignUp] Error:', err);
-      Alert.alert('Google Sign Up Failed', err.errors?.[0]?.message ?? 'Something went wrong. Try again.');
+      showAlert('Google Sign Up Failed', err.errors?.[0]?.message ?? 'Something went wrong. Try again.');
     } finally {
       setGoogleLoading(false);
     }
   };
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <ScrollView
         style={s.container}
         contentContainerStyle={[s.content, { paddingTop: insets.top + 40, paddingBottom: insets.bottom + 24 }]}
         keyboardShouldPersistTaps="handled"
       >
         <View style={s.brand}>
-          <Logo size={72} style={s.logo} />
+          <Logo size={100} style={s.logo} />
         </View>
 
         <View style={s.card}>

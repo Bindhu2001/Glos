@@ -21,6 +21,14 @@ type Route = RouteProp<FeedStackParamList, 'PostDetail'>;
 
 const REACTIONS = ['❤️', '👍', '🎉', '👏', '🔥'];
 
+function decodeHtml(str: string) {
+  return str
+    .replace(/<[^>]*>/g, '')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ')
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
+}
+
 export default function PostDetailScreen() {
   const route = useRoute<Route>();
   const { postId, appId } = route.params;
@@ -35,22 +43,29 @@ export default function PostDetailScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [commentText, setCommentText] = useState('');
   const [saving, setSaving] = useState(false);
+  const [myReaction, setMyReaction] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    setLoading(true);
+    setPost(null);
+    setComments([]);
     try {
       const [posts, cmts] = await Promise.all([
         api.feed.list(appId),
         api.feed.getComments(appId, postId),
       ]);
-      const allPosts = posts.data?.items ?? posts.data?.posts ?? [];
+      const d = posts.data;
+      const allPosts = Array.isArray(d) ? d : (d?.items ?? d?.posts ?? []);
       const found = allPosts.find((p: any) => p.id === postId);
       setPost(found);
       setComments(cmts.data?.items ?? cmts.data?.comments ?? []);
-    } catch {}
+    } catch {} finally {
+      setLoading(false);
+    }
   }, [postId, appId]);
 
   useEffect(() => {
-    load().finally(() => setLoading(false));
+    load();
   }, [load]);
 
   const onRefresh = async () => {
@@ -60,10 +75,11 @@ export default function PostDetailScreen() {
   };
 
   const handleReact = async (emoji: string) => {
-    try {
-      await api.feed.addReaction(appId, postId, emoji);
-      await load();
-    } catch {}
+    const toggling = myReaction === emoji;
+    setMyReaction(toggling ? null : emoji);
+    if (!toggling) {
+      try { await api.feed.addReaction(appId, postId, emoji); } catch {}
+    }
   };
 
   const handleComment = async () => {
@@ -82,9 +98,13 @@ export default function PostDetailScreen() {
   };
 
   if (loading) return <LoadingSpinner />;
-  if (!post) return null;
+  if (!post) return (
+    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+      <Text style={{ color: '#6b7280' }}>Post not found.</Text>
+    </View>
+  );
 
-  const preview = post.content?.replace(/<[^>]*>/g, '') ?? '';
+  const preview = decodeHtml(post.content ?? '');
   const authorName = post.author_name
     ?? ([post.author?.first_name, post.author?.last_name].filter(Boolean).join(' ') || post.author?.email || 'Unknown');
 
@@ -108,11 +128,18 @@ export default function PostDetailScreen() {
           <Text style={s.postContent}>{preview}</Text>
 
           <View style={s.reactionsRow}>
-            {REACTIONS.map((emoji) => (
-              <TouchableOpacity key={emoji} style={s.emojiBtn} onPress={() => handleReact(emoji)}>
-                <Text style={s.emoji}>{emoji}</Text>
-              </TouchableOpacity>
-            ))}
+            {REACTIONS.map((emoji) => {
+              const selected = myReaction === emoji;
+              return (
+                <TouchableOpacity
+                  key={emoji}
+                  style={[s.emojiBtn, selected && s.emojiBtnSelected]}
+                  onPress={() => handleReact(emoji)}
+                >
+                  <Text style={[s.emoji, selected && s.emojiSelected]}>{emoji}</Text>
+                </TouchableOpacity>
+              );
+            })}
             {post.reaction_count > 0 && (
               <Text style={s.reactionCount}>{post.reaction_count} reactions</Text>
             )}
@@ -173,8 +200,10 @@ function makeStyles(c: AppColors) {
     postTime: { fontSize: 12, color: c.gray400, marginTop: 2 },
     postContent: { fontSize: 15, color: c.gray700, lineHeight: 23, marginBottom: 14 },
     reactionsRow: { flexDirection: 'row', alignItems: 'center', gap: 6, borderTopWidth: 1, borderTopColor: c.border, paddingTop: 10 },
-    emojiBtn: { padding: 4 },
+    emojiBtn: { padding: 4, borderRadius: 8 },
+    emojiBtnSelected: { backgroundColor: '#fee2e2', borderWidth: 1.5, borderColor: '#ef4444' },
     emoji: { fontSize: 20 },
+    emojiSelected: { transform: [{ scale: 1.25 }] },
     reactionCount: { fontSize: 13, color: c.gray500, marginLeft: 4 },
     commentsHeader: { fontSize: 14, fontWeight: '700', color: c.textSecondary, marginBottom: 12 },
     noComments: { fontSize: 14, color: c.gray400, textAlign: 'center', marginTop: 20 },

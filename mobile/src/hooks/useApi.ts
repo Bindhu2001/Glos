@@ -35,9 +35,20 @@ export function useApi() {
   const onDeactivatedRef = useRef(onDeactivated);
   onDeactivatedRef.current = onDeactivated;
 
+  const onWorkspaceRevoked = useCallback(() => {
+    Alert.alert(
+      'Access Denied',
+      'You have been deactivated or removed from this workspace.',
+      [{ text: 'OK', onPress: () => { setWorkspace(null); } }],
+    );
+  }, [setWorkspace]);
+
+  const onWorkspaceRevokedRef = useRef(onWorkspaceRevoked);
+  onWorkspaceRevokedRef.current = onWorkspaceRevoked;
+
   const mkClient = useCallback(async () => {
     const t = await getTokenRef.current();
-    return createApiClient(t ?? '', () => onDeactivatedRef.current());
+    return createApiClient(t ?? '', () => onDeactivatedRef.current(), () => onWorkspaceRevokedRef.current());
   }, []);
 
   return useMemo(
@@ -157,6 +168,10 @@ export function useApi() {
         deleteComment: async (appId: number, taskId: number, commentId: number) => {
           const client = await mkClient();
           return tasksApi(client).deleteComment(appId, taskId, commentId);
+        },
+        deleteChecklistItem: async (appId: number, taskId: number, itemId: number) => {
+          const client = await mkClient();
+          return tasksApi(client).deleteChecklistItem(appId, taskId, itemId);
         },
         getChecklist: async (appId: number, taskId: number) => {
           const client = await mkClient();
