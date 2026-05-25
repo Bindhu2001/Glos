@@ -1,0 +1,627 @@
+
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+.wrap{background:#12131f;padding:16px;border-radius:16px;font-family:var(--font-sans)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+
+/* Unified GLOS Light Theme Mobile Screen Styles */
+.phone{background:#f4f5ff;border-radius:28px;overflow:hidden;border:1.5px solid rgba(99,102,241,0.15);padding:0;max-width:210px;margin:0 auto;font-family:var(--font-sans)}
+.notch{background:#f4f5ff;height:28px;display:flex;align-items:center;justify-content:space-between;padding:11px 16px 0}
+.ntime{font-size:11px;font-weight:700;color:#3730a3;letter-spacing:-0.01em}
+.nicons{display:flex;align-items:center;gap:4px}
+.nicons i{font-size:11px;color:#a5b4fc}
+.screen{padding:9px 13px 13px;min-height:380px;display:flex;flex-direction:column}
+
+.sec-label{font-size:10px;font-weight:600;color:#7c6bc4;letter-spacing:0.08em;text-transform:uppercase;margin:16px 0 8px}
+
+/* Avatars */
+.avatar{width:30px;height:30px;border-radius:9px;background:#ede9fe;border:1.5px solid #a5b4fc;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:900;color:#4f46e5;flex-shrink:0}
+.avatar.sm{width:24px;height:24px;border-radius:7px;font-size:8px;border:none}
+.avatar.green{background:#e1fced;color:#16a34a;border-color:#16a34a}
+.avatar.pink{background:#fdf2f8;color:#a21caf;border-color:#a21caf}
+.avatar.teal{background:#e0f7fe;color:#0891b2;border-color:#0891b2}
+
+/* Welcome Card / Hero Card */
+.hero-card{background:linear-gradient(135deg,#4f46e5 0%,#7c3aed 100%);border-radius:15px;padding:15px;margin-bottom:14px;position:relative;overflow:hidden}
+.hero-accent{position:absolute;right:-18px;top:-18px;width:70px;height:70px;border-radius:50%;background:rgba(255,255,255,0.07)}
+.hero-accent2{position:absolute;right:16px;bottom:-16px;width:36px;height:36px;border-radius:8px;background:rgba(255,255,255,0.03)}
+.hero-label{font-size:7px;font-weight:900;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px}
+.hero-title{font-size:21px;font-weight:900;color:#fff;letter-spacing:-.05em;line-height:1.2}
+.hero-sub{font-size:9px;color:rgba(255,255,255,0.55);margin-top:3px}
+
+/* Stats */
+.stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
+.stat-card{background:#fff;border-radius:12px;padding:11px 10px;border:1px solid rgba(99,102,241,0.1);position:relative}
+.stat-num{font-size:22px;font-weight:900;color:#1e1b4b;letter-spacing:-0.03em;line-height:1}
+.stat-lbl{font-size:7px;font-weight:700;color:#a5b4fc;text-transform:uppercase;letter-spacing:0.06em;margin-top:3px}
+.stat-icon{font-size:15px;margin-bottom:5px;color:#a78bfa}
+
+/* Actions */
+.act-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
+.act-btn{background:#fff;border-radius:12px;padding:12px 8px;border:1px solid rgba(99,102,241,0.1);text-align:center}
+.act-icon{font-size:18px;display:block;margin-bottom:5px}
+.act-lbl{font-size:9px;color:#6b7280;font-weight:700}
+
+/* Pills */
+.pill{display:inline-flex;align-items:center;padding:3px 9px;border-radius:20px;font-size:9px;font-weight:700}
+.pill-v{background:#ede9fe;color:#4f46e5}
+.pill-g{background:#e1fced;color:#16a34a}
+.pill-a{background:#fef3c7;color:#d97706}
+.pill-r{background:#fee2e2;color:#dc2626}
+.pill-s{background:#dbeafe;color:#2563eb}
+
+/* Unified Navigation */
+.nav{display:flex;justify-content:space-around;padding:9px 8px 13px;border-top:1px solid rgba(99,102,241,0.1);background:#fff}
+.nav-item, .ni{display:flex;flex-direction:column;align-items:center;gap:2px}
+.nav-ic, .ni i{font-size:17px;color:#e0e7ff}
+.nav-ic.on, .ni.on i{color:#4f46e5}
+.nav-lb, .ni span{font-size:7px;color:#e0e7ff}
+.nav-lb.on, .ni.on span{color:#4f46e5;font-weight:700}
+.nav-dot, .ni-bar{width:14px;height:2px;border-radius:2px;background:#4f46e5;margin:1px auto 0}
+
+/* Search bar & Tabs */
+.search-bar{background:#fff;border:1px solid rgba(99,102,241,0.15);border-radius:10px;padding:9px 12px;font-size:10px;color:#a5b4fc;display:flex;align-items:center;gap:7px;margin-bottom:12px}
+.search-bar i{font-size:13px;color:#a5b4fc}
+
+.tab-row{display:flex;gap:6px;margin-bottom:12px}
+.tab{padding:4px 10px;border-radius:20px;font-size:9px;font-weight:700;color:#a5b4fc;background:#fff;border:1px solid rgba(99,102,241,0.15)}
+.tab.on{background:#ede9fe;color:#6366f1;border-color:#a5b4fc}
+
+/* Task cards */
+.task-card{background:#fff;border-radius:12px;padding:12px;margin-bottom:8px;border:1px solid rgba(99,102,241,0.1);display:flex;gap:10px;align-items:flex-start}
+.task-check{width:16px;height:16px;border-radius:50%;border:1.5px solid #a5b4fc;flex-shrink:0;margin-top:1px;display:flex;align-items:center;justify-content:center}
+.task-check.done{background:#e1fced;border-color:#16a34a}
+.task-body{flex:1}
+.task-title{font-size:11px;font-weight:700;color:#1e1b4b;margin-bottom:3px}
+.task-meta{font-size:9px;color:#a5b4fc;display:flex;align-items:center;gap:4px}
+.task-meta i{font-size:10px}
+.task-pills{display:flex;gap:4px;margin-top:5px;flex-wrap:wrap}
+
+/* Detail Card & Lists */
+.task-detail-card{background:#fff;border-radius:14px;padding:14px;border:1px solid rgba(99,102,241,0.1);margin-bottom:10px}
+.detail-row{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid rgba(99,102,241,0.07)}
+.detail-row:last-child{border-bottom:none}
+.detail-lbl{font-size:10px;color:#a5b4fc;display:flex;align-items:center;gap:6px}
+.detail-lbl i{font-size:12px}
+.detail-val{font-size:10px;color:#1e1b4b;font-weight:700}
+.mark-btn{background:linear-gradient(135deg,#4f46e5 0%,#7c3aed 100%);border-radius:10px;padding:11px;text-align:center;font-size:11px;font-weight:900;color:#fff;margin-bottom:12px;display:flex;align-items:center;justify-content:center;gap:6px}
+.mark-btn i{font-size:14px}
+
+/* Feed */
+.feed-item{display:flex;gap:10px;margin-bottom:12px}
+.feed-body{flex:1}
+.feed-name{font-size:11px;font-weight:700;color:#1e1b4b}
+.feed-time{font-size:9px;color:#c7d2fe}
+.feed-text{font-size:10px;color:#6b7280;margin-top:3px;line-height:1.5}
+.feed-actions{display:flex;gap:10px;margin-top:6px}
+.feed-act{font-size:9px;color:#a5b4fc;display:flex;align-items:center;gap:3px}
+.feed-act i{font-size:11px}
+.feed-act.liked{color:#db2777}
+
+/* New Post */
+.new-post-card{background:#fff;border-radius:14px;border:1px solid rgba(99,102,241,0.1);overflow:hidden;margin-bottom:10px}
+.post-type-row{display:flex;gap:0;border-bottom:1px solid rgba(99,102,241,0.07)}
+.post-type{flex:1;padding:12px;display:flex;align-items:center;gap:8px;cursor:pointer}
+.post-type.on{background:#ede9fe}
+.post-type i{font-size:16px;color:#4f46e5}
+.post-type-title{font-size:11px;font-weight:700;color:#1e1b4b}
+.post-type-sub{font-size:9px;color:#a5b4fc}
+.post-textarea{background:transparent;padding:12px;min-height:80px;font-size:10px;color:#6b7280;line-height:1.6;width:100%;border:none;resize:none}
+.post-footer{padding:8px 12px;border-top:1px solid rgba(99,102,241,0.07);display:flex;justify-content:flex-end}
+.post-footer-count{font-size:9px;color:#a5b4fc}
+
+/* Profiles */
+.prof-banner{background:#fff;border-radius:16px;padding:16px;margin-bottom:12px;border:1px solid rgba(99,102,241,0.1);display:flex;align-items:center;gap:12px;position:relative;overflow:hidden}
+.prof-banner-accent{position:absolute;right:-8px;top:-8px;width:50px;height:50px;border-radius:10px;background:#ede9fe;opacity:0.5;transform:rotate(20deg)}
+.prof-av{width:44px;height:44px;border-radius:14px;background:#ede9fe;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:900;color:#4f46e5;border:2px solid #a5b4fc;flex-shrink:0}
+.prof-name{font-size:14px;font-weight:900;color:#1e1b4b;letter-spacing:-0.01em}
+.prof-email{font-size:9px;color:#a5b4fc;margin-top:1px}
+
+/* Menu items */
+.menu-item{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(99,102,241,0.07)}
+.menu-icon-bg{width:28px;height:28px;border-radius:8px;background:#ede9fe;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.menu-icon-bg i{font-size:14px;color:#4f46e5}
+.menu-lbl{flex:1;font-size:11px;color:#1e1b4b;font-weight:700}
+.menu-val{font-size:10px;color:#a5b4fc}
+.menu-chev{font-size:12px;color:#a5b4fc}
+.badge-count{padding:2px 7px;border-radius:20px;font-size:9px;font-weight:700;background:#ede9fe;color:#4f46e5}
+
+/* Workspace selector screen */
+.ws-screen{background:#f4f5ff;padding:20px 16px}
+.ws-logo{font-size:20px;font-weight:900;letter-spacing:-0.03em;margin-bottom:4px}
+.ws-logo span:nth-child(1){color:#4f46e5}
+.ws-logo span:nth-child(2){color:#7c3aed}
+.ws-logo span:nth-child(3){color:#0891b2}
+.ws-logo span:nth-child(4){color:#16a34a}
+.ws-tagline{font-size:7px;color:#a5b4fc;margin-bottom:20px;letter-spacing:0.13em;text-transform:uppercase;font-weight:700}
+.ws-title{font-size:18px;font-weight:900;color:#1e1b4b;letter-spacing:-0.02em;margin-bottom:4px}
+.ws-sub{font-size:11px;color:#a5b4fc;margin-bottom:20px}
+.ws-card{background:#fff;border-radius:14px;padding:14px;margin-bottom:10px;border:1px solid rgba(99,102,241,0.1);display:flex;align-items:center;gap:12px}
+.ws-card.selected{border-color:#4f46e5}
+.ws-ic{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:900;color:#fff;flex-shrink:0}
+.ws-card-name{font-size:12px;font-weight:700;color:#1e1b4b}
+.ws-card-type{font-size:9px;color:#a5b4fc;margin-top:1px}
+.ws-secure{display:flex;align-items:center;gap:6px;justify-content:center;padding:14px 0;border-top:1px solid rgba(99,102,241,0.07);margin-top:8px}
+.ws-secure i{font-size:12px;color:#a5b4fc}
+.ws-secure span{font-size:9px;color:#a5b4fc}
+
+/* Titles and back rows */
+.screen-title{font-size:16px;font-weight:900;color:#1e1b4b;letter-spacing:-0.02em;margin-bottom:14px}
+.back-row{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+.back-row i{font-size:16px;color:#4f46e5}
+.back-row span{font-size:14px;font-weight:900;color:#1e1b4b;letter-spacing:-0.01em;flex:1}
+.start-btn{background:#ede9fe;border-radius:9px;padding:6px 12px;font-size:10px;font-weight:700;color:#4f46e5;display:flex;align-items:center;gap:4px;border:1px solid rgba(99,102,241,0.15)}
+.start-btn i{font-size:12px}
+
+.desc-card{background:#fff;border-radius:12px;padding:12px;border:1px solid rgba(99,102,241,0.1);margin-bottom:8px}
+.desc-sec{font-size:9px;font-weight:900;color:#a5b4fc;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:6px}
+.desc-text{font-size:10px;color:#6b7280;line-height:1.6}
+
+.signout-btn{background:#fee2e2;border-radius:10px;padding:10px;text-align:center;border:1px solid #fecaca;margin-top:4px;display:flex;align-items:center;justify-content:center;gap:6px}
+.signout-btn i{font-size:14px;color:#dc2626}
+.signout-btn span{font-size:11px;font-weight:700;color:#dc2626}
+</style>
+
+<h2 class="sr-only">GLOS Mob app — full screen assets: Home, Tasks, Task detail, Feed, New Post, Profile, Workspace</h2>
+
+<div class="wrap">
+
+<div class="sec-label" style="color:#7c6bc4;margin-top:0">GLOS Mob &amp; Tasks</div>
+<div class="grid">
+
+  <div class="phone glos-theme">
+    <div class="sb"><span class="st">9:41</span><div class="si"><i class="ti ti-wifi" aria-hidden="true"></i><i class="ti ti-battery" aria-hidden="true"></i></div></div>
+    <div class="toprow">
+      <div><div class="logo-wm"><span class="G">G</span><span class="L">L</span><span class="O">O</span><span class="S">S</span></div><div class="logo-tag">Perform Better</div></div>
+      <div class="top-right"><div class="ibtn ndot"><i class="ti ti-bell" aria-hidden="true"></i></div><div class="av">BJ</div></div>
+    </div>
+    <div class="greet-band">
+      <div><div class="gb-sub">Good evening</div><div class="gb-name">Binu J</div></div>
+      <div><div class="gb-ws-name">Great Leap Test</div><div class="gb-ws-type">HR Workspace</div></div>
+    </div>
+    <div class="feat">
+      <div class="feat-eye">My Tasks This Month</div>
+      <div class="feat-num">2</div>
+      <div class="feat-desc">1 in progress · 0 completed</div>
+      <div class="feat-tags">
+        <span class="ftag"><i class="ti ti-clipboard-list" style="font-size:8px" aria-hidden="true"></i> 2 Open</span>
+        <span class="ftag"><i class="ti ti-loader" style="font-size:8px" aria-hidden="true"></i> 1 Active</span>
+        <span class="ftag"><i class="ti ti-trophy" style="font-size:8px" aria-hidden="true"></i> 0 Done</span>
+      </div>
+      <i class="ti ti-chart-bar feat-icon" aria-hidden="true"></i>
+    </div>
+    <div class="cell-row">
+      <div class="cell"><div class="cell-num" style="color:#4f46e5">2</div><div class="cell-lbl">Tasks</div><div class="cell-bar" style="background:#4f46e5"></div></div>
+      <div class="cell"><div class="cell-num" style="color:#16a34a">0</div><div class="cell-lbl">Done</div><div class="cell-bar" style="background:#16a34a"></div></div>
+      <div class="cell"><div class="cell-num" style="color:#d97706">1</div><div class="cell-lbl">Active</div><div class="cell-bar" style="background:#d97706"></div></div>
+    </div>
+    <div class="small-row">
+      <div class="s-card"><div class="s-ic"><i class="ti ti-clock" aria-hidden="true"></i></div><div><div class="s-lbl">Time</div><div class="s-val">2h 50m</div></div></div>
+      <div class="s-card"><div class="s-ic"><i class="ti ti-switch-horizontal" aria-hidden="true"></i></div><div class="s-lbl">Workspace</div><div class="s-sw">Switch</div></div>
+    </div>
+    <div class="feed-sec">
+      <div class="feed-lbl">Team Feed <span>See all</span></div>
+      <div class="fi"><div class="fi-av v">BJ</div><div style="flex:1"><div class="fi-row"><span class="fi-name">Binu J</span><span class="fi-type ft-post">Post</span><span class="fi-time">1d ago</span></div><div class="fi-text">New feed</div></div></div>
+      <div class="fi"><div class="fi-av c">BJ</div><div style="flex:1"><div class="fi-row"><span class="fi-name">Babu Jose</span><span class="fi-type ft-appr">Appreciation</span><span class="fi-time">1d ago</span></div><div class="fi-text">Gave appreciation to Shankar — "Good Work"</div></div></div>
+      <div class="fi"><div class="fi-av o">AK</div><div style="flex:1"><div class="fi-row"><span class="fi-name">Athira K S</span><span class="fi-type ft-appr">Appreciation</span><span class="fi-time">3d ago</span></div><div class="fi-text">Gave appreciation to Bindu Vijayan — "Team work"</div></div></div>
+    </div>
+    <div class="nav">
+      <div class="ni on"><i class="ti ti-home" aria-hidden="true"></i><div class="ni-bar"></div></div>
+      <div class="ni"><i class="ti ti-checkbox" aria-hidden="true"></i><span>Tasks</span></div>
+      <div class="ni"><i class="ti ti-layout-list" aria-hidden="true"></i><span>Feed</span></div>
+      <div class="ni"><i class="ti ti-chart-line" aria-hidden="true"></i><span>Perf</span></div>
+      <div class="ni"><i class="ti ti-user" aria-hidden="true"></i><span>Profile</span></div>
+    </div>
+  </div>
+
+  <div class="phone">
+    <div class="notch">
+      <span class="ntime">9:41</span>
+      <div class="nicons">
+        <i class="ti ti-wifi" aria-hidden="true"></i>
+        <i class="ti ti-battery" aria-hidden="true"></i>
+      </div>
+    </div>
+    <div class="screen">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div class="screen-title" style="margin-bottom:0">Tasks</div>
+        <div style="width:28px;height:28px;border-radius:8px;background:#2d1f6b;display:flex;align-items:center;justify-content:center">
+          <i class="ti ti-plus" style="font-size:15px;color:#c4b5fd" aria-hidden="true"></i>
+        </div>
+      </div>
+
+      <div class="search-bar">
+        <i class="ti ti-search" aria-hidden="true"></i>
+        Search tasks...
+      </div>
+
+      <div class="tab-row">
+        <div class="tab on">All</div>
+        <div class="tab">My Tasks</div>
+        <div class="tab">Active</div>
+        <div class="tab">Done</div>
+      </div>
+
+      <div class="task-card">
+        <div class="task-check">
+          <i class="ti ti-clipboard" style="font-size:9px;color:#4c3d8f" aria-hidden="true"></i>
+        </div>
+        <div class="task-body">
+          <div class="task-title">Testing glos mob app</div>
+          <div class="task-meta"><i class="ti ti-calendar-event" aria-hidden="true"></i> May 25, 2026</div>
+          <div class="task-pills">
+            <span class="pill pill-v">Open</span>
+            <span class="pill pill-a">Low</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="task-card">
+        <div class="task-check done">
+          <i class="ti ti-check" style="font-size:9px;color:#34d399" aria-hidden="true"></i>
+        </div>
+        <div class="task-body">
+          <div class="task-title" style="color:#64748b;text-decoration:line-through;text-decoration-color:#374151">Team standup notes</div>
+          <div class="task-meta"><i class="ti ti-calendar-event" aria-hidden="true"></i> May 24, 2026</div>
+          <div class="task-pills">
+            <span class="pill pill-g">Done</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="task-card">
+        <div class="task-check"></div>
+        <div class="task-body">
+          <div class="task-title">Review Q2 report</div>
+          <div class="task-meta"><i class="ti ti-calendar-event" aria-hidden="true"></i> May 28, 2026</div>
+          <div class="task-pills">
+            <span class="pill pill-s">In Progress</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="nav">
+        <div class="nav-item"><i class="ti ti-home nav-ic" aria-hidden="true"></i><span class="nav-lb">Home</span></div>
+        <div class="nav-item"><i class="ti ti-checkbox nav-ic on" aria-hidden="true"></i><div class="nav-dot"></div></div>
+        <div class="nav-item"><i class="ti ti-layout-list nav-ic" aria-hidden="true"></i><span class="nav-lb">Feed</span></div>
+        <div class="nav-item"><i class="ti ti-chart-line nav-ic" aria-hidden="true"></i><span class="nav-lb">Stats</span></div>
+        <div class="nav-item"><i class="ti ti-user nav-ic" aria-hidden="true"></i><span class="nav-lb">Profile</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="sec-label" style="color:#7c6bc4">GLOS Detail &amp; Feed</div>
+<div class="grid">
+
+  <div class="phone">
+    <div class="notch">
+      <span class="ntime">9:41</span>
+      <div class="nicons">
+        <i class="ti ti-wifi" aria-hidden="true"></i>
+        <i class="ti ti-battery" aria-hidden="true"></i>
+      </div>
+    </div>
+    <div class="screen">
+      <div class="back-row">
+        <i class="ti ti-arrow-left" aria-hidden="true"></i>
+        <span>Testing</span>
+        <div class="start-btn"><i class="ti ti-player-play" aria-hidden="true"></i> Start</div>
+      </div>
+
+      <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">
+        <span class="pill pill-v">Open</span>
+        <span class="pill pill-a">Low</span>
+        <span class="pill" style="background:#1a1b2e;color:#64748b;border:1px solid #2a2b45"><i class="ti ti-calendar" style="font-size:9px;margin-right:3px" aria-hidden="true"></i>May 25, 2026</span>
+      </div>
+
+      <div class="mark-btn">
+        <i class="ti ti-circle-check" aria-hidden="true"></i>
+        Mark Complete
+      </div>
+
+      <div style="display:flex;gap:0;border-bottom:1px solid #1e1f33;margin-bottom:12px">
+        <div style="padding:8px 12px;font-size:10px;font-weight:700;color:#a78bfa;border-bottom:2px solid #a78bfa">Details</div>
+        <div style="padding:8px 12px;font-size:10px;color:#475569">Comments (0)</div>
+        <div style="padding:8px 12px;font-size:10px;color:#475569">Checklist (1)</div>
+        <div style="padding:8px 12px;font-size:10px;color:#475569">Time (3)</div>
+      </div>
+
+      <div class="desc-card">
+        <div class="desc-sec">Description</div>
+        <div class="desc-text">Task creating for testing glos mob app</div>
+      </div>
+
+      <div class="task-detail-card">
+        <div class="desc-sec" style="margin-bottom:0">Info</div>
+        <div class="detail-row">
+          <span class="detail-lbl"><i class="ti ti-clock" aria-hidden="true"></i>Created</span>
+          <span class="detail-val">about 16 hours ago</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-lbl"><i class="ti ti-calendar-event" aria-hidden="true"></i>Due Date</span>
+          <span class="detail-val">May 25, 2026</span>
+        </div>
+      </div>
+
+      <div class="nav">
+        <div class="nav-item"><i class="ti ti-home nav-ic" aria-hidden="true"></i><span class="nav-lb">Home</span></div>
+        <div class="nav-item"><i class="ti ti-checkbox nav-ic on" aria-hidden="true"></i><div class="nav-dot"></div></div>
+        <div class="nav-item"><i class="ti ti-layout-list nav-ic" aria-hidden="true"></i><span class="nav-lb">Feed</span></div>
+        <div class="nav-item"><i class="ti ti-chart-line nav-ic" aria-hidden="true"></i><span class="nav-lb">Stats</span></div>
+        <div class="nav-item"><i class="ti ti-user nav-ic" aria-hidden="true"></i><span class="nav-lb">Profile</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="phone">
+    <div class="notch">
+      <span class="ntime">9:41</span>
+      <div class="nicons">
+        <i class="ti ti-wifi" aria-hidden="true"></i>
+        <i class="ti ti-battery" aria-hidden="true"></i>
+      </div>
+    </div>
+    <div class="screen">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div class="screen-title" style="margin-bottom:0">Team Feed</div>
+        <div style="width:28px;height:28px;border-radius:8px;background:#2d1f6b;display:flex;align-items:center;justify-content:center">
+          <i class="ti ti-plus" style="font-size:15px;color:#c4b5fd" aria-hidden="true"></i>
+        </div>
+      </div>
+
+      <div class="feed-item">
+        <div class="avatar sm">BJ</div>
+        <div class="feed-body">
+          <div style="display:flex;align-items:center;gap:6px">
+            <span class="feed-name">Binu J</span>
+            <span class="pill pill-v" style="font-size:8px;padding:2px 7px">Post</span>
+            <span class="feed-time" style="margin-left:auto">1h ago</span>
+          </div>
+          <div class="feed-text">Completed the design review session — everything looks great!</div>
+          <div class="feed-actions">
+            <span class="feed-act liked"><i class="ti ti-heart" aria-hidden="true"></i> 1</span>
+            <span class="feed-act"><i class="ti ti-message" aria-hidden="true"></i> 1</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="height:1px;background:#1e1f33;margin-bottom:12px"></div>
+
+      <div class="feed-item">
+        <div class="avatar sm pink">MR</div>
+        <div class="feed-body">
+          <div style="display:flex;align-items:center;gap:6px">
+            <span class="feed-name">Mary R</span>
+            <span class="feed-time" style="margin-left:auto">2h ago</span>
+          </div>
+          <div class="feed-text">Q2 goals updated — please review and confirm your targets.</div>
+          <div class="feed-actions">
+            <span class="feed-act"><i class="ti ti-heart" aria-hidden="true"></i> 0</span>
+            <span class="feed-act"><i class="ti ti-message" aria-hidden="true"></i> 0</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="height:1px;background:#1e1f33;margin-bottom:12px"></div>
+
+      <div class="feed-item">
+        <div class="avatar sm teal">AK</div>
+        <div class="feed-body">
+          <div style="display:flex;align-items:center;gap:6px">
+            <span class="feed-name">Arjun K</span>
+            <span class="pill pill-a" style="font-size:8px;padding:2px 7px">Announcement</span>
+            <span class="feed-time" style="margin-left:auto">3h ago</span>
+          </div>
+          <div class="feed-text">New sprint kicks off Monday. Please update your task boards.</div>
+          <div class="feed-actions">
+            <span class="feed-act"><i class="ti ti-heart" aria-hidden="true"></i> 0</span>
+            <span class="feed-act"><i class="ti ti-message" aria-hidden="true"></i> 0</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="nav">
+        <div class="nav-item"><i class="ti ti-home nav-ic" aria-hidden="true"></i><span class="nav-lb">Home</span></div>
+        <div class="nav-item"><i class="ti ti-checkbox nav-ic" aria-hidden="true"></i><span class="nav-lb">Tasks</span></div>
+        <div class="nav-item"><i class="ti ti-layout-list nav-ic on" aria-hidden="true"></i><div class="nav-dot"></div></div>
+        <div class="nav-item"><i class="ti ti-chart-line nav-ic" aria-hidden="true"></i><span class="nav-lb">Stats</span></div>
+        <div class="nav-item"><i class="ti ti-user nav-ic" aria-hidden="true"></i><span class="nav-lb">Profile</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="sec-label" style="color:#7c6bc4">GLOS Post &amp; Profile</div>
+<div class="grid">
+
+  <div class="phone">
+    <div class="notch">
+      <span class="ntime">9:41</span>
+      <div class="nicons">
+        <i class="ti ti-wifi" aria-hidden="true"></i>
+        <i class="ti ti-battery" aria-hidden="true"></i>
+      </div>
+    </div>
+    <div class="screen">
+      <div class="back-row" style="margin-bottom:14px">
+        <i class="ti ti-arrow-left" aria-hidden="true"></i>
+        <span>New Post</span>
+        <div class="start-btn" style="background:#a78bfa">
+          <i class="ti ti-send" aria-hidden="true"></i> Post
+        </div>
+      </div>
+
+      <div style="font-size:9px;font-weight:600;color:#475569;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px">Post type</div>
+
+      <div class="new-post-card">
+        <div class="post-type-row">
+          <div class="post-type on" style="border-right:1px solid #1e1f33">
+            <i class="ti ti-pencil" style="font-size:18px;color:#a78bfa" aria-hidden="true"></i>
+            <div>
+              <div class="post-type-title">Post</div>
+              <div class="post-type-sub">Share an update</div>
+            </div>
+          </div>
+          <div class="post-type">
+            <i class="ti ti-speakerphone" style="font-size:18px;color:#64748b" aria-hidden="true"></i>
+            <div>
+              <div class="post-type-title" style="color:#64748b">Announce</div>
+              <div class="post-type-sub">Broadcast to team</div>
+            </div>
+          </div>
+        </div>
+        <div style="padding:12px;font-size:10px;color:#475569;font-weight:600">What's on your mind?</div>
+        <div class="post-textarea">Share an update, appreciation, or feedback...</div>
+        <div class="post-footer">
+          <span class="post-footer-count">0 / 500</span>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:8px;padding:4px 0">
+        <div style="width:32px;height:32px;border-radius:8px;background:#1a1b2e;border:1px solid #2a2b45;display:flex;align-items:center;justify-content:center">
+          <i class="ti ti-photo" style="font-size:15px;color:#64748b" aria-hidden="true"></i>
+        </div>
+        <div style="width:32px;height:32px;border-radius:8px;background:#1a1b2e;border:1px solid #2a2b45;display:flex;align-items:center;justify-content:center">
+          <i class="ti ti-paperclip" style="font-size:15px;color:#64748b" aria-hidden="true"></i>
+        </div>
+        <div style="width:32px;height:32px;border-radius:8px;background:#1a1b2e;border:1px solid #2a2b45;display:flex;align-items:center;justify-content:center">
+          <i class="ti ti-mood-smile" style="font-size:15px;color:#64748b" aria-hidden="true"></i>
+        </div>
+      </div>
+
+      <div class="nav">
+        <div class="nav-item"><i class="ti ti-home nav-ic" aria-hidden="true"></i><span class="nav-lb">Home</span></div>
+        <div class="nav-item"><i class="ti ti-checkbox nav-ic" aria-hidden="true"></i><span class="nav-lb">Tasks</span></div>
+        <div class="nav-item"><i class="ti ti-layout-list nav-ic on" aria-hidden="true"></i><div class="nav-dot"></div></div>
+        <div class="nav-item"><i class="ti ti-chart-line nav-ic" aria-hidden="true"></i><span class="nav-lb">Stats</span></div>
+        <div class="nav-item"><i class="ti ti-user nav-ic" aria-hidden="true"></i><span class="nav-lb">Profile</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="phone">
+    <div class="notch">
+      <span class="ntime">9:41</span>
+      <div class="nicons">
+        <i class="ti ti-wifi" aria-hidden="true"></i>
+        <i class="ti ti-battery" aria-hidden="true"></i>
+      </div>
+    </div>
+    <div class="screen">
+      <div class="screen-title">Profile</div>
+
+      <div class="prof-banner">
+        <div class="prof-banner-accent"></div>
+        <div class="prof-av">BJ</div>
+        <div>
+          <div class="prof-name">Binu J</div>
+          <div class="prof-email">vexok74347@ameady.com</div>
+          <div style="margin-top:5px"><span class="pill pill-v">Member</span></div>
+        </div>
+      </div>
+
+      <div style="font-size:9px;font-weight:600;color:#475569;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">Workspace</div>
+      <div class="menu-item">
+        <div class="menu-icon-bg"><i class="ti ti-building" aria-hidden="true"></i></div>
+        <span class="menu-lbl">Bindu app</span>
+        <span class="menu-val">HR</span>
+        <i class="ti ti-chevron-right menu-chev" aria-hidden="true"></i>
+      </div>
+      <div class="menu-item">
+        <div class="menu-icon-bg"><i class="ti ti-switch-horizontal" aria-hidden="true"></i></div>
+        <span class="menu-lbl">Switch Workspace</span>
+        <i class="ti ti-chevron-right menu-chev" aria-hidden="true"></i>
+      </div>
+
+      <div style="font-size:9px;font-weight:600;color:#475569;text-transform:uppercase;letter-spacing:0.08em;margin:10px 0 6px">Activity</div>
+      <div class="menu-item">
+        <div class="menu-icon-bg"><i class="ti ti-bell" aria-hidden="true"></i></div>
+        <span class="menu-lbl">Notifications</span>
+        <span class="badge-count">3</span>
+        <i class="ti ti-chevron-right menu-chev" aria-hidden="true"></i>
+      </div>
+
+      <div style="font-size:9px;font-weight:600;color:#475569;text-transform:uppercase;letter-spacing:0.08em;margin:10px 0 6px">Performance</div>
+      <div class="menu-item">
+        <div class="menu-icon-bg"><i class="ti ti-target" aria-hidden="true"></i></div>
+        <span class="menu-lbl">Goals</span>
+        <span class="menu-val">0</span>
+        <i class="ti ti-chevron-right menu-chev" aria-hidden="true"></i>
+      </div>
+      <div class="menu-item" style="border-bottom:none">
+        <div class="menu-icon-bg"><i class="ti ti-star" aria-hidden="true"></i></div>
+        <span class="menu-lbl">Appraisals</span>
+        <span class="menu-val">0</span>
+        <i class="ti ti-chevron-right menu-chev" aria-hidden="true"></i>
+      </div>
+
+      <div class="signout-btn">
+        <i class="ti ti-logout" aria-hidden="true"></i>
+        <span>Sign Out</span>
+      </div>
+
+      <div class="nav">
+        <div class="nav-item"><i class="ti ti-home nav-ic" aria-hidden="true"></i><span class="nav-lb">Home</span></div>
+        <div class="nav-item"><i class="ti ti-checkbox nav-ic" aria-hidden="true"></i><span class="nav-lb">Tasks</span></div>
+        <div class="nav-item"><i class="ti ti-layout-list nav-ic" aria-hidden="true"></i><span class="nav-lb">Feed</span></div>
+        <div class="nav-item"><i class="ti ti-chart-line nav-ic" aria-hidden="true"></i><span class="nav-lb">Stats</span></div>
+        <div class="nav-item"><i class="ti ti-user nav-ic on" aria-hidden="true"></i><div class="nav-dot"></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="sec-label" style="color:#7c6bc4">GLOS Select Workspace</div>
+<div style="max-width:220px;margin:0 auto">
+  <div class="phone">
+    <div class="notch">
+      <span class="ntime">9:41</span>
+      <div class="nicons">
+        <i class="ti ti-wifi" aria-hidden="true"></i>
+        <i class="ti ti-battery" aria-hidden="true"></i>
+      </div>
+    </div>
+    <div class="ws-screen">
+      <div class="ws-logo">
+        <span>G</span><span>L</span><span>O</span><span>S</span>
+      </div>
+      <div class="ws-tagline">— Perform Better —</div>
+
+      <div class="ws-title">Select Workspace</div>
+      <div class="ws-sub">Choose the workspace you want to enter</div>
+
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:14px;cursor:pointer">
+        <i class="ti ti-logout" style="font-size:13px;color:#f87171" aria-hidden="true"></i>
+        <span style="font-size:10px;color:#f87171;font-weight:600">Sign Out</span>
+      </div>
+
+      <div class="ws-card selected">
+        <div class="ws-ic" style="background:#2d1f6b">B</div>
+        <div style="flex:1">
+          <div class="ws-card-name">Bindu app</div>
+          <div class="ws-card-type">HR workspace</div>
+        </div>
+        <span class="pill pill-v" style="font-size:8px">Member</span>
+        <i class="ti ti-chevron-right" style="font-size:12px;color:#4c3d8f;margin-left:4px" aria-hidden="true"></i>
+      </div>
+
+      <div class="ws-card">
+        <div class="ws-ic" style="background:#063a2b">G</div>
+        <div style="flex:1">
+          <div class="ws-card-name">Great Leap Test</div>
+          <div class="ws-card-type">HR workspace</div>
+        </div>
+        <span class="pill pill-g" style="font-size:8px">Member</span>
+        <i class="ti ti-chevron-right" style="font-size:12px;color:#0d5f42;margin-left:4px" aria-hidden="true"></i>
+      </div>
+
+      <div class="ws-secure">
+        <i class="ti ti-lock" aria-hidden="true"></i>
+        <span>Your data is secure and encrypted</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>

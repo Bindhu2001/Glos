@@ -1,6 +1,8 @@
-import { useAuth } from '@clerk/clerk-expo';
-import { useMemo, useRef } from 'react';
+import { useAuth, useClerk } from '@clerk/clerk-expo';
+import { useMemo, useRef, useCallback } from 'react';
+import { Alert } from 'react-native';
 import { createApiClient } from '../api/client';
+import { useWorkspace } from '../contexts/WorkspaceContext';
 import {
   workspaceApi,
   meApi,
@@ -17,235 +19,250 @@ import {
 
 export function useApi() {
   const { getToken } = useAuth();
+  const { signOut } = useClerk();
+  const { setWorkspace } = useWorkspace();
   const getTokenRef = useRef(getToken);
   getTokenRef.current = getToken;
 
+  const onDeactivated = useCallback(() => {
+    Alert.alert(
+      'Account Deactivated',
+      'Your account has been deactivated. Please contact your administrator.',
+      [{ text: 'OK', onPress: () => { setWorkspace(null); signOut(); } }],
+    );
+  }, [setWorkspace, signOut]);
+
+  const onDeactivatedRef = useRef(onDeactivated);
+  onDeactivatedRef.current = onDeactivated;
+
+  const mkClient = useCallback(async () => {
+    const t = await getTokenRef.current();
+    return createApiClient(t ?? '', () => onDeactivatedRef.current());
+  }, []);
+
   return useMemo(
     () => ({
-      getClient: async () => {
-        const token = await getToken();
-        return createApiClient(token ?? '');
-      },
+      getClient: mkClient,
       workspace: {
         listApps: async () => {
-          const t = await getTokenRef.current();
-          return workspaceApi(createApiClient(t ?? '')).listApps();
+          const client = await mkClient();
+          return workspaceApi(client).listApps();
         },
         getApp: async (appId: number) => {
-          const t = await getTokenRef.current();
-          return workspaceApi(createApiClient(t ?? '')).getApp(appId);
+          const client = await mkClient();
+          return workspaceApi(client).getApp(appId);
         },
         getStats: async (appId: number) => {
-          const t = await getTokenRef.current();
-          return workspaceApi(createApiClient(t ?? '')).getStats(appId);
+          const client = await mkClient();
+          return workspaceApi(client).getStats(appId);
         },
         getMembers: async (appId: number) => {
-          const t = await getTokenRef.current();
-          return workspaceApi(createApiClient(t ?? '')).getMembers(appId);
+          const client = await mkClient();
+          return workspaceApi(client).getMembers(appId);
         },
       },
       me: {
         getProfile: async () => {
-          const t = await getTokenRef.current();
-          return meApi(createApiClient(t ?? '')).getProfile();
+          const client = await mkClient();
+          return meApi(client).getProfile();
         },
         updateProfile: async (data: { first_name?: string; last_name?: string }) => {
-          const t = await getTokenRef.current();
-          return meApi(createApiClient(t ?? '')).updateProfile(data);
+          const client = await mkClient();
+          return meApi(client).updateProfile(data);
         },
       },
       invitations: {
         listMine: async () => {
-          const t = await getTokenRef.current();
-          return invitationsApi(createApiClient(t ?? '')).listMine();
+          const client = await mkClient();
+          return invitationsApi(client).listMine();
         },
         accept: async (token: string) => {
-          const t = await getTokenRef.current();
-          return invitationsApi(createApiClient(t ?? '')).accept(token);
+          const client = await mkClient();
+          return invitationsApi(client).accept(token);
         },
         decline: async (token: string) => {
-          const t = await getTokenRef.current();
-          return invitationsApi(createApiClient(t ?? '')).decline(token);
+          const client = await mkClient();
+          return invitationsApi(client).decline(token);
         },
       },
       notifications: {
         list: async (params?: { unread?: boolean; limit?: number }) => {
-          const t = await getTokenRef.current();
-          return notificationsApi(createApiClient(t ?? '')).list(params);
+          const client = await mkClient();
+          return notificationsApi(client).list(params);
         },
         unreadCount: async () => {
-          const t = await getTokenRef.current();
-          return notificationsApi(createApiClient(t ?? '')).unreadCount();
+          const client = await mkClient();
+          return notificationsApi(client).unreadCount();
         },
         markRead: async (id: number) => {
-          const t = await getTokenRef.current();
-          return notificationsApi(createApiClient(t ?? '')).markRead(id);
+          const client = await mkClient();
+          return notificationsApi(client).markRead(id);
         },
         markAllRead: async () => {
-          const t = await getTokenRef.current();
-          return notificationsApi(createApiClient(t ?? '')).markAllRead();
+          const client = await mkClient();
+          return notificationsApi(client).markAllRead();
         },
       },
       dashboard: {
         getMyDashboard: async (appId: number) => {
-          const t = await getTokenRef.current();
-          return dashboardApi(createApiClient(t ?? '')).getMyDashboard(appId);
+          const client = await mkClient();
+          return dashboardApi(client).getMyDashboard(appId);
         },
         getTeamDashboard: async (appId: number) => {
-          const t = await getTokenRef.current();
-          return dashboardApi(createApiClient(t ?? '')).getTeamDashboard(appId);
+          const client = await mkClient();
+          return dashboardApi(client).getTeamDashboard(appId);
         },
       },
       tasks: {
         list: async (appId: number, params?: Record<string, unknown>) => {
-          const t = await getTokenRef.current();
-          return tasksApi(createApiClient(t ?? '')).list(appId, params);
+          const client = await mkClient();
+          return tasksApi(client).list(appId, params);
         },
         get: async (appId: number, taskId: number) => {
-          const t = await getTokenRef.current();
-          return tasksApi(createApiClient(t ?? '')).get(appId, taskId);
+          const client = await mkClient();
+          return tasksApi(client).get(appId, taskId);
         },
         create: async (appId: number, data: Record<string, unknown>) => {
-          const t = await getTokenRef.current();
-          return tasksApi(createApiClient(t ?? '')).create(appId, data);
+          const client = await mkClient();
+          return tasksApi(client).create(appId, data);
         },
         update: async (appId: number, taskId: number, data: Record<string, unknown>) => {
-          const t = await getTokenRef.current();
-          return tasksApi(createApiClient(t ?? '')).update(appId, taskId, data);
+          const client = await mkClient();
+          return tasksApi(client).update(appId, taskId, data);
         },
         delete: async (appId: number, taskId: number) => {
-          const t = await getTokenRef.current();
-          return tasksApi(createApiClient(t ?? '')).delete(appId, taskId);
+          const client = await mkClient();
+          return tasksApi(client).delete(appId, taskId);
         },
         startTimer: async (appId: number, taskId: number) => {
-          const t = await getTokenRef.current();
-          return tasksApi(createApiClient(t ?? '')).startTimer(appId, taskId);
+          const client = await mkClient();
+          return tasksApi(client).startTimer(appId, taskId);
         },
         stopTimer: async (appId: number, taskId: number) => {
-          const t = await getTokenRef.current();
-          return tasksApi(createApiClient(t ?? '')).stopTimer(appId, taskId);
+          const client = await mkClient();
+          return tasksApi(client).stopTimer(appId, taskId);
         },
         getTimeline: async (appId: number, taskId: number) => {
-          const t = await getTokenRef.current();
-          return tasksApi(createApiClient(t ?? '')).getTimeline(appId, taskId);
+          const client = await mkClient();
+          return tasksApi(client).getTimeline(appId, taskId);
         },
         getComments: async (appId: number, taskId: number) => {
-          const t = await getTokenRef.current();
-          return tasksApi(createApiClient(t ?? '')).getComments(appId, taskId);
+          const client = await mkClient();
+          return tasksApi(client).getComments(appId, taskId);
         },
         addComment: async (appId: number, taskId: number, body: string) => {
-          const t = await getTokenRef.current();
-          return tasksApi(createApiClient(t ?? '')).addComment(appId, taskId, body);
+          const client = await mkClient();
+          return tasksApi(client).addComment(appId, taskId, body);
         },
         deleteComment: async (appId: number, taskId: number, commentId: number) => {
-          const t = await getTokenRef.current();
-          return tasksApi(createApiClient(t ?? '')).deleteComment(appId, taskId, commentId);
+          const client = await mkClient();
+          return tasksApi(client).deleteComment(appId, taskId, commentId);
         },
         getChecklist: async (appId: number, taskId: number) => {
-          const t = await getTokenRef.current();
-          return tasksApi(createApiClient(t ?? '')).getChecklist(appId, taskId);
+          const client = await mkClient();
+          return tasksApi(client).getChecklist(appId, taskId);
         },
         addChecklistItem: async (appId: number, taskId: number, label: string) => {
-          const t = await getTokenRef.current();
-          return tasksApi(createApiClient(t ?? '')).addChecklistItem(appId, taskId, label);
+          const client = await mkClient();
+          return tasksApi(client).addChecklistItem(appId, taskId, label);
         },
         toggleChecklistItem: async (appId: number, taskId: number, itemId: number, checked: boolean) => {
-          const t = await getTokenRef.current();
-          return tasksApi(createApiClient(t ?? '')).toggleChecklistItem(appId, taskId, itemId, checked);
+          const client = await mkClient();
+          return tasksApi(client).toggleChecklistItem(appId, taskId, itemId, checked);
         },
         getTimeLogs: async (appId: number, taskId: number) => {
-          const t = await getTokenRef.current();
-          return tasksApi(createApiClient(t ?? '')).getTimeLogs(appId, taskId);
+          const client = await mkClient();
+          return tasksApi(client).getTimeLogs(appId, taskId);
         },
         addTimeLog: async (appId: number, taskId: number, data: Record<string, unknown>) => {
-          const t = await getTokenRef.current();
-          return tasksApi(createApiClient(t ?? '')).addTimeLog(appId, taskId, data);
+          const client = await mkClient();
+          return tasksApi(client).addTimeLog(appId, taskId, data);
         },
       },
       feed: {
         list: async (appId: number) => {
-          const t = await getTokenRef.current();
-          return feedApi(createApiClient(t ?? '')).list(appId);
+          const client = await mkClient();
+          return feedApi(client).list(appId);
         },
         create: async (appId: number, data: Record<string, unknown>) => {
-          const t = await getTokenRef.current();
-          return feedApi(createApiClient(t ?? '')).create(appId, data);
+          const client = await mkClient();
+          return feedApi(client).create(appId, data);
         },
         delete: async (appId: number, postId: number) => {
-          const t = await getTokenRef.current();
-          return feedApi(createApiClient(t ?? '')).delete(appId, postId);
+          const client = await mkClient();
+          return feedApi(client).delete(appId, postId);
         },
         addReaction: async (appId: number, postId: number, emoji: string) => {
-          const t = await getTokenRef.current();
-          return feedApi(createApiClient(t ?? '')).addReaction(appId, postId, emoji);
+          const client = await mkClient();
+          return feedApi(client).addReaction(appId, postId, emoji);
         },
         getComments: async (appId: number, postId: number) => {
-          const t = await getTokenRef.current();
-          return feedApi(createApiClient(t ?? '')).getComments(appId, postId);
+          const client = await mkClient();
+          return feedApi(client).getComments(appId, postId);
         },
         addComment: async (appId: number, postId: number, content: string) => {
-          const t = await getTokenRef.current();
-          return feedApi(createApiClient(t ?? '')).addComment(appId, postId, content);
+          const client = await mkClient();
+          return feedApi(client).addComment(appId, postId, content);
         },
       },
       performance: {
         getCycles: async (appId: number) => {
-          const t = await getTokenRef.current();
-          return performanceApi(createApiClient(t ?? '')).getCycles(appId);
+          const client = await mkClient();
+          return performanceApi(client).getCycles(appId);
         },
         getGoals: async (appId: number, params?: Record<string, unknown>) => {
-          const t = await getTokenRef.current();
-          return performanceApi(createApiClient(t ?? '')).getGoals(appId, params);
+          const client = await mkClient();
+          return performanceApi(client).getGoals(appId, params);
         },
         createGoal: async (appId: number, data: Record<string, unknown>) => {
-          const t = await getTokenRef.current();
-          return performanceApi(createApiClient(t ?? '')).createGoal(appId, data);
+          const client = await mkClient();
+          return performanceApi(client).createGoal(appId, data);
         },
         submitGoalForApproval: async (appId: number, goalId: number) => {
-          const t = await getTokenRef.current();
-          return performanceApi(createApiClient(t ?? '')).submitGoalForApproval(appId, goalId);
+          const client = await mkClient();
+          return performanceApi(client).submitGoalForApproval(appId, goalId);
         },
         getAppraisals: async (appId: number, params?: Record<string, unknown>) => {
-          const t = await getTokenRef.current();
-          return performanceApi(createApiClient(t ?? '')).getAppraisals(appId, params);
+          const client = await mkClient();
+          return performanceApi(client).getAppraisals(appId, params);
         },
         listMyReviews: async (appId: number) => {
-          const t = await getTokenRef.current();
-          return performanceApi(createApiClient(t ?? '')).listMyReviews(appId);
+          const client = await mkClient();
+          return performanceApi(client).listMyReviews(appId);
         },
         listPendingForMe: async (appId: number) => {
-          const t = await getTokenRef.current();
-          return performanceApi(createApiClient(t ?? '')).listPendingForMe(appId);
+          const client = await mkClient();
+          return performanceApi(client).listPendingForMe(appId);
         },
       },
       employees: {
         list: async (appId: number) => {
-          const t = await getTokenRef.current();
-          return employeesApi(createApiClient(t ?? '')).list(appId);
+          const client = await mkClient();
+          return employeesApi(client).list(appId);
         },
         get: async (appId: number, employeeId: number) => {
-          const t = await getTokenRef.current();
-          return employeesApi(createApiClient(t ?? '')).get(appId, employeeId);
+          const client = await mkClient();
+          return employeesApi(client).get(appId, employeeId);
         },
         getOrgChart: async (appId: number) => {
-          const t = await getTokenRef.current();
-          return employeesApi(createApiClient(t ?? '')).getOrgChart(appId);
+          const client = await mkClient();
+          return employeesApi(client).getOrgChart(appId);
         },
       },
       appreciations: {
         give: async (appId: number, data: { to_user_id: number; message: string; badge?: string }) => {
-          const t = await getTokenRef.current();
-          return appreciationsApi(createApiClient(t ?? '')).give(appId, data);
+          const client = await mkClient();
+          return appreciationsApi(client).give(appId, data);
         },
         listReceived: async (appId: number) => {
-          const t = await getTokenRef.current();
-          return appreciationsApi(createApiClient(t ?? '')).listReceived(appId);
+          const client = await mkClient();
+          return appreciationsApi(client).listReceived(appId);
         },
       },
       timeLogs: {
         getSummary: async (appId: number, params?: { period?: string; start_date?: string; end_date?: string }) => {
-          const t = await getTokenRef.current();
-          return timeLogsApi(createApiClient(t ?? '')).getSummary(appId, params);
+          const client = await mkClient();
+          return timeLogsApi(client).getSummary(appId, params);
         },
       },
     }),

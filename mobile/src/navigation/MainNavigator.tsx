@@ -1,4 +1,5 @@
 import React from 'react';
+import { View } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -68,16 +69,34 @@ export default function MainNavigator() {
           height: 72,
         },
         tabBarItemStyle: { paddingVertical: 2 },
-        tabBarLabelStyle: { fontSize: 11, fontWeight: '500' },
-        tabBarIcon: ({ color, size }) => {
-          const icons: Record<string, keyof typeof Ionicons.glyphMap> = {
+        tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
+        tabBarIcon: ({ color, size, focused }) => {
+          const outlineIcons: Record<string, keyof typeof Ionicons.glyphMap> = {
             DashboardTab: 'home-outline',
             TasksTab: 'checkmark-circle-outline',
             FeedTab: 'newspaper-outline',
             PerformanceTab: 'trending-up-outline',
             ProfileTab: 'person-outline',
           };
-          return <Ionicons name={icons[route.name]} size={size} color={color} />;
+          const filledIcons: Record<string, keyof typeof Ionicons.glyphMap> = {
+            DashboardTab: 'home',
+            TasksTab: 'checkmark-circle',
+            FeedTab: 'newspaper',
+            PerformanceTab: 'trending-up',
+            ProfileTab: 'person',
+          };
+          const iconName = focused ? filledIcons[route.name] : outlineIcons[route.name];
+          return (
+            <View style={{ alignItems: 'center', gap: 4 }}>
+              <Ionicons name={iconName} size={size} color={color} />
+              {focused && (
+                <View style={{
+                  width: 16, height: 3, borderRadius: 2,
+                  backgroundColor: colors.primary,
+                }} />
+              )}
+            </View>
+          );
         },
       })}
     >

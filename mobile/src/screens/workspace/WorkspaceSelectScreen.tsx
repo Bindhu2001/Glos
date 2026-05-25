@@ -6,7 +6,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useClerk } from '@clerk/clerk-expo';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
+import { Image } from 'react-native';
 import { useApi } from '../../hooks/useApi';
 import { useWorkspace } from '../../contexts/WorkspaceContext';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -18,6 +18,7 @@ interface App {
   name: string;
   role: string;
   type: string;
+  billing_status?: string;
 }
 
 interface Invitation {
@@ -75,7 +76,9 @@ export default function WorkspaceSelectScreen() {
       );
     } catch (err: any) {
       const status = err?.response?.status;
+      const code = err?.response?.data?.code;
       if (status === 401) setError('Session expired. Please sign in again.');
+      else if (code === 'ACCOUNT_DEACTIVATED') setError('Your account has been deactivated. Please contact your administrator.');
       else if (status === 403) setError('Access denied. You may not be a member of any workspace.');
       else setError(`Could not load workspaces (${status ?? 'network error'})`);
     } finally {
@@ -142,14 +145,11 @@ export default function WorkspaceSelectScreen() {
       {/* Top row: logo left + illustration right */}
       <View style={s.lightTopRow}>
         <View style={s.lightLogoCol}>
-          <LinearGradient
-            colors={['#4F6EF7', '#0e9f6e']}
-            start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-            style={s.logoBox}
-          >
-            <Text style={s.logoText}>GLOS</Text>
-          </LinearGradient>
-          <Text style={s.logoTagline}>— Perform Better —</Text>
+          <Image
+            source={require('../../../assets/logo.png')}
+            style={s.logoImg}
+            resizeMode="contain"
+          />
         </View>
         {/* 3D-style app illustration */}
         <View style={s.lightIllustration}>
@@ -179,14 +179,11 @@ export default function WorkspaceSelectScreen() {
 
   const DarkHero = (
     <View style={s.darkHero}>
-      <LinearGradient
-        colors={['#4F6EF7', '#0e9f6e']}
-        start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-        style={s.logoBox}
-      >
-        <Text style={s.logoText}>GLOS</Text>
-      </LinearGradient>
-      <Text style={s.logoTaglineDark}>— Perform Better —</Text>
+      <Image
+        source={require('../../../assets/logo.png')}
+        style={s.logoImg}
+        resizeMode="contain"
+      />
 
       {/* Orbital illustration */}
       <View style={s.orbitWrap}>
@@ -318,27 +315,40 @@ export default function WorkspaceSelectScreen() {
             </View>
           }
           renderItem={({ item }) => {
-            const iconColor = colorForName(item.name);
+            const isSuspended = item.billing_status === 'suspended' || item.billing_status === 'cancelled';
+            const iconColor = isSuspended ? colors.gray400 : colorForName(item.name);
             const rc = roleColor(item.role);
             return (
               <TouchableOpacity
-                style={[s.appCard, { borderLeftColor: iconColor }]}
-                onPress={() => selectApp(item)}
-                activeOpacity={0.8}
+                style={[
+                  s.appCard,
+                  { borderLeftColor: iconColor },
+                  isSuspended && s.appCardDisabled,
+                ]}
+                onPress={isSuspended ? undefined : () => selectApp(item)}
+                activeOpacity={isSuspended ? 1 : 0.8}
+                disabled={isSuspended}
               >
                 <View style={[s.appIcon, { backgroundColor: iconColor }]}>
                   <Text style={s.appIconText}>{item.name[0]?.toUpperCase()}</Text>
                 </View>
                 <View style={s.appInfo}>
-                  <Text style={s.appName}>{item.name}</Text>
+                  <Text style={[s.appName, isSuspended && s.appNameDisabled]}>{item.name}</Text>
                   <Text style={s.appType}>{item.type?.toUpperCase()}</Text>
                 </View>
-                {item.role ? (
+                {isSuspended ? (
+                  <View style={s.suspendedBadge}>
+                    <Ionicons name="ban-outline" size={11} color={colors.danger} />
+                    <Text style={s.suspendedText}>
+                      {item.billing_status === 'cancelled' ? 'Cancelled' : 'Suspended'}
+                    </Text>
+                  </View>
+                ) : item.role ? (
                   <View style={[s.roleBadge, { backgroundColor: rc + '22' }]}>
                     <Text style={[s.roleText, { color: rc }]}>{item.role?.replace('_', ' ')}</Text>
                   </View>
                 ) : null}
-                <Ionicons name="chevron-forward" size={18} color={colors.gray400} />
+                {!isSuspended && <Ionicons name="chevron-forward" size={18} color={colors.gray400} />}
               </TouchableOpacity>
             );
           }}
@@ -353,8 +363,7 @@ function makeStyles(c: AppColors) {
     container: { flex: 1, backgroundColor: c.background },
 
     // ── Shared ──
-    logoBox: { paddingHorizontal: 18, paddingVertical: 8, borderRadius: 12 },
-    logoText: { fontSize: 28, fontWeight: '900', color: '#ffffff', letterSpacing: 2 },
+    logoImg: { width: 130, height: 48 },
     signOutText: { fontSize: 14, color: c.danger, fontWeight: '600' },
 
     // ── Light Hero ──
@@ -446,13 +455,20 @@ function makeStyles(c: AppColors) {
       shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
       shadowOpacity: 0.06, shadowRadius: 4, elevation: 2,
     },
+    appCardDisabled: { opacity: 0.5 },
     appIcon: { width: 46, height: 46, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
     appIconText: { fontSize: 20, fontWeight: '800', color: '#ffffff' },
     appInfo: { flex: 1 },
     appName: { fontSize: 15, fontWeight: '700', color: c.textPrimary },
+    appNameDisabled: { color: c.textMuted },
     appType: { fontSize: 11, color: c.textSecondary, marginTop: 2 },
     roleBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
     roleText: { fontSize: 11, fontWeight: '600', textTransform: 'capitalize' },
+    suspendedBadge: {
+      flexDirection: 'row', alignItems: 'center', gap: 4,
+      backgroundColor: c.dangerLight, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8,
+    },
+    suspendedText: { fontSize: 11, fontWeight: '600', color: c.danger },
 
     // Error / empty
     errorContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 12 },

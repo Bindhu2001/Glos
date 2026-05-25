@@ -11,6 +11,7 @@ import { useWorkspace } from '../../contexts/WorkspaceContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { AppColors } from '../../utils/colors';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
+import EmptyState from '../../components/common/EmptyState';
 
 type Tab = 'work' | 'goals' | 'reviews';
 
@@ -104,7 +105,7 @@ export default function PerformanceScreen() {
       setGoals(norm(goalsRes.data));
       setAllReviews(norm(reviewsRes.data));
     } catch {}
-  }, [workspace]);
+  }, [workspace, api]);
 
   useEffect(() => {
     load().finally(() => setLoading(false));
@@ -219,10 +220,7 @@ export default function PerformanceScreen() {
           <>
             <Text style={s.sectionLabel}>Pending Self-Ratings</Text>
             {pendingReviews.length === 0 ? (
-              <View style={s.emptyCard}>
-                <Ionicons name="checkmark-circle-outline" size={32} color={colors.success} />
-                <Text style={s.emptyText}>No pending self-ratings</Text>
-              </View>
+              <EmptyState icon="checkmark-circle-outline" title="No pending self-ratings" />
             ) : (
               pendingReviews.map((r) => (
                 <View key={r.id} style={s.card}>
@@ -239,9 +237,7 @@ export default function PerformanceScreen() {
 
             <Text style={[s.sectionLabel, { marginTop: 20 }]}>My Appraisals</Text>
             {pendingAppraisals.length === 0 ? (
-              <View style={s.emptyCard}>
-                <Text style={s.emptyText}>No appraisals found</Text>
-              </View>
+              <EmptyState icon="document-text-outline" title="No appraisals found" />
             ) : (
               pendingAppraisals.map((a) => (
                 <View key={a.id} style={s.card}>
@@ -266,10 +262,7 @@ export default function PerformanceScreen() {
             </View>
 
             {goals.length === 0 ? (
-              <View style={s.emptyCard}>
-                <Ionicons name="flag-outline" size={32} color={colors.gray300} />
-                <Text style={s.emptyText}>No goals yet. Add your first goal.</Text>
-              </View>
+              <EmptyState icon="flag-outline" title="No goals yet" subtitle="Add your first goal." />
             ) : (
               goals.map((g) => (
                 <View key={g.id} style={s.card}>
@@ -294,10 +287,7 @@ export default function PerformanceScreen() {
           <>
             <Text style={s.sectionLabel}>My Performance Reviews</Text>
             {allReviews.length === 0 ? (
-              <View style={s.emptyCard}>
-                <Ionicons name="document-text-outline" size={32} color={colors.gray300} />
-                <Text style={s.emptyText}>No reviews found</Text>
-              </View>
+              <EmptyState icon="document-text-outline" title="No reviews found" />
             ) : (
               allReviews.map((r) => (
                 <View key={r.id} style={s.card}>
@@ -434,11 +424,6 @@ function makeStyles(c: AppColors) {
     cardTitle: { flex: 1, fontSize: 14, fontWeight: '600', color: c.textPrimary },
     cardMeta: { fontSize: 12, color: c.textSecondary, marginTop: 4 },
     cardHint: { fontSize: 12, color: c.primary, marginTop: 6, fontStyle: 'italic' },
-    emptyCard: {
-      backgroundColor: c.surface, borderRadius: 12, padding: 24,
-      alignItems: 'center', gap: 8, marginBottom: 10, borderWidth: 1, borderColor: c.border,
-    },
-    emptyText: { fontSize: 13, color: c.textSecondary, textAlign: 'center' },
     addBtn: {
       flexDirection: 'row', alignItems: 'center', gap: 4,
       backgroundColor: c.primary, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8,

@@ -5,9 +5,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
-import { useClerk } from '@clerk/clerk-expo';
 import { useApi } from '../../hooks/useApi';
 import { useWorkspace } from '../../contexts/WorkspaceContext';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -51,7 +49,6 @@ export default function ProfileScreen() {
   const api = useApi();
   const { workspace, setWorkspace } = useWorkspace();
   const { isDark, toggleTheme, colors } = useTheme();
-  const { signOut } = useClerk();
   const s = useMemo(() => makeStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
@@ -78,7 +75,7 @@ export default function ProfileScreen() {
       const aData = perf[1].data;
       setAppraisals(Array.isArray(aData) ? aData : (aData?.items ?? []));
     } catch {}
-  }, [workspace]);
+  }, [workspace, api]);
 
   useEffect(() => {
     load().finally(() => setLoading(false));
@@ -106,25 +103,23 @@ export default function ProfileScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
         {/* Hero Card */}
-        <LinearGradient
-          colors={['#4F6EF7', '#7e3af2']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={s.heroCard}
-        >
+        <View style={s.heroCard}>
+          <View style={s.heroBannerAccent} />
           <View style={s.avatarCircle}>
             <Text style={s.avatarText}>
               {fullName.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)}
             </Text>
           </View>
-          <Text style={s.heroName}>{fullName}</Text>
-          <Text style={s.heroEmail}>{profile?.email}</Text>
-          {workspace && (
-            <View style={s.memberBadge}>
-              <Text style={s.memberBadgeText}>{workspace.role.replace('_', ' ')}</Text>
-            </View>
-          )}
-        </LinearGradient>
+          <View style={{ flex: 1 }}>
+            <Text style={s.heroName}>{fullName}</Text>
+            <Text style={s.heroEmail}>{profile?.email}</Text>
+            {workspace && (
+              <View style={[s.memberBadge, { marginLeft: 0, marginTop: 6, alignSelf: 'flex-start' }]}>
+                <Text style={s.memberBadgeText}>{workspace.role.replace('_', ' ')}</Text>
+              </View>
+            )}
+          </View>
+        </View>
 
         {/* Workspace */}
         <SectionCard title="WORKSPACE" s={s}>
@@ -202,19 +197,6 @@ export default function ProfileScreen() {
             />
           </SectionCard>
         )}
-
-        {/* Account */}
-        <SectionCard title="ACCOUNT" s={s}>
-          <MenuRow
-            icon="log-out-outline"
-            label="Sign Out"
-            onPress={() => { setWorkspace(null); signOut(); }}
-            danger
-            colors={colors}
-            s={s}
-          />
-        </SectionCard>
-
         <Text style={s.version}>GreatLeap Mobile v1.0.0</Text>
       </ScrollView>
     </View>
@@ -234,24 +216,32 @@ function makeStyles(c: AppColors) {
 
     // Hero
     heroCard: {
-      borderRadius: 20, padding: 28, alignItems: 'center',
-      marginBottom: 14,
-      shadowColor: '#4F6EF7', shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.3, shadowRadius: 12, elevation: 6,
+      flexDirection: 'row', alignItems: 'center', gap: 12,
+      backgroundColor: c.surface, borderRadius: 16, padding: 16,
+      marginBottom: 14, borderWidth: 1, borderColor: c.border,
+      overflow: 'hidden',
+      shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.04, shadowRadius: 4, elevation: 2,
+    },
+    heroBannerAccent: {
+      position: 'absolute', right: -10, top: -10,
+      width: 60, height: 60, borderRadius: 12,
+      backgroundColor: c.primaryLight, opacity: 0.5, transform: [{ rotate: '20deg' }],
     },
     avatarCircle: {
-      width: 72, height: 72, borderRadius: 36,
-      backgroundColor: 'rgba(255,255,255,0.25)',
-      alignItems: 'center', justifyContent: 'center', marginBottom: 12,
+      width: 52, height: 52, borderRadius: 14,
+      backgroundColor: c.primaryLight, borderWidth: 2, borderColor: c.primary + '55',
+      alignItems: 'center', justifyContent: 'center', flexShrink: 0,
     },
-    avatarText: { fontSize: 28, fontWeight: '800', color: '#ffffff' },
-    heroName: { fontSize: 20, fontWeight: '800', color: '#ffffff', marginBottom: 4 },
-    heroEmail: { fontSize: 13, color: 'rgba(255,255,255,0.8)', marginBottom: 10 },
+    avatarText: { fontSize: 18, fontWeight: '900', color: c.primary },
+    heroName: { fontSize: 16, fontWeight: '900', color: c.textPrimary, letterSpacing: -0.3 },
+    heroEmail: { fontSize: 11, color: c.textMuted, marginTop: 2 },
     memberBadge: {
-      backgroundColor: 'rgba(255,255,255,0.2)',
-      paddingHorizontal: 14, paddingVertical: 4, borderRadius: 20,
+      backgroundColor: c.primaryLight,
+      paddingHorizontal: 10, paddingVertical: 3, borderRadius: 20,
+      marginLeft: 'auto',
     },
-    memberBadgeText: { fontSize: 12, fontWeight: '600', color: '#ffffff', textTransform: 'capitalize' },
+    memberBadgeText: { fontSize: 11, fontWeight: '600', color: c.primary, textTransform: 'capitalize' },
 
     // Section cards
     sectionCard: {
@@ -279,7 +269,6 @@ function makeStyles(c: AppColors) {
       borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4,
     },
     unreadText: { fontSize: 11, color: '#ffffff', fontWeight: '700' },
-
     version: { fontSize: 12, color: c.gray400, textAlign: 'center', marginTop: 8 },
   });
 }

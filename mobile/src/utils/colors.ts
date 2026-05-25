@@ -1,42 +1,46 @@
 export const LightColors = {
-  primary: '#4F6EF7',
-  primaryLight: '#EEF2FF',
-  primaryDark: '#3B56D9',
+  primary: '#4f46e5',
+  primaryLight: '#ede9fe',
+  primaryDark: '#3730a3',
 
-  success: '#0e9f6e',
-  successLight: '#def7ec',
-  warning: '#c27803',
-  warningLight: '#fdf6b2',
-  danger: '#e02424',
-  dangerLight: '#fde8e8',
-  info: '#0694a2',
-  infoLight: '#e0f7fa',
+  secondary: '#7c3aed',
+
+  success: '#16a34a',
+  successLight: '#e1fced',
+  warning: '#d97706',
+  warningLight: '#fef3c7',
+  danger: '#dc2626',
+  dangerLight: '#fee2e2',
+  info: '#0891b2',
+  infoLight: '#e0f7fe',
 
   white: '#ffffff',
-  black: '#111928',
-  gray50: '#f8fafc',
-  gray100: '#f1f5f9',
-  gray200: '#e2e8f0',
-  gray300: '#cbd5e1',
-  gray400: '#94a3b8',
-  gray500: '#64748b',
-  gray600: '#475569',
-  gray700: '#334155',
-  gray800: '#1e293b',
-  gray900: '#0f172a',
+  black: '#1e1b4b',
+  gray50: '#f4f5ff',
+  gray100: '#ede9fe',
+  gray200: '#e0e7ff',
+  gray300: '#c7d2fe',
+  gray400: '#a5b4fc',
+  gray500: '#818cf8',
+  gray600: '#6b7280',
+  gray700: '#374151',
+  gray800: '#1f2937',
+  gray900: '#1e1b4b',
 
-  background: '#f1f5f9',
+  background: '#f4f5ff',
   surface: '#ffffff',
-  border: '#e2e8f0',
-  textPrimary: '#0f172a',
-  textSecondary: '#64748b',
-  textMuted: '#94a3b8',
+  border: '#e0e7ff',
+  textPrimary: '#1e1b4b',
+  textSecondary: '#6b7280',
+  textMuted: '#a5b4fc',
 };
 
 export const DarkColors: typeof LightColors = {
-  primary: '#6B82FF',
+  primary: '#818cf8',
   primaryLight: '#1e1b4b',
-  primaryDark: '#4F6EF7',
+  primaryDark: '#4f46e5',
+
+  secondary: '#a78bfa',
 
   success: '#10b981',
   successLight: '#064e3b',
@@ -70,22 +74,21 @@ export const DarkColors: typeof LightColors = {
 
 export type AppColors = typeof LightColors;
 
-// Backward-compat alias (light theme for static references)
 export const Colors = LightColors;
 
 export const StatusColors: Record<string, { bg: string; text: string }> = {
-  open: { bg: '#f3f4f6', text: '#374151' },
-  todo: { bg: '#f3f4f6', text: '#374151' },
-  in_progress: { bg: '#EEF2FF', text: '#4F6EF7' },
-  in_review: { bg: '#fdf6b2', text: '#c27803' },
-  blocked: { bg: '#fde8e8', text: '#e02424' },
-  done: { bg: '#def7ec', text: '#0e9f6e' },
-  cancelled: { bg: '#fdf6b2', text: '#c27803' },
+  open:        { bg: '#ede9fe', text: '#4f46e5' },
+  todo:        { bg: '#ede9fe', text: '#4f46e5' },
+  in_progress: { bg: '#dbeafe', text: '#2563eb' },
+  in_review:   { bg: '#fef3c7', text: '#d97706' },
+  blocked:     { bg: '#fee2e2', text: '#dc2626' },
+  done:        { bg: '#e1fced', text: '#16a34a' },
+  cancelled:   { bg: '#fef3c7', text: '#d97706' },
 };
 
 export const PriorityColors: Record<string, { bg: string; text: string }> = {
-  low: { bg: '#def7ec', text: '#0e9f6e' },
-  medium: { bg: '#fdf6b2', text: '#c27803' },
-  high: { bg: '#fde8e8', text: '#e02424' },
-  urgent: { bg: '#e02424', text: '#ffffff' },
+  low:    { bg: '#e1fced', text: '#16a34a' },
+  medium: { bg: '#fef3c7', text: '#d97706' },
+  high:   { bg: '#fee2e2', text: '#dc2626' },
+  urgent: { bg: '#dc2626', text: '#ffffff' },
 };

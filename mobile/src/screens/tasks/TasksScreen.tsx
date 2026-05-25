@@ -18,7 +18,7 @@ import { TasksStackParamList } from '../../navigation/types';
 
 type Nav = NativeStackNavigationProp<TasksStackParamList, 'TasksList'>;
 
-const FILTERS = ['All', 'My Tasks', 'In Progress', 'Done'];
+const FILTERS = ['All', 'My Tasks', 'Active', 'Done'];
 
 export default function TasksScreen() {
   const api = useApi();
@@ -46,7 +46,7 @@ export default function TasksScreen() {
       const id = meRes.data?.id ?? meRes.data?.user?.id ?? null;
       setMeId(id);
     } catch {}
-  }, [workspace]);
+  }, [workspace, api]);
 
   useEffect(() => {
     load().finally(() => setLoading(false));
@@ -61,7 +61,7 @@ export default function TasksScreen() {
   const filtered = tasks.filter((t) => {
     const matchSearch = !search || t.title.toLowerCase().includes(search.toLowerCase());
     let matchFilter = true;
-    if (activeFilter === 'In Progress') matchFilter = t.status === 'in_progress';
+    if (activeFilter === 'Active') matchFilter = t.status === 'in_progress';
     else if (activeFilter === 'Done') matchFilter = t.status === 'done';
     else if (activeFilter === 'My Tasks' && meId !== null)
       matchFilter = t.assigned_to_user_id === meId || t.created_by_user_id === meId;
@@ -78,7 +78,7 @@ export default function TasksScreen() {
           style={s.addBtn}
           onPress={() => navigation.navigate('CreateTask', { appId: workspace!.id })}
         >
-          <Ionicons name="add" size={20} color="#ffffff" />
+          <Ionicons name="add" size={20} color={colors.primary} />
         </TouchableOpacity>
       </View>
 
@@ -140,8 +140,9 @@ function makeStyles(c: AppColors) {
     },
     title: { fontSize: 20, fontWeight: '700', color: c.textPrimary },
     addBtn: {
-      width: 36, height: 36, borderRadius: 10, backgroundColor: c.primary,
+      width: 36, height: 36, borderRadius: 10, backgroundColor: c.primaryLight,
       alignItems: 'center', justifyContent: 'center',
+      borderWidth: 1, borderColor: c.primary + '33',
     },
     searchBar: {
       flexDirection: 'row', alignItems: 'center', gap: 8,
@@ -153,11 +154,11 @@ function makeStyles(c: AppColors) {
     filters: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingVertical: 10 },
     chip: {
       paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20,
-      backgroundColor: c.surface, borderWidth: 1.5, borderColor: c.border,
+      backgroundColor: c.surface, borderWidth: 1, borderColor: c.border,
     },
-    chipActive: { backgroundColor: c.primary, borderColor: c.primary },
-    chipText: { fontSize: 13, fontWeight: '500', color: c.gray600 },
-    chipTextActive: { color: '#ffffff' },
+    chipActive: { backgroundColor: c.primaryLight, borderColor: c.primary + '66' },
+    chipText: { fontSize: 13, fontWeight: '600', color: c.textMuted },
+    chipTextActive: { color: c.primary, fontWeight: '700' },
     list: { padding: 16, paddingBottom: 32 },
   });
 }

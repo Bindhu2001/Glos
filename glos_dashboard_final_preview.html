@@ -1,0 +1,113 @@
+
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+.page{padding:4px 0}
+.phone{border-radius:28px;overflow:hidden;border:1.5px solid rgba(99,102,241,0.15);background:#f4f5ff;max-width:210px;margin:0 auto;font-family:var(--font-sans)}
+.sb{display:flex;justify-content:space-between;align-items:center;padding:11px 16px 0;background:#f4f5ff}
+.st{font-size:11px;font-weight:700;color:#3730a3}
+.si{display:flex;gap:4px;align-items:center}
+.si i{font-size:11px;color:#a5b4fc}
+.toprow{padding:9px 16px 0;display:flex;align-items:center;justify-content:space-between;background:#f4f5ff}
+.logo-wm{font-size:21px;font-weight:900;letter-spacing:-.05em;line-height:1}
+.logo-wm .G{color:#4f46e5}.logo-wm .L{color:#7c3aed}.logo-wm .O{color:#9333ea}.logo-wm .S{color:#a855f7}
+.logo-tag{font-size:7px;color:#a5b4fc;letter-spacing:.13em;text-transform:uppercase;margin-top:1px;font-weight:700}
+.top-right{display:flex;align-items:center;gap:6px}
+.ibtn{width:30px;height:30px;border-radius:9px;background:#fff;border:1px solid rgba(99,102,241,0.15);display:flex;align-items:center;justify-content:center;font-size:14px;color:#6366f1;position:relative}
+.ndot::after{content:'';position:absolute;top:5px;right:5px;width:6px;height:6px;border-radius:50%;background:#a855f7;border:1.5px solid #f4f5ff}
+.av{width:30px;height:30px;border-radius:9px;background:#ede9fe;border:1.5px solid #a5b4fc;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:900;color:#4f46e5}
+.greet-band{margin:9px 13px 0;background:#fff;border:1px solid rgba(99,102,241,0.1);border-radius:12px;padding:10px 13px;display:flex;align-items:center;justify-content:space-between}
+.gb-name{font-size:14px;font-weight:900;color:#1e1b4b;letter-spacing:-.02em}
+.gb-sub{font-size:8px;color:#a5b4fc;margin-bottom:1px}
+.gb-ws-name{font-size:9px;font-weight:700;color:#6366f1;text-align:right}
+.gb-ws-type{font-size:7px;color:#c7d2fe;margin-top:1px;text-align:right}
+.feat{margin:9px 13px 0;background:linear-gradient(135deg,#4f46e5 0%,#7c3aed 100%);border-radius:15px;padding:15px;position:relative;overflow:hidden}
+.feat::before{content:'';position:absolute;right:-18px;top:-18px;width:70px;height:70px;border-radius:50%;background:rgba(255,255,255,0.07)}
+.feat-eye{font-size:7px;font-weight:900;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px}
+.feat-num{font-size:40px;font-weight:900;color:#fff;letter-spacing:-.06em;line-height:1;margin-bottom:3px}
+.feat-desc{font-size:9px;color:rgba(255,255,255,0.55);line-height:1.4}
+.feat-tags{display:flex;gap:5px;margin-top:9px}
+.ftag{padding:3px 8px;border-radius:20px;font-size:7px;font-weight:700;display:flex;align-items:center;gap:3px;background:rgba(255,255,255,0.14);color:rgba(255,255,255,0.9)}
+.feat-icon{position:absolute;right:13px;bottom:11px;font-size:34px;color:rgba(255,255,255,0.07)}
+.cell-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;margin:9px 13px 0;border-radius:12px;overflow:hidden;border:1px solid rgba(99,102,241,0.1)}
+.cell{background:#fff;padding:10px 7px;text-align:center;position:relative}
+.cell+.cell{border-left:1px solid rgba(99,102,241,0.08)}
+.cell-num{font-size:19px;font-weight:900;letter-spacing:-.04em;line-height:1;margin-bottom:2px}
+.cell-lbl{font-size:7px;font-weight:700;color:#a5b4fc;text-transform:uppercase;letter-spacing:.06em}
+.cell-bar{position:absolute;bottom:0;left:0;right:0;height:2px}
+
+/* SMALL ROW — time + workspace side by side */
+.small-row{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin:8px 13px 0}
+.s-card{background:#fff;border:1px solid rgba(99,102,241,0.1);border-radius:11px;padding:9px 11px;display:flex;align-items:center;gap:8px}
+.s-ic{width:26px;height:26px;border-radius:8px;background:#ede9fe;display:flex;align-items:center;justify-content:center;font-size:13px;color:#6366f1;flex-shrink:0}
+.s-lbl{font-size:7px;font-weight:700;color:#a5b4fc;text-transform:uppercase;letter-spacing:.07em;margin-bottom:1px}
+.s-val{font-size:11px;font-weight:900;color:#1e1b4b;letter-spacing:-.02em;line-height:1}
+.s-sw{padding:2px 7px;border-radius:20px;background:#ede9fe;color:#6366f1;font-size:7px;font-weight:700;margin-left:auto}
+
+/* FEED */
+.feed-sec{margin:9px 13px 13px}
+.feed-lbl{font-size:7px;font-weight:900;color:#a5b4fc;text-transform:uppercase;letter-spacing:.1em;margin-bottom:7px;display:flex;align-items:center;justify-content:space-between}
+.feed-lbl span{font-size:8px;font-weight:700;color:#6366f1}
+.fi{display:flex;align-items:flex-start;gap:7px;padding:7px 0;border-bottom:1px solid rgba(99,102,241,0.07)}
+.fi:last-child{border-bottom:none}
+.fi-av{width:24px;height:24px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:900;color:#fff;flex-shrink:0;margin-top:1px}
+.fi-av.v{background:#4f46e5}.fi-av.c{background:#0891b2}.fi-av.o{background:#d97706}
+.fi-row{display:flex;align-items:center;gap:4px;margin-bottom:2px}
+.fi-name{font-size:9px;font-weight:700;color:#1e1b4b}
+.fi-type{padding:1px 5px;border-radius:20px;font-size:7px;font-weight:700}
+.ft-post{background:#ede9fe;color:#4f46e5}
+.ft-appr{background:#fdf2f8;color:#a21caf}
+.fi-time{margin-left:auto;font-size:7px;color:#c7d2fe}
+.fi-text{font-size:8px;color:#6b7280;line-height:1.4}
+.nav{display:flex;justify-content:space-around;padding:9px 8px 13px;border-top:1px solid rgba(99,102,241,0.1);background:#fff}
+.ni{display:flex;flex-direction:column;align-items:center;gap:2px}
+.ni i{font-size:17px;color:#e0e7ff}
+.ni span{font-size:7px;color:#e0e7ff}
+.ni.on i{color:#4f46e5}
+.ni-bar{width:14px;height:2px;border-radius:2px;background:#4f46e5;margin:1px auto 0}
+</style>
+<div class="page">
+<div class="phone">
+  <div class="sb"><span class="st">9:41</span><div class="si"><i class="ti ti-wifi" aria-hidden="true"></i><i class="ti ti-battery" aria-hidden="true"></i></div></div>
+  <div class="toprow">
+    <div><div class="logo-wm"><span class="G">G</span><span class="L">L</span><span class="O">O</span><span class="S">S</span></div><div class="logo-tag">Perform Better</div></div>
+    <div class="top-right"><div class="ibtn ndot"><i class="ti ti-bell" aria-hidden="true"></i></div><div class="av">BJ</div></div>
+  </div>
+  <div class="greet-band">
+    <div><div class="gb-sub">Good evening</div><div class="gb-name">Binu J</div></div>
+    <div><div class="gb-ws-name">Great Leap Test</div><div class="gb-ws-type">HR Workspace</div></div>
+  </div>
+  <div class="feat">
+    <div class="feat-eye">My Tasks This Month</div>
+    <div class="feat-num">2</div>
+    <div class="feat-desc">1 in progress · 0 completed</div>
+    <div class="feat-tags">
+      <span class="ftag"><i class="ti ti-clipboard-list" style="font-size:8px" aria-hidden="true"></i> 2 Open</span>
+      <span class="ftag"><i class="ti ti-loader" style="font-size:8px" aria-hidden="true"></i> 1 Active</span>
+      <span class="ftag"><i class="ti ti-trophy" style="font-size:8px" aria-hidden="true"></i> 0 Done</span>
+    </div>
+    <i class="ti ti-chart-bar feat-icon" aria-hidden="true"></i>
+  </div>
+  <div class="cell-row">
+    <div class="cell"><div class="cell-num" style="color:#4f46e5">2</div><div class="cell-lbl">Tasks</div><div class="cell-bar" style="background:#4f46e5"></div></div>
+    <div class="cell"><div class="cell-num" style="color:#16a34a">0</div><div class="cell-lbl">Done</div><div class="cell-bar" style="background:#16a34a"></div></div>
+    <div class="cell"><div class="cell-num" style="color:#d97706">1</div><div class="cell-lbl">Active</div><div class="cell-bar" style="background:#d97706"></div></div>
+  </div>
+  <div class="small-row">
+    <div class="s-card"><div class="s-ic"><i class="ti ti-clock" aria-hidden="true"></i></div><div><div class="s-lbl">Time</div><div class="s-val">2h 50m</div></div></div>
+    <div class="s-card"><div class="s-ic"><i class="ti ti-switch-horizontal" aria-hidden="true"></i></div><div class="s-lbl">Workspace</div><div class="s-sw">Switch</div></div>
+  </div>
+  <div class="feed-sec">
+    <div class="feed-lbl">Team Feed <span>See all</span></div>
+    <div class="fi"><div class="fi-av v">BJ</div><div style="flex:1"><div class="fi-row"><span class="fi-name">Binu J</span><span class="fi-type ft-post">Post</span><span class="fi-time">1d ago</span></div><div class="fi-text">New feed</div></div></div>
+    <div class="fi"><div class="fi-av c">BJ</div><div style="flex:1"><div class="fi-row"><span class="fi-name">Babu Jose</span><span class="fi-type ft-appr">Appreciation</span><span class="fi-time">1d ago</span></div><div class="fi-text">Gave appreciation to Shankar — "Good Work"</div></div></div>
+    <div class="fi"><div class="fi-av o">AK</div><div style="flex:1"><div class="fi-row"><span class="fi-name">Athira K S</span><span class="fi-type ft-appr">Appreciation</span><span class="fi-time">3d ago</span></div><div class="fi-text">Gave appreciation to Bindu Vijayan — "Team work"</div></div></div>
+  </div>
+  <div class="nav">
+    <div class="ni on"><i class="ti ti-home" aria-hidden="true"></i><div class="ni-bar"></div></div>
+    <div class="ni"><i class="ti ti-checkbox" aria-hidden="true"></i><span>Tasks</span></div>
+    <div class="ni"><i class="ti ti-layout-list" aria-hidden="true"></i><span>Feed</span></div>
+    <div class="ni"><i class="ti ti-chart-line" aria-hidden="true"></i><span>Perf</span></div>
+    <div class="ni"><i class="ti ti-user" aria-hidden="true"></i><span>Profile</span></div>
+  </div>
+</div>
+</div>

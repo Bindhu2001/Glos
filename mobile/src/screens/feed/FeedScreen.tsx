@@ -38,7 +38,7 @@ export default function FeedScreen() {
       const d = r.data;
       setPosts(Array.isArray(d) ? d : (d?.items ?? d?.posts ?? []));
     } catch {}
-  }, [workspace]);
+  }, [workspace, api]);
 
   useEffect(() => {
     load().finally(() => setLoading(false));
@@ -64,12 +64,20 @@ export default function FeedScreen() {
     <View style={[s.container, { paddingTop: insets.top }]}>
       <View style={s.header}>
         <Text style={s.title}>Team Feed</Text>
-        <TouchableOpacity
-          style={s.addBtn}
-          onPress={() => navigation.navigate('CreatePost', { appId: workspace!.id })}
-        >
-          <Ionicons name="add" size={22} color="#ffffff" />
-        </TouchableOpacity>
+        <View style={s.headerRight}>
+          <TouchableOpacity
+            style={s.headerBtn}
+            onPress={() => setShowAppreciation(true)}
+          >
+            <Ionicons name="heart-outline" size={18} color={colors.primary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={s.addBtn}
+            onPress={() => navigation.navigate('CreatePost', { appId: workspace!.id })}
+          >
+            <Ionicons name="add" size={20} color={colors.primary} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <GiveAppreciationModal
@@ -109,9 +117,16 @@ function makeStyles(c: AppColors) {
       paddingTop: 10, borderBottomWidth: 1, borderBottomColor: c.border,
     },
     title: { fontSize: 20, fontWeight: '700', color: c.textPrimary },
-    addBtn: {
-      width: 38, height: 38, borderRadius: 12, backgroundColor: c.primary,
+    headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    headerBtn: {
+      width: 36, height: 36, borderRadius: 10, backgroundColor: c.primaryLight,
       alignItems: 'center', justifyContent: 'center',
+      borderWidth: 1, borderColor: c.primary + '33',
+    },
+    addBtn: {
+      width: 36, height: 36, borderRadius: 10, backgroundColor: c.primaryLight,
+      alignItems: 'center', justifyContent: 'center',
+      borderWidth: 1, borderColor: c.primary + '33',
     },
     list: { padding: 16, paddingBottom: 32 },
   });

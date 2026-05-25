@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, RefreshControl, TouchableOpacity,
+  View, Text, ScrollView, StyleSheet, RefreshControl,
+  TouchableOpacity, Platform, Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -20,51 +21,36 @@ interface DashData {
   roles?: any[];
 }
 
-function StatCard({
-  icon, label, value, iconBg, iconColor, s,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  value: string | number;
-  iconBg: string;
-  iconColor: string;
-  s: ReturnType<typeof makeStyles>;
-}) {
-  return (
-    <View style={s.statCard}>
-      <View style={[s.statIcon, { backgroundColor: iconBg }]}>
-        <Ionicons name={icon} size={20} color={iconColor} />
-      </View>
-      <Text style={s.statValue}>{value}</Text>
-      <Text style={s.statLabel}>{label}</Text>
-    </View>
-  );
-}
-
-function QuickActionBtn({
-  icon, label, iconColor, onPress, s,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  iconColor: string;
-  onPress: () => void;
-  s: ReturnType<typeof makeStyles>;
-}) {
-  return (
-    <TouchableOpacity style={s.qaBtn} onPress={onPress} activeOpacity={0.8}>
-      <View style={[s.qaIcon, { backgroundColor: iconColor + '22' }]}>
-        <Ionicons name={icon} size={22} color={iconColor} />
-      </View>
-      <Text style={s.qaLabel}>{label}</Text>
-    </TouchableOpacity>
-  );
+interface FeedItem {
+  id: number;
+  author_name?: string;
+  first_name?: string;
+  last_name?: string;
+  post_type?: string;
+  type?: string;
+  content?: string;
+  body?: string;
+  created_at?: string;
 }
 
 function getGreeting() {
-  const hour = new Date().getHours();
-  if (hour < 12) return 'Good Morning';
-  if (hour < 17) return 'Good Afternoon';
-  return 'Good Evening';
+  const h = new Date().getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+function timeAgo(iso?: string) {
+  if (!iso) return '';
+  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
+function initials(name?: string) {
+  if (!name) return '?';
+  return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
 }
 
 export default function DashboardScreen() {
@@ -77,6 +63,7 @@ export default function DashboardScreen() {
 
   const [data, setData] = useState<DashData | null>(null);
   const [userName, setUserName] = useState('');
+  const [feed, setFeed] = useState<FeedItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [unread, setUnread] = useState(0);
@@ -84,17 +71,21 @@ export default function DashboardScreen() {
   const load = useCallback(async () => {
     if (!workspace) return;
     try {
-      const [dash, notif, me] = await Promise.all([
+      const [dash, notif, me, feedRes] = await Promise.all([
         api.dashboard.getMyDashboard(workspace.id),
         api.notifications.unreadCount(),
         api.me.getProfile(),
+        api.feed.list(workspace.id),
       ]);
       setData(dash.data);
       setUnread(notif.data.count ?? 0);
       const first = me.data?.firstName ?? me.data?.first_name ?? '';
-      setUserName(first);
+      const last = me.data?.lastName ?? me.data?.last_name ?? '';
+      setUserName(`${first} ${last}`.trim() || first);
+      const items = feedRes.data?.items ?? feedRes.data ?? [];
+      setFeed(Array.isArray(items) ? items.slice(0, 3) : []);
     } catch {}
-  }, [workspace]);
+  }, [workspace, api]);
 
   useEffect(() => {
     load().finally(() => setLoading(false));
@@ -108,131 +99,168 @@ export default function DashboardScreen() {
 
   if (loading) return <LoadingSpinner />;
 
-  const greeting = getGreeting();
+  const tasks = data?.tasks;
+  const total = tasks?.total ?? 0;
+  const done = tasks?.done ?? 0;
+  const inProgress = tasks?.in_progress ?? 0;
+  const open = tasks?.open ?? 0;
+  const timeMin = data?.hours?.this_month?.minutes ?? 0;
   const displayName = userName || 'there';
+  const greetFirst = displayName.split(' ')[0];
 
   return (
-    <View style={[s.container, { paddingTop: insets.top }]}>
-      {/* Header */}
-      <View style={s.header}>
-        <TouchableOpacity hitSlop={12}>
-          <Ionicons name="menu-outline" size={26} color={colors.textPrimary} />
-        </TouchableOpacity>
-        <Text style={s.headerTitle}>Dashboard</Text>
-        <View style={s.headerRight}>
+    <View style={[s.root, { paddingTop: insets.top }]}>
+      {/* Top bar */}
+      <View style={s.topBar}>
+        <Image
+          source={require('../../../assets/logo.png')}
+          style={s.logoImg}
+          resizeMode="contain"
+        />
+        <View style={s.topRight}>
           <TouchableOpacity
-            style={s.notifBtn}
+            style={s.iconBtn}
             onPress={() => navigation.navigate('Notifications')}
           >
-            <Ionicons name="notifications-outline" size={22} color={colors.textPrimary} />
-            {unread > 0 && (
-              <View style={s.badge}>
-                <Text style={s.badgeText}>{unread > 9 ? '9+' : unread}</Text>
-              </View>
-            )}
+            <Ionicons name="notifications-outline" size={20} color={colors.primary} />
+            {unread > 0 && <View style={s.notifDot} />}
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => setWorkspace(null)} hitSlop={8}>
-            <Ionicons name="swap-horizontal-outline" size={22} color={colors.gray500} />
-          </TouchableOpacity>
+          <View style={s.avatar}>
+            <Text style={s.avatarTxt}>{initials(displayName)}</Text>
+          </View>
         </View>
       </View>
 
       <ScrollView
-        contentContainerStyle={s.content}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        contentContainerStyle={s.scroll}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
         showsVerticalScrollIndicator={false}
       >
-        {/* Greeting */}
-        <Text style={s.greeting}>{greeting}, {displayName} 👋</Text>
-        <Text style={s.greetingSub}>Here's what's happening today.</Text>
-
-        {/* Workspace Banner */}
-        <LinearGradient
-          colors={['#4F6EF7', '#7e3af2']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={s.bannerCard}
-        >
-          <View style={s.bannerLeft}>
-            <View style={s.bannerAppRow}>
-              <Ionicons name="briefcase-outline" size={14} color="rgba(255,255,255,0.8)" />
-              <Text style={s.bannerAppName}>{workspace?.name}</Text>
+        {/* Greeting band */}
+        <View style={s.greetBand}>
+          <View>
+            <Text style={s.greetSub}>{getGreeting()}</Text>
+            <Text style={s.greetName}>{greetFirst}</Text>
+          </View>
+          {workspace && (
+            <View style={{ alignItems: 'flex-end' }}>
+              <Text style={s.wsName}>{workspace.name}</Text>
+              <Text style={s.wsType}>{workspace.type ? `${workspace.type.toUpperCase()} Workspace` : 'Workspace'}</Text>
             </View>
-            <Text style={s.bannerTitle}>My Dashboard</Text>
-          </View>
-          <View style={s.bannerIllustration}>
-            <Ionicons name="bar-chart-outline" size={48} color="rgba(255,255,255,0.3)" />
-          </View>
-        </LinearGradient>
-
-        {/* Overview */}
-        <Text style={s.sectionLabel}>Overview</Text>
-        <View style={s.statsGrid}>
-          <StatCard
-            s={s}
-            icon="checkmark-circle-outline"
-            label="My Tasks"
-            value={data?.tasks?.total ?? 0}
-            iconBg={colors.primary + '22'}
-            iconColor={colors.primary}
-          />
-          <StatCard
-            s={s}
-            icon="trophy-outline"
-            label="Completed"
-            value={data?.tasks?.done ?? 0}
-            iconBg={colors.success + '22'}
-            iconColor={colors.success}
-          />
-          <StatCard
-            s={s}
-            icon="alert-circle-outline"
-            label="In Progress"
-            value={data?.tasks?.in_progress ?? 0}
-            iconBg={colors.warning + '22'}
-            iconColor={colors.warning}
-          />
-          <StatCard
-            s={s}
-            icon="time-outline"
-            label="Time This Month"
-            value={formatDuration(data?.hours?.this_month?.minutes ?? 0)}
-            iconBg={colors.info + '22'}
-            iconColor={colors.info}
-          />
+          )}
         </View>
 
-        {/* Quick Actions */}
-        <Text style={[s.sectionLabel, { marginTop: 20 }]}>Quick Actions</Text>
-        <View style={s.quickActions}>
-          <QuickActionBtn
-            s={s}
-            icon="add-circle-outline"
-            label="New Task"
-            iconColor={colors.primary}
-            onPress={() => navigation.navigate('TasksTab', { screen: 'CreateTask', params: { appId: workspace!.id } })}
-          />
-          <QuickActionBtn
-            s={s}
-            icon="create-outline"
-            label="New Post"
-            iconColor={colors.success}
-            onPress={() => navigation.navigate('FeedTab', { screen: 'CreatePost', params: { appId: workspace!.id } })}
-          />
-          <QuickActionBtn
-            s={s}
-            icon="newspaper-outline"
-            label="Feed"
-            iconColor={colors.warning}
-            onPress={() => navigation.navigate('FeedTab')}
-          />
-          <QuickActionBtn
-            s={s}
-            icon="person-outline"
-            label="Profile"
-            iconColor="#7e3af2"
-            onPress={() => navigation.navigate('ProfileTab')}
-          />
+        {/* Hero card */}
+        <LinearGradient
+          colors={['#4f46e5', '#7c3aed']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={s.hero}
+        >
+          <View style={s.heroAccent} />
+          <View style={s.heroAccent2} />
+          <Text style={s.heroLabel}>MY TASKS THIS MONTH</Text>
+          <Text style={s.heroNum}>{total}</Text>
+          <Text style={s.heroDesc}>{inProgress} in progress · {done} completed</Text>
+          <View style={s.heroTags}>
+            <View style={s.heroTag}>
+              <Ionicons name="clipboard-outline" size={9} color="rgba(255,255,255,0.8)" />
+              <Text style={s.heroTagTxt}> {open || total} Open</Text>
+            </View>
+            <View style={s.heroTag}>
+              <Ionicons name="reload-outline" size={9} color="rgba(255,255,255,0.8)" />
+              <Text style={s.heroTagTxt}> {inProgress} Active</Text>
+            </View>
+            <View style={s.heroTag}>
+              <Ionicons name="trophy-outline" size={9} color="rgba(255,255,255,0.8)" />
+              <Text style={s.heroTagTxt}> {done} Done</Text>
+            </View>
+          </View>
+          <Ionicons name="bar-chart-outline" size={48} color="rgba(255,255,255,0.15)" style={s.heroIcon} />
+        </LinearGradient>
+
+        {/* 3-cell stats row */}
+        <View style={s.cellRow}>
+          <View style={s.cell}>
+            <Text style={[s.cellNum, { color: colors.primary }]}>{total}</Text>
+            <Text style={s.cellLbl}>Tasks</Text>
+            <View style={[s.cellBar, { backgroundColor: colors.primary }]} />
+          </View>
+          <View style={[s.cell, s.cellMid]}>
+            <Text style={[s.cellNum, { color: colors.success }]}>{done}</Text>
+            <Text style={s.cellLbl}>Done</Text>
+            <View style={[s.cellBar, { backgroundColor: colors.success }]} />
+          </View>
+          <View style={s.cell}>
+            <Text style={[s.cellNum, { color: colors.warning }]}>{inProgress}</Text>
+            <Text style={s.cellLbl}>Active</Text>
+            <View style={[s.cellBar, { backgroundColor: colors.warning }]} />
+          </View>
+        </View>
+
+        {/* Time + Switch row */}
+        <View style={s.smallRow}>
+          <View style={s.sCard}>
+            <View style={s.sIcon}>
+              <Ionicons name="time-outline" size={18} color={colors.primary} />
+            </View>
+            <View>
+              <Text style={s.sLbl}>Time</Text>
+              <Text style={s.sVal}>{formatDuration(timeMin)}</Text>
+            </View>
+          </View>
+          <TouchableOpacity style={s.sCard} onPress={() => setWorkspace(null)}>
+            <View style={s.sIcon}>
+              <Ionicons name="swap-horizontal-outline" size={18} color={colors.primary} />
+            </View>
+            <View>
+              <Text style={s.sLbl}>Workspace</Text>
+              <View style={s.switchChip}>
+                <Text style={s.switchChipTxt}>Switch</Text>
+              </View>
+            </View>
+          </TouchableOpacity>
+        </View>
+
+        {/* Team Feed */}
+        <View style={s.feedSec}>
+          <View style={s.feedHeader}>
+            <Text style={s.feedTitle}>TEAM FEED</Text>
+            <TouchableOpacity onPress={() => navigation.navigate('FeedTab')}>
+              <Text style={s.feedSeeAll}>See all</Text>
+            </TouchableOpacity>
+          </View>
+          {feed.length === 0 ? (
+            <Text style={s.feedEmpty}>No recent posts</Text>
+          ) : (
+            feed.map(item => {
+              const name = item.author_name ?? [item.first_name, item.last_name].filter(Boolean).join(' ') ?? 'User';
+              const type = item.post_type ?? item.type ?? 'post';
+              const text = item.content ?? item.body ?? '';
+              const isAppr = type === 'appreciation';
+              return (
+                <View key={item.id} style={s.feedItem}>
+                  <View style={[s.feedAv, isAppr ? s.feedAvGreen : s.feedAvIndigo]}>
+                    <Text style={[s.feedAvTxt, { color: isAppr ? colors.success : colors.primary }]}>
+                      {initials(name)}
+                    </Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <View style={s.feedRow}>
+                      <Text style={s.feedName}>{name}</Text>
+                      <View style={[s.typePill, isAppr ? s.typePillGreen : s.typePillIndigo]}>
+                        <Text style={[s.typePillTxt, { color: isAppr ? colors.success : colors.primary }]}>
+                          {isAppr ? 'Appreciation' : 'Post'}
+                        </Text>
+                      </View>
+                      <Text style={s.feedTime}>{timeAgo(item.created_at)}</Text>
+                    </View>
+                    <Text style={s.feedText} numberOfLines={2}>{text}</Text>
+                  </View>
+                </View>
+              );
+            })
+          )}
         </View>
       </ScrollView>
     </View>
@@ -241,67 +269,89 @@ export default function DashboardScreen() {
 
 function makeStyles(c: AppColors) {
   return StyleSheet.create({
-    container: { flex: 1, backgroundColor: c.background },
+    root: { flex: 1, backgroundColor: c.background },
 
-    // Header
-    header: {
-      flexDirection: 'row', alignItems: 'center',
-      backgroundColor: c.surface, paddingHorizontal: 20,
-      paddingBottom: 14, paddingTop: 10,
+    // Top bar
+    topBar: {
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+      backgroundColor: c.surface, paddingHorizontal: 18, paddingVertical: 10,
       borderBottomWidth: 1, borderBottomColor: c.border,
     },
-    headerTitle: { flex: 1, fontSize: 18, fontWeight: '700', color: c.textPrimary, marginLeft: 12 },
-    headerRight: { flexDirection: 'row', alignItems: 'center', gap: 14 },
-    notifBtn: { position: 'relative' },
-    badge: {
-      position: 'absolute', top: -4, right: -4, backgroundColor: c.danger,
-      minWidth: 16, height: 16, borderRadius: 8,
-      alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3,
-    },
-    badgeText: { fontSize: 10, color: '#ffffff', fontWeight: '700' },
+    logoImg: { width: 100, height: 36 },
+    topRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    iconBtn: { width: 36, height: 36, borderRadius: 10, backgroundColor: c.primaryLight, alignItems: 'center', justifyContent: 'center' },
+    notifDot: { position: 'absolute', top: 6, right: 6, width: 8, height: 8, borderRadius: 4, backgroundColor: c.danger, borderWidth: 1.5, borderColor: c.surface },
+    avatar: { width: 36, height: 36, borderRadius: 10, backgroundColor: c.primaryLight, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: c.primary + '55' },
+    avatarTxt: { fontSize: 13, fontWeight: '900', color: c.primary },
 
-    content: { padding: 20, paddingBottom: 40 },
+    scroll: { paddingBottom: 32 },
 
-    // Greeting
-    greeting: { fontSize: 22, fontWeight: '800', color: c.textPrimary, marginBottom: 4 },
-    greetingSub: { fontSize: 13, color: c.textSecondary, marginBottom: 20 },
+    // Greeting band
+    greetBand: {
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+      backgroundColor: c.surface, marginHorizontal: 16, marginTop: 14,
+      borderRadius: 14, padding: 14, borderWidth: 1, borderColor: c.border,
+    },
+    greetSub: { fontSize: 11, color: c.textSecondary, marginBottom: 2 },
+    greetName: { fontSize: 17, fontWeight: '900', color: c.textPrimary, letterSpacing: -0.3 },
+    wsName: { fontSize: 12, fontWeight: '700', color: c.primary },
+    wsType: { fontSize: 10, color: c.textMuted },
 
-    // Workspace Banner
-    bannerCard: {
-      borderRadius: 16, padding: 20, flexDirection: 'row',
-      alignItems: 'center', marginBottom: 24, overflow: 'hidden',
+    // Hero
+    hero: {
+      marginHorizontal: 16, marginTop: 12, borderRadius: 18,
+      padding: 20, overflow: 'hidden',
+      ...Platform.select({ ios: { shadowColor: '#4f46e5', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.35, shadowRadius: 12 }, android: { elevation: 6 } }),
     },
-    bannerLeft: { flex: 1 },
-    bannerAppRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 6 },
-    bannerAppName: { fontSize: 12, color: 'rgba(255,255,255,0.8)', fontWeight: '500' },
-    bannerTitle: { fontSize: 20, fontWeight: '800', color: '#ffffff' },
-    bannerIllustration: { opacity: 0.9 },
+    heroAccent: { position: 'absolute', right: -18, top: -18, width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(255,255,255,0.07)' },
+    heroAccent2: { position: 'absolute', right: 18, bottom: -18, width: 40, height: 40, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.04)' },
+    heroLabel: { fontSize: 9, fontWeight: '900', color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: 1.2, marginBottom: 4 },
+    heroNum: { fontSize: 44, fontWeight: '900', color: '#ffffff', letterSpacing: -2, lineHeight: 50 },
+    heroDesc: { fontSize: 11, color: 'rgba(255,255,255,0.6)', marginTop: 2 },
+    heroTags: { flexDirection: 'row', gap: 8, marginTop: 14 },
+    heroTag: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 },
+    heroTagTxt: { fontSize: 9, fontWeight: '700', color: 'rgba(255,255,255,0.9)' },
+    heroIcon: { position: 'absolute', right: 18, bottom: 16 },
 
-    // Overview grid
-    sectionLabel: {
-      fontSize: 12, fontWeight: '700', color: c.textSecondary,
-      textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 12,
+    // Cell row
+    cellRow: {
+      flexDirection: 'row', marginHorizontal: 16, marginTop: 12,
+      backgroundColor: c.surface, borderRadius: 14,
+      borderWidth: 1, borderColor: c.border, overflow: 'hidden',
     },
-    statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 4 },
-    statCard: {
-      flex: 1, minWidth: '44%', backgroundColor: c.surface,
-      borderRadius: 14, padding: 16,
-      borderWidth: 1, borderColor: c.border,
-      shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.05, shadowRadius: 4, elevation: 2,
-    },
-    statIcon: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
-    statValue: { fontSize: 24, fontWeight: '800', color: c.textPrimary },
-    statLabel: { fontSize: 12, color: c.textSecondary, marginTop: 2 },
+    cell: { flex: 1, padding: 14, alignItems: 'center' },
+    cellMid: { borderLeftWidth: 1, borderRightWidth: 1, borderColor: c.border },
+    cellNum: { fontSize: 26, fontWeight: '900', letterSpacing: -1 },
+    cellLbl: { fontSize: 9, fontWeight: '700', color: c.textSecondary, textTransform: 'uppercase', letterSpacing: 0.6, marginTop: 2 },
+    cellBar: { height: 3, width: 28, borderRadius: 2, marginTop: 8 },
 
-    // Quick Actions
-    quickActions: { flexDirection: 'row', gap: 10 },
-    qaBtn: {
-      flex: 1, backgroundColor: c.surface, borderRadius: 14, padding: 14,
-      alignItems: 'center', gap: 10, borderWidth: 1, borderColor: c.border,
-      shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 3, elevation: 2,
-    },
-    qaIcon: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-    qaLabel: { fontSize: 11, fontWeight: '600', color: c.textSecondary, textAlign: 'center' },
+    // Small row
+    smallRow: { flexDirection: 'row', marginHorizontal: 16, marginTop: 12, gap: 12 },
+    sCard: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: c.surface, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: c.border },
+    sIcon: { width: 38, height: 38, borderRadius: 10, backgroundColor: c.primaryLight, alignItems: 'center', justifyContent: 'center' },
+    sLbl: { fontSize: 10, color: c.textSecondary, fontWeight: '600' },
+    sVal: { fontSize: 14, fontWeight: '800', color: c.textPrimary },
+    switchChip: { marginTop: 2, backgroundColor: c.primaryLight, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2 },
+    switchChipTxt: { fontSize: 10, fontWeight: '700', color: c.primary },
+
+    // Feed
+    feedSec: { marginHorizontal: 16, marginTop: 16 },
+    feedHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+    feedTitle: { fontSize: 11, fontWeight: '700', color: c.textSecondary, textTransform: 'uppercase', letterSpacing: 0.8 },
+    feedSeeAll: { fontSize: 12, fontWeight: '700', color: c.primary },
+    feedEmpty: { fontSize: 13, color: c.textMuted, textAlign: 'center', paddingVertical: 16 },
+    feedItem: { flexDirection: 'row', gap: 10, marginBottom: 12 },
+    feedAv: { width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+    feedAvIndigo: { backgroundColor: c.primaryLight },
+    feedAvGreen: { backgroundColor: c.successLight },
+    feedAvTxt: { fontSize: 11, fontWeight: '900' },
+    feedRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 },
+    feedName: { fontSize: 12, fontWeight: '700', color: c.textPrimary },
+    feedTime: { fontSize: 9, color: c.textMuted, marginLeft: 'auto' },
+    feedText: { fontSize: 11, color: c.textSecondary, lineHeight: 16 },
+    typePill: { paddingHorizontal: 6, paddingVertical: 1, borderRadius: 10 },
+    typePillIndigo: { backgroundColor: c.primaryLight },
+    typePillGreen: { backgroundColor: c.successLight },
+    typePillTxt: { fontSize: 9, fontWeight: '700' },
   });
 }
