@@ -44,6 +44,7 @@ export default function PostDetailScreen() {
   const [commentText, setCommentText] = useState('');
   const [saving, setSaving] = useState(false);
   const [myReaction, setMyReaction] = useState<string | null>(null);
+  const [meId, setMeId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -66,6 +67,7 @@ export default function PostDetailScreen() {
 
   useEffect(() => {
     load();
+    api.me.getProfile().then((r: any) => setMeId(r.data?.id ?? r.data?.user?.id ?? null)).catch(() => {});
   }, [load]);
 
   const onRefresh = async () => {
@@ -79,6 +81,15 @@ export default function PostDetailScreen() {
     setMyReaction(toggling ? null : emoji);
     if (!toggling) {
       try { await api.feed.addReaction(appId, postId, emoji); } catch {}
+    }
+  };
+
+  const handleDeleteComment = async (commentId: number) => {
+    try {
+      await api.feed.deleteComment(appId, postId, commentId);
+      setComments((prev) => prev.filter((c) => c.id !== commentId));
+    } catch {
+      Alert.alert('Error', 'Could not delete comment.');
     }
   };
 
@@ -158,8 +169,8 @@ export default function PostDetailScreen() {
                   || c.user?.email
                   || 'Unknown'),
             }}
-            canDelete={false}
-            onDelete={() => {}}
+            canDelete={meId !== null && (c.user_id === meId || c.author_user_id === meId)}
+            onDelete={() => handleDeleteComment(c.id)}
           />
         ))}
         {comments.length === 0 && (

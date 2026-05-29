@@ -1,12 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl,
-  ActivityIndicator,
+  ActivityIndicator, Modal, TextInput, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useClerk } from '@clerk/clerk-expo';
 import { Ionicons } from '@expo/vector-icons';
-import { Image } from 'react-native';
+import Logo from '../../components/common/Logo';
 import { useApi } from '../../hooks/useApi';
 import { useWorkspace } from '../../contexts/WorkspaceContext';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -20,6 +20,8 @@ interface App {
   role: string;
   type: string;
   billing_status?: string;
+  member_count?: number;
+  owner_email?: string;
 }
 
 interface Invitation {
@@ -45,7 +47,7 @@ function colorForName(name: string): string {
 
 export default function WorkspaceSelectScreen() {
   const api = useApi();
-  const { setWorkspace } = useWorkspace();
+  const { setWorkspace, setIsPlatformAdmin } = useWorkspace();
   const { signOut } = useClerk();
   const { colors } = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
@@ -59,13 +61,19 @@ export default function WorkspaceSelectScreen() {
   const [acceptingToken, setAcceptingToken] = useState<string | null>(null);
   const [decliningToken, setDecliningToken] = useState<string | null>(null);
 
+  // Create workspace modal
+  const [showCreate, setShowCreate] = useState(false);
+  const [newAppName, setNewAppName] = useState('');
+  const [creating, setCreating] = useState(false);
+
   const loadApps = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     setError(null);
     try {
-      const [appsRes, invRes] = await Promise.all([
+      const [appsRes, invRes, meRes] = await Promise.all([
         api.workspace.listApps(),
         api.invitations.listMine().catch(() => ({ data: [] })),
+        api.me.getProfile().catch(() => ({ data: {} })),
       ]);
       const raw = appsRes.data.apps ?? [];
       setApps(raw.map((a: any) => ({ ...a, role: a.role ?? a.my_role })));
@@ -75,6 +83,7 @@ export default function WorkspaceSelectScreen() {
         Array.isArray(invData?.items) ? invData.items :
         Array.isArray(invData?.invitations) ? invData.invitations : []
       );
+      setIsPlatformAdmin(!!(meRes.data?.isPlatformAdmin));
     } catch (err: any) {
       const status = err?.response?.status;
       const code = err?.response?.data?.code;
@@ -86,7 +95,7 @@ export default function WorkspaceSelectScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [api]);
+  }, [api, setIsPlatformAdmin]);
 
   useEffect(() => { loadApps(); }, [loadApps]);
 
@@ -97,6 +106,29 @@ export default function WorkspaceSelectScreen() {
 
   const selectApp = (app: App) => {
     setWorkspace({ id: app.id, name: app.name, type: app.type, role: app.role as any });
+  };
+
+  const handleCreateWorkspace = async () => {
+    const name = newAppName.trim();
+    if (!name) { showAlert('Enter a name', 'Workspace name is required.'); return; }
+    setCreating(true);
+    try {
+      const res = await api.workspace.createApp({ type: 'hr', name });
+      const created = res.data;
+      setShowCreate(false);
+      setNewAppName('');
+      // Auto-enter the new workspace as super_admin
+      setWorkspace({
+        id: created.id ?? created.appId,
+        name: created.name ?? name,
+        type: created.type ?? 'hr',
+        role: 'super_admin',
+      });
+    } catch (err: any) {
+      showAlert('Failed', err?.response?.data?.error ?? 'Could not create workspace.');
+    } finally {
+      setCreating(false);
+    }
   };
 
   const handleAccept = async (inv: Invitation) => {
@@ -143,7 +175,7 @@ export default function WorkspaceSelectScreen() {
   /* ── Hero section ── */
   const Hero = (
     <View style={s.hero}>
-      <Image source={require('../../../assets/logo.png')} style={s.logoImg} resizeMode="contain" />
+      <Logo size={40} width={160} />
       <View style={s.orbitWrap}>
         <View style={s.orbitRing} />
         <View style={s.orbitCenter}>
@@ -240,6 +272,12 @@ export default function WorkspaceSelectScreen() {
                   ))}
                 </View>
               )}
+              <View style={s.createRow}>
+                <TouchableOpacity style={s.createBtn} onPress={() => setShowCreate(true)}>
+                  <Ionicons name="add-circle-outline" size={18} color={colors.primary} />
+                  <Text style={s.createBtnText}>Create New Workspace</Text>
+                </TouchableOpacity>
+              </View>
               {apps.length > 0 && <Text style={s.workspacesLabel}>Your Workspaces</Text>}
             </View>
           }
@@ -247,8 +285,8 @@ export default function WorkspaceSelectScreen() {
             invitations.length === 0 ? (
               <View style={s.emptyContainer}>
                 <Ionicons name="briefcase-outline" size={48} color={colors.gray400} />
-                <Text style={s.emptyTitle}>No workspaces found</Text>
-                <Text style={s.emptySubtitle}>Ask your team admin to invite you.</Text>
+                <Text style={s.emptyTitle}>No workspaces yet</Text>
+                <Text style={s.emptySubtitle}>Create a new workspace or ask your admin to invite you.</Text>
               </View>
             ) : null
           }
@@ -281,9 +319,13 @@ export default function WorkspaceSelectScreen() {
                       {item.billing_status === 'cancelled' ? 'Cancelled' : 'Suspended'}
                     </Text>
                   </View>
-                ) : item.role ? (
+                ) : (item.role === 'super_admin' || item.role === 'admin') ? (
                   <View style={[s.roleBadge, { backgroundColor: rc + '22' }]}>
-                    <Text style={[s.roleText, { color: rc }]}>{item.role?.replace('_', ' ')}</Text>
+                    <Text style={[s.roleText, { color: rc }]}>Admin</Text>
+                  </View>
+                ) : item.role === 'member' ? (
+                  <View style={[s.roleBadge, { backgroundColor: colors.primary + '22' }]}>
+                    <Text style={[s.roleText, { color: colors.primary }]}>Member</Text>
                   </View>
                 ) : null}
                 {!isSuspended && <Ionicons name="chevron-forward" size={18} color={colors.gray400} />}
@@ -304,6 +346,41 @@ export default function WorkspaceSelectScreen() {
           </View>
         </View>
       )}
+
+      {/* Create Workspace Modal */}
+      <Modal visible={showCreate} transparent animationType="slide" onRequestClose={() => setShowCreate(false)}>
+        <KeyboardAvoidingView style={s.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <View style={s.modalSheet}>
+            <View style={s.modalHeader}>
+              <Text style={s.modalTitle}>Create Workspace</Text>
+              <TouchableOpacity onPress={() => { setShowCreate(false); setNewAppName(''); }} hitSlop={8}>
+                <Ionicons name="close" size={22} color={colors.textPrimary} />
+              </TouchableOpacity>
+            </View>
+            <Text style={s.modalLabel}>Workspace Name</Text>
+            <TextInput
+              style={s.modalInput}
+              placeholder="e.g. Acme Corp HR"
+              placeholderTextColor={colors.gray400}
+              value={newAppName}
+              onChangeText={setNewAppName}
+              autoFocus
+              returnKeyType="done"
+              onSubmitEditing={handleCreateWorkspace}
+            />
+            <Text style={s.modalHint}>Type: HR · You will be the super admin</Text>
+            <TouchableOpacity
+              style={[s.modalSubmit, creating && s.modalSubmitBusy]}
+              onPress={handleCreateWorkspace}
+              disabled={creating}
+            >
+              {creating
+                ? <ActivityIndicator color="#ffffff" size="small" />
+                : <Text style={s.modalSubmitText}>Create Workspace</Text>}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
@@ -344,6 +421,39 @@ function makeStyles(c: AppColors) {
       fontSize: 11, fontWeight: '700', color: c.textSecondary,
       textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 10, marginTop: 4,
     },
+
+    createRow: { marginBottom: 16 },
+    createBtn: {
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+      paddingVertical: 12, borderRadius: 12,
+      borderWidth: 1.5, borderColor: c.primary, borderStyle: 'dashed',
+      backgroundColor: c.primaryLight,
+    },
+    createBtnText: { fontSize: 14, fontWeight: '700', color: c.primary },
+
+    // Create modal
+    modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' },
+    modalSheet: {
+      backgroundColor: c.surface, borderTopLeftRadius: 22, borderTopRightRadius: 22,
+      padding: 20,
+    },
+    modalHeader: {
+      flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+      marginBottom: 20, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: c.border,
+    },
+    modalTitle: { fontSize: 17, fontWeight: '700', color: c.textPrimary },
+    modalLabel: { fontSize: 12, fontWeight: '700', color: c.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 },
+    modalInput: {
+      backgroundColor: c.gray100, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12,
+      fontSize: 15, color: c.textPrimary, borderWidth: 1.5, borderColor: c.border,
+    },
+    modalHint: { fontSize: 12, color: c.textMuted, marginTop: 8, marginBottom: 20 },
+    modalSubmit: {
+      backgroundColor: c.primary, borderRadius: 12, paddingVertical: 15,
+      alignItems: 'center',
+    },
+    modalSubmitBusy: { opacity: 0.6 },
+    modalSubmitText: { color: '#ffffff', fontSize: 15, fontWeight: '700' },
 
     // Invitations
     invitationsSection: {

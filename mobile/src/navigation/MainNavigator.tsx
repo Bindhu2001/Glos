@@ -19,6 +19,8 @@ import PostDetailScreen from '../screens/feed/PostDetailScreen';
 import CreatePostScreen from '../screens/feed/CreatePostScreen';
 import PerformanceScreen from '../screens/performance/PerformanceScreen';
 import TaskReportsScreen from '../screens/performance/TaskReportsScreen';
+import PerformanceReviewDetailScreen from '../screens/performance/PerformanceReviewDetailScreen';
+import AppraisalDetailScreen from '../screens/performance/AppraisalDetailScreen';
 import ProfileScreen from '../screens/profile/ProfileScreen';
 import AdminHomeScreen from '../screens/admin/AdminHomeScreen';
 import MembersScreen from '../screens/admin/MembersScreen';
@@ -59,6 +61,8 @@ function PerformanceNavigator() {
     <PerformanceStack.Navigator screenOptions={{ headerShown: false }}>
       <PerformanceStack.Screen name="PerformanceHome" component={PerformanceScreen} />
       <PerformanceStack.Screen name="TaskReports" component={TaskReportsScreen} />
+      <PerformanceStack.Screen name="ReviewDetail" component={PerformanceReviewDetailScreen} />
+      <PerformanceStack.Screen name="AppraisalDetail" component={AppraisalDetailScreen} />
     </PerformanceStack.Navigator>
   );
 }
@@ -80,7 +84,7 @@ function AdminNavigator() {
 export default function MainNavigator() {
   const { colors } = useTheme();
   const { workspace } = useWorkspace();
-  const isSuperAdmin = workspace?.role === 'super_admin';
+  const isAdmin = workspace?.role === 'super_admin' || workspace?.role === 'admin';
 
   return (
     <Tab.Navigator
@@ -135,7 +139,7 @@ export default function MainNavigator() {
       <Tab.Screen name="TasksTab" component={TasksNavigator} options={{ title: 'Tasks' }} />
       <Tab.Screen name="FeedTab" component={FeedNavigator} options={{ title: 'Feed' }} />
       <Tab.Screen name="PerformanceTab" component={PerformanceNavigator} options={{ title: 'Performance' }} />
-      {isSuperAdmin && (
+      {isAdmin && (
         <Tab.Screen name="AdminTab" component={AdminNavigator} options={{ title: 'Admin' }} />
       )}
       <Tab.Screen name="ProfileTab" component={ProfileScreen} options={{ title: 'Profile' }} />

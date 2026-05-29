@@ -4,13 +4,11 @@ import {
   KeyboardAvoidingView, Platform, ActivityIndicator,
 } from 'react-native';
 import { useSignIn, useSSO } from '@clerk/clerk-expo';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as WebBrowser from 'expo-web-browser';
 import * as AuthSession from 'expo-auth-session';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
 import { AuthStackParamList } from '../../navigation/types';
 import { useTheme } from '../../contexts/ThemeContext';
 import { AppColors } from '../../utils/colors';
@@ -18,6 +16,7 @@ import Input from '../../components/common/Input';
 import Button from '../../components/common/Button';
 import Logo from '../../components/common/Logo';
 import { showAlert } from '../../components/common/AlertModal';
+import GoogleIcon from '../../components/common/GoogleIcon';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -60,7 +59,7 @@ export default function SignInScreen() {
     try {
       const result = await startSSOFlow({
         strategy: 'oauth_google',
-        redirectUrl: AuthSession.makeRedirectUri(),
+        redirectUrl: AuthSession.makeRedirectUri({ scheme: 'com.greatleap.mobile' }),
       });
 
       if (!result) return;
@@ -72,11 +71,10 @@ export default function SignInScreen() {
       };
 
       if (createdSessionId) { await activate(createdSessionId); return; }
-      if (signUp?.status === 'complete') { await activate(signUp.createdSessionId ?? null); return; }
-      if (signIn?.status === 'complete') { await activate(signIn.createdSessionId ?? null); return; }
-      if (signIn || signUp) {
-        showAlert('Connection Failed', 'Could not establish connection. Please allow this app to connect to your account.');
-      }
+      if (signIn?.createdSessionId || signIn?.status === 'complete') { await activate(signIn.createdSessionId ?? null); return; }
+      if (signUp?.createdSessionId || signUp?.status === 'complete') { await activate(signUp.createdSessionId ?? null); return; }
+
+      showAlert('Sign In Failed', 'Could not complete Google sign in. Please try again.');
     } catch (err: any) {
       const code = err?.errors?.[0]?.code ?? '';
       if (code === 'oauth_cancelled' || code === 'oauth_access_denied') return;
@@ -111,16 +109,9 @@ export default function SignInScreen() {
             style={[s.googleBtn, googleLoading && s.googleBtnDisabled]}
           >
             {googleLoading ? (
-              <ActivityIndicator size="small" color={colors.primary} />
+              <ActivityIndicator size="small" color={colors.textPrimary} />
             ) : (
-              <LinearGradient
-                colors={['#4285f4', '#34a853', '#fbbc05', '#ea4335']}
-                start={{ x: 1, y: 0 }}
-                end={{ x: 0, y: 1 }}
-                style={s.googleIconBg}
-              >
-                <Ionicons name="logo-google" size={16} color="#ffffff" />
-              </LinearGradient>
+              <GoogleIcon size={22} />
             )}
             <Text style={s.googleBtnText}>Continue with Google</Text>
           </TouchableOpacity>
@@ -187,10 +178,6 @@ function makeStyles(c: AppColors) {
       flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
       borderRadius: 12, paddingVertical: 13, paddingHorizontal: 16,
       backgroundColor: c.surface, borderWidth: 1.5, borderColor: c.border,
-    },
-    googleIconBg: {
-      width: 28, height: 28, borderRadius: 14,
-      alignItems: 'center', justifyContent: 'center',
     },
     googleBtnDisabled: { opacity: 0.6 },
     googleBtnText: { fontSize: 15, fontWeight: '600', color: c.textPrimary },

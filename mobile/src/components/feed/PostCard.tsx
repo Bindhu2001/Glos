@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Avatar from '../common/Avatar';
@@ -6,6 +6,8 @@ import { showAlert } from '../common/AlertModal';
 import { useTheme } from '../../contexts/ThemeContext';
 import { AppColors } from '../../utils/colors';
 import { formatRelative } from '../../utils/format';
+
+const EMOJIS = ['👍', '❤️', '🎉', '👏', '🔥'];
 
 interface Post {
   id: number;
@@ -18,13 +20,16 @@ interface Post {
   reactions?: { emoji: string; count: number }[];
   reaction_count?: number;
   comment_count?: number;
+  is_pinned?: boolean;
+  my_reactions?: string[];
 }
 
 interface Props {
   post: Post;
   onPress: () => void;
-  onReact: () => void;
+  onReact: (emoji?: string) => void;
   onDelete?: () => void;
+  onPin?: () => void;
   liked?: boolean;
 }
 
@@ -36,9 +41,10 @@ function decodeHtml(str: string) {
     .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
 }
 
-export default function PostCard({ post, onPress, onReact, onDelete, liked = false }: Props) {
+export default function PostCard({ post, onPress, onReact, onDelete, onPin, liked = false }: Props) {
   const { colors } = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
 
   const postType = post.post_type ?? post.type ?? 'post';
   const authorName = post.author_name
@@ -62,7 +68,12 @@ export default function PostCard({ post, onPress, onReact, onDelete, liked = fal
       <View style={s.header}>
         <Avatar name={authorName} size={38} />
         <View style={s.info}>
-          <Text style={s.author}>{authorName}</Text>
+          <View style={s.authorRow}>
+            <Text style={s.author}>{authorName}</Text>
+            {post.is_pinned && (
+              <Ionicons name="pin" size={13} color={colors.primary} style={{ marginLeft: 4 }} />
+            )}
+          </View>
           <View style={s.metaRow}>
             <Text style={[s.typeLabel, { color: typeLabelColor }]}>{typeLabel}</Text>
             <Text style={s.dot}>·</Text>
@@ -75,6 +86,7 @@ export default function PostCard({ post, onPress, onReact, onDelete, liked = fal
           onPress={(e) => {
             e.stopPropagation();
             showAlert('Post Options', undefined, [
+              ...(onPin ? [{ text: post.is_pinned ? 'Unpin Post' : 'Pin Post', onPress: onPin }] : []),
               ...(onDelete ? [{ text: 'Delete Post', style: 'destructive' as const, onPress: () => {
                 showAlert('Delete Post', 'Are you sure you want to delete this post?', [
                   { text: 'Cancel', style: 'cancel' },
@@ -91,8 +103,26 @@ export default function PostCard({ post, onPress, onReact, onDelete, liked = fal
 
       <Text style={s.content} numberOfLines={4}>{preview}</Text>
 
+      {/* Emoji picker row */}
+      {showEmojiPicker && (
+        <View style={s.emojiPicker}>
+          {EMOJIS.map((emoji) => {
+            const isActive = post.my_reactions?.includes(emoji);
+            return (
+              <TouchableOpacity
+                key={emoji}
+                style={[s.emojiBtn, isActive && s.emojiBtnActive]}
+                onPress={() => { onReact(emoji); setShowEmojiPicker(false); }}
+              >
+                <Text style={s.emojiText}>{emoji}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      )}
+
       <View style={s.actions}>
-        <TouchableOpacity style={s.action} onPress={onReact}>
+        <TouchableOpacity style={s.action} onPress={() => setShowEmojiPicker(!showEmojiPicker)}>
           {post.reactions && post.reactions.length > 0 ? (
             <Text style={{ fontSize: 16, marginRight: -2 }}>
               {post.reactions.slice(0, 3).map(r => r.emoji).join('')}
@@ -134,6 +164,7 @@ function makeStyles(c: AppColors) {
     },
     header: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 12 },
     info: { flex: 1 },
+    authorRow: { flexDirection: 'row', alignItems: 'center' },
     author: { fontSize: 14, fontWeight: '700', color: c.textPrimary },
     metaRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
     typeLabel: { fontSize: 12, fontWeight: '500' },
@@ -141,6 +172,13 @@ function makeStyles(c: AppColors) {
     time: { fontSize: 12, color: c.gray400 },
     moreBtn: { paddingTop: 2 },
     content: { fontSize: 14, color: c.gray700, lineHeight: 21, marginBottom: 12 },
+    emojiPicker: {
+      flexDirection: 'row', gap: 6, backgroundColor: c.gray100,
+      borderRadius: 30, padding: 8, alignSelf: 'flex-start', marginBottom: 8,
+    },
+    emojiBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+    emojiBtnActive: { backgroundColor: c.primaryLight },
+    emojiText: { fontSize: 20 },
     actions: { flexDirection: 'row', gap: 20, borderTopWidth: 1, borderTopColor: c.border, paddingTop: 10 },
     action: { flexDirection: 'row', alignItems: 'center', gap: 5 },
     actionText: { fontSize: 13, color: c.gray500 },

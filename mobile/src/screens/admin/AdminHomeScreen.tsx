@@ -66,7 +66,11 @@ export default function AdminHomeScreen() {
 
       <View style={s.ownerBadge}>
         <Ionicons name="shield-checkmark" size={14} color="#7c3aed" />
-        <Text style={s.ownerText}>You are the workspace owner (Super Admin)</Text>
+        <Text style={s.ownerText}>
+          {workspace?.role === 'super_admin'
+            ? 'You are the workspace owner (Super Admin)'
+            : 'You have admin access to this workspace'}
+        </Text>
       </View>
 
       <ScrollView contentContainerStyle={s.list} showsVerticalScrollIndicator={false}>

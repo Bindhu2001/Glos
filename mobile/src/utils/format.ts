@@ -37,6 +37,29 @@ export function formatDuration(minutes: number): string {
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
+export function formatTimerDisplay(totalSeconds: number): string {
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+export function formatLogEntry(createdAt: string | null | undefined): string {
+  if (!createdAt) return '';
+  try {
+    const d = parseISO(createdAt.endsWith('Z') ? createdAt : createdAt + 'Z');
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
+    const logStr = format(d, 'yyyy-MM-dd');
+    return logStr === todayStr
+      ? `Logged Today at ${format(d, 'h:mm a')}`
+      : `Logged ${format(d, 'MMM d')} at ${format(d, 'h:mm a')}`;
+  } catch {
+    return '';
+  }
+}
+
 export function getInitials(name: string): string {
   return name
     .split(' ')

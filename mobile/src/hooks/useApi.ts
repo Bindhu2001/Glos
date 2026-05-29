@@ -1,7 +1,7 @@
 import { useAuth, useClerk } from '@clerk/clerk-expo';
 import { useMemo, useRef, useCallback } from 'react';
-import { Alert } from 'react-native';
 import { createApiClient } from '../api/client';
+import { showAlert } from '../components/common/AlertModal';
 import { useWorkspace } from '../contexts/WorkspaceContext';
 import {
   workspaceApi,
@@ -20,6 +20,7 @@ import {
   organisationApi,
   rolesApi,
   policiesApi,
+  departmentsApi,
 } from '../api';
 
 export function useApi() {
@@ -30,7 +31,7 @@ export function useApi() {
   getTokenRef.current = getToken;
 
   const onDeactivated = useCallback(() => {
-    Alert.alert(
+    showAlert(
       'Account Deactivated',
       'Your account has been deactivated. Please contact your administrator.',
       [{ text: 'OK', onPress: () => { setWorkspace(null); signOut(); } }],
@@ -41,7 +42,7 @@ export function useApi() {
   onDeactivatedRef.current = onDeactivated;
 
   const onWorkspaceRevoked = useCallback(() => {
-    Alert.alert(
+    showAlert(
       'Access Denied',
       'You have been deactivated or removed from this workspace.',
       [{ text: 'OK', onPress: () => { setWorkspace(null); } }],
@@ -75,6 +76,14 @@ export function useApi() {
         getMembers: async (appId: number) => {
           const client = await mkClient();
           return workspaceApi(client).getMembers(appId);
+        },
+        createApp: async (data: { type: string; name: string }) => {
+          const client = await mkClient();
+          return workspaceApi(client).createApp(data);
+        },
+        adminListApps: async () => {
+          const client = await mkClient();
+          return workspaceApi(client).adminListApps();
         },
       },
       me: {
@@ -154,6 +163,10 @@ export function useApi() {
           const client = await mkClient();
           return tasksApi(client).startTimer(appId, taskId);
         },
+        pauseTimer: async (appId: number, taskId: number) => {
+          const client = await mkClient();
+          return tasksApi(client).pauseTimer(appId, taskId);
+        },
         stopTimer: async (appId: number, taskId: number) => {
           const client = await mkClient();
           return tasksApi(client).stopTimer(appId, taskId);
@@ -198,6 +211,18 @@ export function useApi() {
           const client = await mkClient();
           return tasksApi(client).addTimeLog(appId, taskId, data);
         },
+        deleteTimeLog: async (appId: number, taskId: number, logId: number) => {
+          const client = await mkClient();
+          return tasksApi(client).deleteTimeLog(appId, taskId, logId);
+        },
+        timeLogReport: async (appId: number, params: { month: string; user_id?: number }) => {
+          const client = await mkClient();
+          return tasksApi(client).timeLogReport(appId, params);
+        },
+        detailsReport: async (appId: number, params?: Record<string, unknown>) => {
+          const client = await mkClient();
+          return tasksApi(client).detailsReport(appId, params);
+        },
       },
       feed: {
         list: async (appId: number) => {
@@ -223,6 +248,26 @@ export function useApi() {
         addComment: async (appId: number, postId: number, content: string) => {
           const client = await mkClient();
           return feedApi(client).addComment(appId, postId, content);
+        },
+        deleteComment: async (appId: number, postId: number, commentId: number) => {
+          const client = await mkClient();
+          return feedApi(client).deleteComment(appId, postId, commentId);
+        },
+        pin: async (appId: number, postId: number) => {
+          const client = await mkClient();
+          return feedApi(client).pin(appId, postId);
+        },
+        giveFeedback: async (appId: number, data: { to_user_id: number; feedback_text: string; is_anonymous?: boolean; cycle_id?: number | null; type?: string }) => {
+          const client = await mkClient();
+          return feedApi(client).giveFeedback(appId, data);
+        },
+        getReceivedFeedback: async (appId: number) => {
+          const client = await mkClient();
+          return feedApi(client).getReceivedFeedback(appId);
+        },
+        getGivenFeedback: async (appId: number) => {
+          const client = await mkClient();
+          return feedApi(client).getGivenFeedback(appId);
         },
       },
       performance: {
@@ -254,6 +299,70 @@ export function useApi() {
           const client = await mkClient();
           return performanceApi(client).listPendingForMe(appId);
         },
+        approveGoal: async (appId: number, goalId: number) => {
+          const client = await mkClient();
+          return performanceApi(client).approveGoal(appId, goalId);
+        },
+        rejectGoal: async (appId: number, goalId: number, rejection_reason: string) => {
+          const client = await mkClient();
+          return performanceApi(client).rejectGoal(appId, goalId, rejection_reason);
+        },
+        listTeamGoals: async (appId: number) => {
+          const client = await mkClient();
+          return performanceApi(client).listTeamGoals(appId);
+        },
+        listTeamReviews: async (appId: number) => {
+          const client = await mkClient();
+          return performanceApi(client).listTeamReviews(appId);
+        },
+        listAllReviews: async (appId: number) => {
+          const client = await mkClient();
+          return performanceApi(client).listAllReviews(appId);
+        },
+        submitReview: async (appId: number, reviewId: number, data: Record<string, unknown>) => {
+          const client = await mkClient();
+          return performanceApi(client).submitReview(appId, reviewId, data);
+        },
+        getReview: async (appId: number, reviewId: number) => {
+          const client = await mkClient();
+          return performanceApi(client).getReview(appId, reviewId);
+        },
+        getReviewRatings: async (appId: number, reviewId: number) => {
+          const client = await mkClient();
+          return performanceApi(client).getReviewRatings(appId, reviewId);
+        },
+        getReviewAnalytics: async (appId: number, reviewId: number) => {
+          const client = await mkClient();
+          return performanceApi(client).getReviewAnalytics(appId, reviewId);
+        },
+        submitSelfRating: async (appId: number, reviewId: number, data: Record<string, unknown>) => {
+          const client = await mkClient();
+          return performanceApi(client).submitSelfRating(appId, reviewId, data);
+        },
+        submitManagerRating: async (appId: number, reviewId: number, data: Record<string, unknown>) => {
+          const client = await mkClient();
+          return performanceApi(client).submitManagerRating(appId, reviewId, data);
+        },
+        submitFinalRating: async (appId: number, reviewId: number, data: Record<string, unknown>) => {
+          const client = await mkClient();
+          return performanceApi(client).submitFinalRating(appId, reviewId, data);
+        },
+        getAppraisal: async (appId: number, appraisalId: number) => {
+          const client = await mkClient();
+          return performanceApi(client).getAppraisal(appId, appraisalId);
+        },
+        submitEmployeeResponse: async (appId: number, appraisalId: number, data: Record<string, unknown>) => {
+          const client = await mkClient();
+          return performanceApi(client).submitEmployeeResponse(appId, appraisalId, data);
+        },
+        submitManagerResponse: async (appId: number, appraisalId: number, data: Record<string, unknown>) => {
+          const client = await mkClient();
+          return performanceApi(client).submitManagerResponse(appId, appraisalId, data);
+        },
+        submitFinalDecision: async (appId: number, appraisalId: number, data: Record<string, unknown>) => {
+          const client = await mkClient();
+          return performanceApi(client).submitFinalDecision(appId, appraisalId, data);
+        },
       },
       employees: {
         list: async (appId: number) => {
@@ -277,6 +386,14 @@ export function useApi() {
         listReceived: async (appId: number) => {
           const client = await mkClient();
           return appreciationsApi(client).listReceived(appId);
+        },
+        getForUser: async (appId: number, userId: number) => {
+          const client = await mkClient();
+          return appreciationsApi(client).getForUser(appId, userId);
+        },
+        getByCycle: async (appId: number, cycleId: number) => {
+          const client = await mkClient();
+          return appreciationsApi(client).getByCycle(appId, cycleId);
         },
       },
       timeLogs: {
@@ -335,6 +452,16 @@ export function useApi() {
         create: async (appId: number, data: Record<string, unknown>) => {
           const client = await mkClient();
           return rolesApi(client).create(appId, data);
+        },
+        listAreas: async (appId: number, roleId: number) => {
+          const client = await mkClient();
+          return rolesApi(client).listAreas(appId, roleId);
+        },
+      },
+      departments: {
+        list: async (appId: number) => {
+          const client = await mkClient();
+          return departmentsApi(client).list(appId);
         },
       },
       policies: {

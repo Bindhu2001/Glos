@@ -10,7 +10,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useApi } from '../../hooks/useApi';
 import { StatusColors, PriorityColors, AppColors } from '../../utils/colors';
 import { useTheme } from '../../contexts/ThemeContext';
-import { formatDate, formatRelative, formatDuration, capitalize } from '../../utils/format';
+import { useWorkspace } from '../../contexts/WorkspaceContext';
+import { formatDate, formatRelative, formatDuration, formatTimerDisplay, formatLogEntry, capitalize } from '../../utils/format';
 import { TasksStackParamList } from '../../navigation/types';
 import ScreenHeader from '../../components/common/ScreenHeader';
 import Badge from '../../components/common/Badge';
@@ -20,15 +21,46 @@ import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Avatar from '../../components/common/Avatar';
 
 type Route = RouteProp<TasksStackParamList, 'TaskDetail'>;
-type TabName = 'details' | 'comments' | 'checklist' | 'timelogs';
+type TabName = 'details' | 'comments' | 'checklist' | 'timelogs' | 'timeline';
 
 const STATUSES = [
-  { value: 'open', label: 'Open' },
-  { value: 'in_progress', label: 'In Progress' },
+  { value: 'open', label: 'Not started' },
+  { value: 'in_progress', label: 'In progress' },
   { value: 'blocked', label: 'Blocked' },
-  { value: 'done', label: 'Done' },
+  { value: 'done', label: 'Completed' },
   { value: 'cancelled', label: 'Cancelled' },
 ];
+
+function formatTimelineEvent(event: any): string {
+  const { event_type } = event;
+  const meta = typeof event.meta === 'string'
+    ? (() => { try { return JSON.parse(event.meta); } catch { return {}; } })()
+    : (event.meta ?? {});
+  switch (event_type) {
+    case 'created': return 'Task created';
+    case 'status_changed': {
+      const status = meta?.new_status ?? event.new_value ?? '';
+      return `Status changed to ${status.replace(/_/g, ' ') || '—'}`;
+    }
+    case 'assignee_changed': {
+      const name = meta?.new_assignee_name ?? event.new_assignee_name ?? '';
+      return name ? `Assigned to ${name}` : 'Assignee removed';
+    }
+    case 'deadline_changed': {
+      const d = meta?.new_deadline ?? event.new_value ?? '';
+      return d ? `Deadline set to ${d}` : 'Deadline removed';
+    }
+    case 'checklist_item_added': return `Checklist item added: "${meta?.text ?? event.note ?? ''}"`;
+    case 'checklist_item_checked': return `Completed: "${meta?.text ?? event.note ?? ''}"`;
+    case 'checklist_item_unchecked': return `Unchecked: "${meta?.text ?? event.note ?? ''}"`;
+    case 'checklist_item_deleted': return `Removed checklist item: "${meta?.text ?? event.note ?? ''}"`;
+    case 'estimated_time_set': {
+      const mins = meta?.estimated_minutes ?? Number(event.new_value) ?? 0;
+      return mins ? `Estimated time set to ${Math.round(mins / 60 * 10) / 10}h` : 'Estimated time set';
+    }
+    default: return (event_type ?? 'Unknown event').replace(/_/g, ' ');
+  }
+}
 
 function decodeHtml(str: string) {
   return str
@@ -42,6 +74,7 @@ export default function TaskDetailScreen() {
   const route = useRoute<Route>();
   const { taskId, appId } = route.params;
   const api = useApi();
+  const { workspace } = useWorkspace();
   const { colors } = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
@@ -57,25 +90,40 @@ export default function TaskDetailScreen() {
   const [activeTab, setActiveTab] = useState<TabName>('details');
   const [commentText, setCommentText] = useState('');
   const [checklistText, setChecklistText] = useState('');
-  const [timerActive, setTimerActive] = useState(false);
   const [liveSeconds, setLiveSeconds] = useState(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const scrollRef = useRef<any>(null);
   const [saving, setSaving] = useState(false);
   const [statusModal, setStatusModal] = useState(false);
   const [assigneeModal, setAssigneeModal] = useState(false);
+  const [timeline, setTimeline] = useState<any[]>([]);
+  const [timelineLoading, setTimelineLoading] = useState(false);
+  const [editModal, setEditModal] = useState(false);
+  const [editTitle, setEditTitle] = useState('');
+  const [editDescription, setEditDescription] = useState('');
 
   useEffect(() => {
-    if (!timerActive || !task?.timer_started_at) {
+    scrollRef.current?.scrollTo({ x: 0, y: 0, animated: false });
+  }, [activeTab]);
+
+  const timerRunning = !!task?.timer_started_at;
+  const timerPaused = !task?.timer_started_at && (task?.timer_accumulated_s ?? 0) > 0;
+  const timerActive = timerRunning || timerPaused;
+
+  useEffect(() => {
+    if (!timerRunning) {
       if (intervalRef.current) clearInterval(intervalRef.current);
-      setLiveSeconds(0);
+      setLiveSeconds(timerPaused ? (task?.timer_accumulated_s ?? 0) : 0);
       return;
     }
-    const startMs = new Date(task.timer_started_at).getTime();
-    const tick = () => setLiveSeconds(Math.max(0, Math.floor((Date.now() - startMs) / 1000)));
+    const accumulated = task?.timer_accumulated_s ?? 0;
+    const startMs = new Date(task.timer_started_at!).getTime();
+    const tick = () => setLiveSeconds(accumulated + Math.max(0, Math.floor((Date.now() - startMs) / 1000)));
     tick();
     intervalRef.current = setInterval(tick, 1000);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [timerActive, task?.timer_started_at]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timerRunning, task?.timer_started_at, task?.timer_accumulated_s]);
 
   const load = useCallback(async () => {
     try {
@@ -93,7 +141,6 @@ export default function TaskDetailScreen() {
       setTimeLogs(tl.data?.items ?? tl.data?.logs ?? []);
       setMeId(me.data?.id ?? me.data?.user?.id ?? null);
       setMembers(mbrs.data?.members ?? mbrs.data?.items ?? mbrs.data ?? []);
-      setTimerActive(!!(t.data.task ?? t.data).timer_started_at);
     } catch {}
   }, [taskId, appId]);
 
@@ -105,6 +152,40 @@ export default function TaskDetailScreen() {
     setRefreshing(true);
     await load();
     setRefreshing(false);
+  };
+
+  useEffect(() => {
+    if (activeTab === 'timeline' && timeline.length === 0 && task) {
+      setTimelineLoading(true);
+      api.tasks.getTimeline(appId, taskId)
+        .then((r: any) => setTimeline(r.data?.items ?? r.data ?? []))
+        .catch(() => {})
+        .finally(() => setTimelineLoading(false));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  const getCommentAuthorName = (c: any) => {
+    if (c.author_name) return c.author_name;
+    if (c.user?.first_name || c.user?.last_name) return `${c.user.first_name ?? ''} ${c.user.last_name ?? ''}`.trim();
+    if (c.user?.email) return c.user.email;
+    const uid = c.author_user_id ?? c.author_id ?? c.user_id;
+    const m = members.find((mb) => (mb.user_id ?? mb.id) === uid);
+    return m ? (m.name ?? (`${m.first_name ?? ''} ${m.last_name ?? ''}`.trim() || m.email)) : 'Team Member';
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editTitle.trim()) { Alert.alert('Validation', 'Title is required.'); return; }
+    setSaving(true);
+    try {
+      await api.tasks.update(appId, taskId, { title: editTitle.trim(), description: editDescription.trim() || null });
+      setTask((prev: any) => prev ? { ...prev, title: editTitle.trim(), description: editDescription.trim() || prev.description } : prev);
+      setEditModal(false);
+    } catch {
+      Alert.alert('Error', 'Could not update task.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const changeStatus = async (status: string) => {
@@ -188,34 +269,57 @@ export default function TaskDetailScreen() {
     }
   };
 
-  const toggleTimer = async () => {
+  const handleStartTimer = async () => {
     try {
-      if (timerActive) {
-        await api.tasks.stopTimer(appId, taskId);
-        setTimerActive(false);
-        setTask((prev: any) => prev ? { ...prev, timer_started_at: null } : prev);
-        const tl = await api.tasks.getTimeLogs(appId, taskId);
-        setTimeLogs(tl.data?.items ?? tl.data?.logs ?? []);
-      } else {
-        await api.tasks.startTimer(appId, taskId);
-        const startedAt = new Date().toISOString();
-        setTimerActive(true);
-        setTask((prev: any) => prev ? { ...prev, timer_started_at: startedAt } : prev);
+      await api.tasks.startTimer(appId, taskId);
+      const startedAt = new Date().toISOString();
+      setTask((prev: any) => {
+        if (!prev) return prev;
+        return { ...prev, timer_started_at: startedAt, ...(prev.status === 'open' ? { status: 'in_progress' } : {}) };
+      });
+      if (task?.status === 'open') {
+        await api.tasks.update(appId, taskId, { status: 'in_progress' });
       }
     } catch {
-      Alert.alert('Error', 'Could not update timer.');
+      Alert.alert('Error', 'Could not start timer.');
+    }
+  };
+
+  const handlePauseTimer = async () => {
+    try {
+      const accumulated = (task?.timer_accumulated_s ?? 0) + liveSeconds;
+      await api.tasks.pauseTimer(appId, taskId);
+      setTask((prev: any) => prev
+        ? { ...prev, timer_started_at: null, timer_accumulated_s: accumulated }
+        : prev
+      );
+    } catch {
+      Alert.alert('Error', 'Could not pause timer.');
+    }
+  };
+
+  const handleStopTimer = async () => {
+    try {
+      await api.tasks.stopTimer(appId, taskId);
+      setTask((prev: any) => prev
+        ? { ...prev, timer_started_at: null, timer_accumulated_s: 0 }
+        : prev
+      );
+      const tl = await api.tasks.getTimeLogs(appId, taskId);
+      setTimeLogs(tl.data?.items ?? tl.data?.logs ?? []);
+    } catch {
+      Alert.alert('Error', 'Could not stop timer.');
     }
   };
 
   if (loading) return <LoadingSpinner />;
   if (!task) return null;
 
-  const formatHMS = (sec: number) => {
-    const h = Math.floor(sec / 3600);
-    const m = Math.floor((sec % 3600) / 60);
-    const sec2 = sec % 60;
-    return [h, m, sec2].map((n) => String(n).padStart(2, '0')).join(':');
-  };
+  const isAdmin = workspace?.role === 'super_admin' || workspace?.role === 'admin';
+  const isCreator = task.created_by_user_id === meId;
+  const isAssignee = task.assigned_to_user_id === meId;
+  const canEdit = isCreator || isAssignee || isAdmin;
+  const canControlTimer = isAssignee || isAdmin;
 
   const statusColor = StatusColors[task.status] ?? StatusColors.open;
   const priorityColor = PriorityColors[task.priority] ?? PriorityColors.medium;
@@ -237,17 +341,26 @@ export default function TaskDetailScreen() {
     { key: 'comments', label: 'Comments', count: comments.length },
     { key: 'checklist', label: `Checklist${checklistTotal > 0 ? ` ${checklistDone}/${checklistTotal}` : ''}` },
     { key: 'timelogs', label: 'Time', count: timeLogs.length },
+    { key: 'timeline', label: 'Timeline' },
   ];
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
     <View style={[s.container, { paddingTop: insets.top }]}>
-      <ScreenHeader title={task.title} showBack />
+      <ScreenHeader
+        title={task.title}
+        showBack
+        right={canEdit ? (
+          <TouchableOpacity onPress={() => { setEditTitle(task.title ?? ''); setEditDescription(task.description ? decodeHtml(task.description) : ''); setEditModal(true); }}>
+            <Ionicons name="create-outline" size={22} color={colors.primary} />
+          </TouchableOpacity>
+        ) : undefined}
+      />
 
       {/* Badges row — tap status to change */}
       <View style={s.badges}>
-        <TouchableOpacity onPress={() => setStatusModal(true)}>
-          <Badge label={capitalize(task.status)} bg={statusColor.bg} color={statusColor.text} />
+        <TouchableOpacity onPress={() => canEdit && setStatusModal(true)}>
+          <Badge label={STATUSES.find(s => s.value === task.status)?.label ?? capitalize(task.status)} bg={statusColor.bg} color={statusColor.text} />
         </TouchableOpacity>
         <Badge label={capitalize(task.priority)} bg={priorityColor.bg} color={priorityColor.text} />
         {task.due_on && (
@@ -261,28 +374,48 @@ export default function TaskDetailScreen() {
       {/* Action bar: timer */}
       <View style={s.actionBar}>
         {timerActive && (
-          <Text style={s.clockText}>{formatHMS(liveSeconds)}</Text>
+          <Text style={s.clockText}>{formatTimerDisplay(liveSeconds)}</Text>
         )}
-        <TouchableOpacity onPress={toggleTimer} style={[s.timerBtn, timerActive && s.timerActive]}>
-          <Ionicons name={timerActive ? 'pause-circle-outline' : 'play-circle-outline'} size={18} color={timerActive ? colors.danger : colors.primary} />
-          <Text style={[s.timerText, timerActive && { color: colors.danger }]}>
-            {timerActive ? 'Pause' : 'Start'}
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={s.statusBtn} onPress={() => setStatusModal(true)}>
-          <Ionicons name="swap-horizontal-outline" size={15} color={colors.primary} />
-          <Text style={s.statusBtnText}>Status</Text>
-        </TouchableOpacity>
+        {canControlTimer && !timerActive && (
+          <TouchableOpacity onPress={handleStartTimer} style={s.timerBtn}>
+            <Ionicons name="play-circle-outline" size={18} color={colors.primary} />
+            <Text style={s.timerText}>Start</Text>
+          </TouchableOpacity>
+        )}
+        {canControlTimer && timerRunning && (
+          <TouchableOpacity onPress={handlePauseTimer} style={s.timerBtn}>
+            <Ionicons name="pause-circle-outline" size={18} color={colors.primary} />
+            <Text style={s.timerText}>Pause</Text>
+          </TouchableOpacity>
+        )}
+        {canControlTimer && timerPaused && (
+          <TouchableOpacity onPress={handleStartTimer} style={s.timerBtn}>
+            <Ionicons name="play-circle-outline" size={18} color={colors.primary} />
+            <Text style={s.timerText}>Resume</Text>
+          </TouchableOpacity>
+        )}
+        {canControlTimer && timerActive && (
+          <TouchableOpacity onPress={handleStopTimer} style={[s.timerBtn, s.timerActive]}>
+            <Ionicons name="stop-circle-outline" size={18} color={colors.danger} />
+            <Text style={[s.timerText, { color: colors.danger }]}>Stop & Log</Text>
+          </TouchableOpacity>
+        )}
+        {canEdit && (
+          <TouchableOpacity style={s.statusBtn} onPress={() => setStatusModal(true)}>
+            <Ionicons name="swap-horizontal-outline" size={15} color={colors.primary} />
+            <Text style={s.statusBtnText}>Status</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
-      <View style={s.tabs}>
+      <View style={[s.tabsScroll, s.tabs]}>
         {TABS.map((tab) => (
           <TouchableOpacity
             key={tab.key}
             style={[s.tab, activeTab === tab.key && s.tabActive]}
             onPress={() => setActiveTab(tab.key)}
           >
-            <Text style={[s.tabText, activeTab === tab.key && s.tabTextActive]}>
+            <Text style={[s.tabText, activeTab === tab.key && s.tabTextActive]} numberOfLines={1}>
               {tab.label}
             </Text>
           </TouchableOpacity>
@@ -290,6 +423,8 @@ export default function TaskDetailScreen() {
       </View>
 
       <ScrollView
+        ref={scrollRef}
+        style={{ flex: 1 }}
         contentContainerStyle={s.content}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
@@ -312,7 +447,7 @@ export default function TaskDetailScreen() {
             {/* Assignee section */}
             <View style={s.section}>
               <Text style={s.sectionTitle}>Assignee</Text>
-              <TouchableOpacity style={s.assigneeRow} onPress={() => setAssigneeModal(true)}>
+              <TouchableOpacity style={s.assigneeRow} onPress={() => canEdit && setAssigneeModal(true)}>
                 {assigneeName ? (
                   <>
                     <Avatar name={assigneeName} size={28} />
@@ -332,7 +467,7 @@ export default function TaskDetailScreen() {
             {comments.map((c) => (
               <CommentItem
                 key={c.id}
-                comment={{ ...c, author_name: c.author_name ?? 'Team Member' }}
+                comment={{ ...c, author_name: getCommentAuthorName(c) }}
                 canDelete={meId !== null && (c.author_user_id === meId || c.author_id === meId)}
                 onDelete={() => deleteComment(c.id)}
               />
@@ -385,13 +520,40 @@ export default function TaskDetailScreen() {
           <View>
             {timeLogs.map((log) => (
               <View key={log.id} style={s.logRow}>
-                <Ionicons name="time-outline" size={16} color={colors.primary} />
-                <Text style={s.logUser}>{log.user_name ?? 'You'}</Text>
-                <Text style={s.logDur}>{formatDuration(log.duration_minutes)}</Text>
-                <Text style={s.logDate}>{formatDate(log.logged_on)}</Text>
+                <View style={s.logMain}>
+                  <View style={s.logTopRow}>
+                    <Text style={s.logUser}>{log.user_name ?? 'You'}</Text>
+                    <Text style={s.logDur}>{formatDuration(log.duration_minutes)}</Text>
+                  </View>
+                  <Text style={s.logDate}>{formatLogEntry(log.created_at) || formatDate(log.logged_on)}</Text>
+                </View>
               </View>
             ))}
             {timeLogs.length === 0 && <Text style={s.empty}>No time logged yet.</Text>}
+          </View>
+        )}
+
+        {activeTab === 'timeline' && (
+          <View>
+            {timelineLoading ? (
+              <ActivityIndicator style={{ marginTop: 40 }} color={colors.primary} />
+            ) : timeline.length === 0 ? (
+              <Text style={s.empty}>No timeline events yet.</Text>
+            ) : (
+              timeline.map((event, idx) => (
+                <View key={event.id ?? idx} style={s.timelineRow}>
+                  <View style={s.timelineDotCol}>
+                    <View style={s.timelineDot} />
+                    {idx < timeline.length - 1 && <View style={s.timelineLine} />}
+                  </View>
+                  <View style={s.timelineContent}>
+                    <Text style={s.timelineLabel}>{formatTimelineEvent(event)}</Text>
+                    <Text style={s.timelineTime}>{formatRelative(event.created_at)}</Text>
+                    {event.actor_name && <Text style={s.timelineActor}>by {event.actor_name}</Text>}
+                  </View>
+                </View>
+              ))
+            )}
           </View>
         )}
       </ScrollView>
@@ -425,6 +587,46 @@ export default function TaskDetailScreen() {
           </TouchableOpacity>
         </View>
       )}
+
+      {/* Edit Task Modal */}
+      <Modal visible={editModal} transparent animationType="slide" onRequestClose={() => setEditModal(false)}>
+        <KeyboardAvoidingView style={s.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <View style={[s.modalSheet, { paddingBottom: insets.bottom + 16, maxHeight: '80%' }]}>
+            <View style={s.modalHandle} />
+            <Text style={s.modalTitle}>Edit Task</Text>
+            <Text style={[s.sectionTitle, { marginTop: 4, marginBottom: 6 }]}>Title</Text>
+            <TextInput
+              style={[s.editInput, { color: colors.textPrimary, borderColor: colors.border, backgroundColor: colors.gray50 }]}
+              value={editTitle}
+              onChangeText={setEditTitle}
+              placeholder="Task title"
+              placeholderTextColor={colors.gray400}
+            />
+            <Text style={[s.sectionTitle, { marginTop: 12, marginBottom: 6 }]}>Description</Text>
+            <TextInput
+              style={[s.editInput, s.editInputMulti, { color: colors.textPrimary, borderColor: colors.border, backgroundColor: colors.gray50 }]}
+              value={editDescription}
+              onChangeText={setEditDescription}
+              placeholder="Describe the task..."
+              placeholderTextColor={colors.gray400}
+              multiline
+              numberOfLines={5}
+              textAlignVertical="top"
+            />
+            <View style={s.editActions}>
+              <TouchableOpacity style={s.editCancel} onPress={() => setEditModal(false)}>
+                <Text style={s.editCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={s.editSave} onPress={handleSaveEdit} disabled={saving}>
+                {saving
+                  ? <ActivityIndicator color="#fff" size="small" />
+                  : <Text style={s.editSaveText}>Save</Text>
+                }
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
 
       {/* Status picker modal */}
       <Modal visible={statusModal} transparent animationType="slide" onRequestClose={() => setStatusModal(false)}>
@@ -526,9 +728,10 @@ function makeStyles(c: AppColors) {
       paddingVertical: 9, borderRadius: 10, borderWidth: 1.5, borderColor: c.primary,
     },
     statusBtnText: { fontSize: 13, fontWeight: '600', color: c.primary },
-    tabs: { flexDirection: 'row', backgroundColor: c.surface, borderBottomWidth: 1, borderBottomColor: c.border },
-    tab: { flex: 1, paddingVertical: 12, alignItems: 'center' },
-    tabActive: { borderBottomWidth: 2, borderBottomColor: c.primary },
+    tabsScroll: { backgroundColor: c.surface, borderBottomWidth: 1, borderBottomColor: c.border },
+    tabs: { flexDirection: 'row' },
+    tab: { flex: 1, paddingVertical: 12, paddingHorizontal: 2, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: 'transparent' },
+    tabActive: { borderBottomColor: c.primary },
     tabText: { fontSize: 11, fontWeight: '500', color: c.gray500 },
     tabTextActive: { color: c.primary, fontWeight: '700' },
     content: { padding: 16, paddingBottom: 100 },
@@ -553,10 +756,12 @@ function makeStyles(c: AppColors) {
     progressBar: { height: 6, backgroundColor: c.gray100, borderRadius: 3, overflow: 'hidden' },
     progressFill: { height: '100%', backgroundColor: c.primary, borderRadius: 3 },
     empty: { fontSize: 14, color: c.gray400, textAlign: 'center', marginTop: 40 },
-    logRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: c.border },
-    logUser: { flex: 1, fontSize: 13, color: c.textPrimary },
+    logRow: { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: c.border },
+    logMain: { flex: 1 },
+    logTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 },
+    logUser: { fontSize: 13, fontWeight: '600', color: c.textPrimary },
     logDur: { fontSize: 13, fontWeight: '700', color: c.primary },
-    logDate: { fontSize: 12, color: c.gray400 },
+    logDate: { fontSize: 11, color: c.gray400 },
     inputBar: {
       flexDirection: 'row', alignItems: 'flex-end', gap: 10,
       backgroundColor: c.surface, paddingHorizontal: 16, paddingTop: 10,
@@ -585,5 +790,27 @@ function makeStyles(c: AppColors) {
     modalOptionActive: { backgroundColor: c.primaryLight },
     modalOptionText: { fontSize: 15, color: c.textPrimary },
     statusDot: { width: 10, height: 10, borderRadius: 5 },
+    // Timeline
+    timelineRow: { flexDirection: 'row', marginBottom: 16 },
+    timelineDotCol: { width: 24, alignItems: 'center', marginRight: 12 },
+    timelineDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: c.primary, marginTop: 3 },
+    timelineLine: { flex: 1, width: 2, backgroundColor: c.border, marginTop: 4 },
+    timelineContent: { flex: 1, paddingBottom: 8 },
+    timelineLabel: { fontSize: 13, color: c.textPrimary, fontWeight: '500' },
+    timelineTime: { fontSize: 11, color: c.gray400, marginTop: 2 },
+    timelineActor: { fontSize: 11, color: c.gray500, marginTop: 1 },
+    // Edit modal
+    editInput: {
+      borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14,
+    },
+    editInputMulti: { minHeight: 100, textAlignVertical: 'top' },
+    editActions: { flexDirection: 'row', gap: 12, marginTop: 20 },
+    editCancel: {
+      flex: 1, paddingVertical: 12, borderRadius: 10, borderWidth: 1.5,
+      borderColor: c.border, alignItems: 'center',
+    },
+    editCancelText: { fontSize: 14, fontWeight: '600', color: c.textSecondary },
+    editSave: { flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: c.primary, alignItems: 'center' },
+    editSaveText: { fontSize: 14, fontWeight: '700', color: '#fff' },
   });
 }

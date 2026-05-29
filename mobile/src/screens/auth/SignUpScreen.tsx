@@ -9,7 +9,6 @@ import * as AuthSession from 'expo-auth-session';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
 import { AuthStackParamList } from '../../navigation/types';
 import { useTheme } from '../../contexts/ThemeContext';
 import { AppColors } from '../../utils/colors';
@@ -17,6 +16,7 @@ import Input from '../../components/common/Input';
 import Button from '../../components/common/Button';
 import Logo from '../../components/common/Logo';
 import { showAlert } from '../../components/common/AlertModal';
+import GoogleIcon from '../../components/common/GoogleIcon';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -85,7 +85,7 @@ export default function SignUpScreen() {
     try {
       const result = await startSSOFlow({
         strategy: 'oauth_google',
-        redirectUrl: AuthSession.makeRedirectUri(),
+        redirectUrl: AuthSession.makeRedirectUri({ scheme: 'com.greatleap.mobile' }),
       });
 
       if (!result) {
@@ -95,11 +95,17 @@ export default function SignUpScreen() {
 
       const { createdSessionId, setActive: setActiveSession, signIn, signUp } = result as any;
 
+      // Existing account — Clerk returns signIn instead of signUp
+      if (signIn?.createdSessionId || signIn?.status === 'complete') {
+        showAlert('Account Already Exists', 'An account with this Google email already exists. Please sign in instead.', [
+          { text: 'Go to Sign In', onPress: () => navigation.navigate('SignIn') },
+        ]);
+        return;
+      }
+
       if (createdSessionId && setActiveSession) { await setActiveSession({ session: createdSessionId }); return; }
       if (signUp?.createdSessionId && setActiveSession) { await setActiveSession({ session: signUp.createdSessionId }); return; }
       if (signUp?.status === 'complete' && signUp.createdSessionId) { await setActiveSession?.({ session: signUp.createdSessionId }); return; }
-      if (signIn?.createdSessionId && setActiveSession) { await setActiveSession({ session: signIn.createdSessionId }); return; }
-      if (signIn?.status === 'complete' && signIn.createdSessionId) { await setActiveSession?.({ session: signIn.createdSessionId }); return; }
 
       showAlert('Connection Failed', 'Could not establish connection. Please allow this app to connect to your account.');
     } catch (err: any) {
@@ -136,7 +142,7 @@ export default function SignUpScreen() {
                 {googleLoading ? (
                   <ActivityIndicator size="small" color={colors.textPrimary} />
                 ) : (
-                  <Ionicons name="logo-google" size={18} color="#EA4335" />
+                  <GoogleIcon size={22} />
                 )}
                 <Text style={s.googleBtnText}>Continue with Google</Text>
               </TouchableOpacity>

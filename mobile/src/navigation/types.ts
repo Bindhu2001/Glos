@@ -36,6 +36,8 @@ export type FeedStackParamList = {
 export type PerformanceStackParamList = {
   PerformanceHome: undefined;
   TaskReports: undefined;
+  ReviewDetail: { reviewId: number; appId: number };
+  AppraisalDetail: { appraisalId: number; appId: number };
 };
 
 export type PeopleStackParamList = {

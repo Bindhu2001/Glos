@@ -88,11 +88,12 @@ export default function GiveAppreciationModal({ visible, onClose, onSuccess, app
     }
   };
 
-  const filtered = employees.filter((e) => {
-    if (!search) return true;
-    const name = e.full_name ?? [e.first_name, e.last_name].filter(Boolean).join(' ');
-    return name.toLowerCase().includes(search.toLowerCase());
-  });
+  const filtered = search.trim()
+    ? employees.filter((e) => {
+        const name = e.full_name ?? [e.first_name, e.last_name].filter(Boolean).join(' ');
+        return name.toLowerCase().includes(search.toLowerCase());
+      })
+    : [];
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={handleClose}>
@@ -131,6 +132,8 @@ export default function GiveAppreciationModal({ visible, onClose, onSuccess, app
                 </View>
                 {loadingMembers ? (
                   <ActivityIndicator style={{ marginVertical: 16 }} color={colors.primary} />
+                ) : !search.trim() ? (
+                  <Text style={s.emptyText}>Type a name to search</Text>
                 ) : (
                   <View style={s.memberList}>
                     {filtered.slice(0, 50).map((e) => {
