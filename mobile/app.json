@@ -2,9 +2,9 @@
   "expo": {
     "name": "Glos",
     "slug": "glos",
-    "scheme": "com.greatleap.mobile",
+    "scheme": "com.greatleap.glos",
+    "privacy": "public",
     "version": "1.0.0",
-    "owner": "athiraglos",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -22,10 +22,21 @@
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#1a56db"
       },
-      "package": "com.greatleap.mobile"
+      "package": "com.greatleap.glos",
+      "versionCode": 3,
+      "softwareKeyboardLayoutMode": "resize",
+      "compileSdkVersion": 35,
+      "targetSdkVersion": 35,
+      "minSdkVersion": 21
     },
     "plugins": [
       "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow $(PRODUCT_NAME) to access your photos to upload a logo."
+        }
+      ],
       [
         "expo-build-properties",
         {
@@ -34,11 +45,14 @@
           }
         }
       ],
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      "expo-font"
     ],
+    "privacyPolicyUrl": "https://mypayrollmaster.online/Glos-privacypolicy.html",
+    "owner": "athiraks",
     "extra": {
       "eas": {
-        "projectId": "bb35f5c1-d86a-4e6d-8ee3-0d36eb5fcf51"
+        "projectId": "04eaec98-29d5-4cb3-99dc-c4c4f80b9f3a"
       }
     }
   }
