@@ -1,11 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  KeyboardAvoidingView, Platform, ActivityIndicator,
+  KeyboardAvoidingView,
 } from 'react-native';
-import { useSignUp, useSSO } from '@clerk/clerk-expo';
-import * as WebBrowser from 'expo-web-browser';
-import * as AuthSession from 'expo-auth-session';
+import { useSignUp, useClerk } from '@clerk/clerk-expo';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,15 +14,12 @@ import Input from '../../components/common/Input';
 import Button from '../../components/common/Button';
 import Logo from '../../components/common/Logo';
 import { showAlert } from '../../components/common/AlertModal';
-import GoogleIcon from '../../components/common/GoogleIcon';
-
-WebBrowser.maybeCompleteAuthSession();
 
 type Nav = NativeStackNavigationProp<AuthStackParamList, 'SignUp'>;
 
 export default function SignUpScreen() {
-  const { signUp, setActive, isLoaded } = useSignUp();
-  const { startSSOFlow } = useSSO();
+  const { signUp, isLoaded } = useSignUp();
+  const { setActive } = useClerk();
   const navigation = useNavigation<Nav>();
   const { colors } = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
@@ -37,7 +32,6 @@ export default function SignUpScreen() {
   const [code, setCode] = useState('');
   const [pendingVerification, setPendingVerification] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
 
   const handleSignUp = async () => {
     if (!isLoaded) return;
@@ -55,6 +49,18 @@ export default function SignUpScreen() {
       await signUp.prepareEmailAddressVerification({ strategy: 'email_code' });
       setPendingVerification(true);
     } catch (err: any) {
+      const code = err.errors?.[0]?.code ?? '';
+      if (code === 'form_identifier_exists' || code === 'form_identifier_taken' || code === 'email_address_exists') {
+        showAlert(
+          'Account Already Exists',
+          'An account with this email already exists. Please sign in instead.',
+          [
+            { text: 'Go to Sign In', onPress: () => navigation.navigate('SignIn') },
+            { text: 'Cancel', style: 'cancel' },
+          ]
+        );
+        return;
+      }
       showAlert('Sign Up Failed', err.errors?.[0]?.message ?? 'Something went wrong.');
     } finally {
       setLoading(false);
@@ -71,7 +77,7 @@ export default function SignUpScreen() {
     try {
       const result = await signUp.attemptEmailAddressVerification({ code: code.trim() });
       if (result.status === 'complete') {
-        await setActive({ session: result.createdSessionId });
+        await setActive({ session: result.createdSessionId! });
       }
     } catch (err: any) {
       showAlert('Verification Failed', err.errors?.[0]?.message ?? 'Invalid code.');
@@ -80,44 +86,8 @@ export default function SignUpScreen() {
     }
   };
 
-  const handleGoogleSignUp = async () => {
-    setGoogleLoading(true);
-    try {
-      const result = await startSSOFlow({
-        strategy: 'oauth_google',
-        redirectUrl: AuthSession.makeRedirectUri({ scheme: 'com.greatleap.mobile' }),
-      });
-
-      if (!result) {
-        showAlert('Google Sign Up Failed', 'No response from Google. Try again.');
-        return;
-      }
-
-      const { createdSessionId, setActive: setActiveSession, signIn, signUp } = result as any;
-
-      // Existing account — Clerk returns signIn instead of signUp
-      if (signIn?.createdSessionId || signIn?.status === 'complete') {
-        showAlert('Account Already Exists', 'An account with this Google email already exists. Please sign in instead.', [
-          { text: 'Go to Sign In', onPress: () => navigation.navigate('SignIn') },
-        ]);
-        return;
-      }
-
-      if (createdSessionId && setActiveSession) { await setActiveSession({ session: createdSessionId }); return; }
-      if (signUp?.createdSessionId && setActiveSession) { await setActiveSession({ session: signUp.createdSessionId }); return; }
-      if (signUp?.status === 'complete' && signUp.createdSessionId) { await setActiveSession?.({ session: signUp.createdSessionId }); return; }
-
-      showAlert('Connection Failed', 'Could not establish connection. Please allow this app to connect to your account.');
-    } catch (err: any) {
-      console.error('[GoogleSignUp] Error:', err);
-      showAlert('Google Sign Up Failed', err.errors?.[0]?.message ?? 'Something went wrong. Try again.');
-    } finally {
-      setGoogleLoading(false);
-    }
-  };
-
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
       <ScrollView
         style={s.container}
         contentContainerStyle={[s.content, { paddingTop: insets.top + 40, paddingBottom: insets.bottom + 24 }]}
@@ -132,26 +102,6 @@ export default function SignUpScreen() {
             <>
               <Text style={s.heading}>Create account</Text>
               <Text style={s.subheading}>Join your team on glos</Text>
-
-              <TouchableOpacity
-                style={[s.googleBtn, googleLoading && s.googleBtnDisabled]}
-                onPress={handleGoogleSignUp}
-                activeOpacity={0.8}
-                disabled={googleLoading}
-              >
-                {googleLoading ? (
-                  <ActivityIndicator size="small" color={colors.textPrimary} />
-                ) : (
-                  <GoogleIcon size={22} />
-                )}
-                <Text style={s.googleBtnText}>Continue with Google</Text>
-              </TouchableOpacity>
-
-              <View style={s.divider}>
-                <View style={s.dividerLine} />
-                <Text style={s.dividerText}>or</Text>
-                <View style={s.dividerLine} />
-              </View>
 
               <View style={s.nameRow}>
                 <Input label="First Name" value={firstName} onChangeText={setFirstName}
@@ -213,16 +163,6 @@ function makeStyles(c: AppColors) {
     },
     heading: { fontSize: 22, fontWeight: '700', color: c.textPrimary },
     subheading: { fontSize: 14, color: c.textSecondary, marginTop: 4, marginBottom: 20 },
-    googleBtn: {
-      flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
-      borderWidth: 1.5, borderColor: c.border, borderRadius: 12,
-      paddingVertical: 13, paddingHorizontal: 16, backgroundColor: c.surface,
-    },
-    googleBtnDisabled: { opacity: 0.6 },
-    googleBtnText: { fontSize: 15, fontWeight: '600', color: c.textPrimary },
-    divider: { flexDirection: 'row', alignItems: 'center', gap: 12, marginVertical: 20 },
-    dividerLine: { flex: 1, height: 1, backgroundColor: c.border },
-    dividerText: { fontSize: 13, color: c.textSecondary },
     nameRow: { flexDirection: 'row', gap: 12 },
     backLink: { marginTop: 16, alignItems: 'center' },
     backLinkText: { fontSize: 14, color: c.textSecondary },

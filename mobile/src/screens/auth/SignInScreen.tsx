@@ -1,11 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  KeyboardAvoidingView, Platform, ActivityIndicator,
+  KeyboardAvoidingView,
 } from 'react-native';
-import { useSignIn, useSSO } from '@clerk/clerk-expo';
-import * as WebBrowser from 'expo-web-browser';
-import * as AuthSession from 'expo-auth-session';
+import { useSignIn, useClerk } from '@clerk/clerk-expo';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,15 +14,12 @@ import Input from '../../components/common/Input';
 import Button from '../../components/common/Button';
 import Logo from '../../components/common/Logo';
 import { showAlert } from '../../components/common/AlertModal';
-import GoogleIcon from '../../components/common/GoogleIcon';
-
-WebBrowser.maybeCompleteAuthSession();
 
 type Nav = NativeStackNavigationProp<AuthStackParamList, 'SignIn'>;
 
 export default function SignInScreen() {
-  const { signIn, setActive, isLoaded } = useSignIn();
-  const { startSSOFlow } = useSSO();
+  const { signIn, isLoaded } = useSignIn();
+  const { setActive } = useClerk();
   const navigation = useNavigation<Nav>();
   const { colors } = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
@@ -33,7 +28,6 @@ export default function SignInScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
 
   const handleSignIn = async () => {
     if (!isLoaded) return;
@@ -45,7 +39,7 @@ export default function SignInScreen() {
     try {
       const result = await signIn.create({ identifier: email.trim(), password });
       if (result.status === 'complete') {
-        await setActive({ session: result.createdSessionId });
+        await setActive({ session: result.createdSessionId! });
       }
     } catch (err: any) {
       showAlert('Sign In Failed', 'Wrong email or password.');
@@ -54,41 +48,8 @@ export default function SignInScreen() {
     }
   };
 
-  const handleGoogleSignIn = async () => {
-    setGoogleLoading(true);
-    try {
-      const result = await startSSOFlow({
-        strategy: 'oauth_google',
-        redirectUrl: AuthSession.makeRedirectUri({ scheme: 'com.greatleap.mobile' }),
-      });
-
-      if (!result) return;
-
-      const { createdSessionId, setActive: setActiveSession, signIn, signUp } = result as any;
-
-      const activate = async (sessionId: string | null) => {
-        if (setActiveSession) await setActiveSession({ session: sessionId });
-      };
-
-      if (createdSessionId) { await activate(createdSessionId); return; }
-      if (signIn?.createdSessionId || signIn?.status === 'complete') { await activate(signIn.createdSessionId ?? null); return; }
-      if (signUp?.createdSessionId || signUp?.status === 'complete') { await activate(signUp.createdSessionId ?? null); return; }
-
-      showAlert('Sign In Failed', 'Could not complete Google sign in. Please try again.');
-    } catch (err: any) {
-      const code = err?.errors?.[0]?.code ?? '';
-      if (code === 'oauth_cancelled' || code === 'oauth_access_denied') return;
-      showAlert('Google Sign In Failed', err.errors?.[0]?.message ?? 'Something went wrong. Try again.');
-    } finally {
-      setGoogleLoading(false);
-    }
-  };
-
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
       <ScrollView
         style={s.container}
         contentContainerStyle={[s.content, { paddingTop: insets.top + 40, paddingBottom: insets.bottom + 24 }]}
@@ -101,26 +62,6 @@ export default function SignInScreen() {
         <View style={s.card}>
           <Text style={s.heading}>Welcome back</Text>
           <Text style={s.subheading}>Sign in to your account</Text>
-
-          <TouchableOpacity
-            onPress={handleGoogleSignIn}
-            activeOpacity={0.8}
-            disabled={googleLoading}
-            style={[s.googleBtn, googleLoading && s.googleBtnDisabled]}
-          >
-            {googleLoading ? (
-              <ActivityIndicator size="small" color={colors.textPrimary} />
-            ) : (
-              <GoogleIcon size={22} />
-            )}
-            <Text style={s.googleBtnText}>Continue with Google</Text>
-          </TouchableOpacity>
-
-          <View style={s.divider}>
-            <View style={s.dividerLine} />
-            <Text style={s.dividerText}>or</Text>
-            <View style={s.dividerLine} />
-          </View>
 
           <Input
             label="Email"
@@ -174,16 +115,6 @@ function makeStyles(c: AppColors) {
     },
     heading: { fontSize: 22, fontWeight: '700', color: c.textPrimary },
     subheading: { fontSize: 14, color: c.textSecondary, marginTop: 4, marginBottom: 20 },
-    googleBtn: {
-      flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
-      borderRadius: 12, paddingVertical: 13, paddingHorizontal: 16,
-      backgroundColor: c.surface, borderWidth: 1.5, borderColor: c.border,
-    },
-    googleBtnDisabled: { opacity: 0.6 },
-    googleBtnText: { fontSize: 15, fontWeight: '600', color: c.textPrimary },
-    divider: { flexDirection: 'row', alignItems: 'center', gap: 12, marginVertical: 20 },
-    dividerLine: { flex: 1, height: 1, backgroundColor: c.border },
-    dividerText: { fontSize: 13, color: c.textSecondary },
     footer: { flexDirection: 'row', justifyContent: 'center', marginTop: 24 },
     footerText: { fontSize: 14, color: c.textSecondary },
     footerLink: { fontSize: 14, color: c.primary, fontWeight: '600' },
