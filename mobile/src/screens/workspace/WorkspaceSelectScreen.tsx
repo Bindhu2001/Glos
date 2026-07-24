@@ -336,7 +336,7 @@ export default function WorkspaceSelectScreen() {
       )}
       {!loading && !error && (
         <View style={s.footer}>
-          <TouchableOpacity onPress={() => { setWorkspace(null); signOut(); }} style={s.signOutBtn}>
+          <TouchableOpacity onPress={() => { setWorkspace(null); signOut({ redirectUrl: undefined }); }} style={s.signOutBtn}>
             <Ionicons name="log-out-outline" size={16} color={colors.danger} />
             <Text style={s.signOutText}>Sign Out</Text>
           </TouchableOpacity>
@@ -349,7 +349,7 @@ export default function WorkspaceSelectScreen() {
 
       {/* Create Workspace Modal */}
       <Modal visible={showCreate} transparent animationType="slide" onRequestClose={() => setShowCreate(false)}>
-        <KeyboardAvoidingView style={s.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <KeyboardAvoidingView style={s.modalOverlay} behavior="padding">
           <View style={s.modalSheet}>
             <View style={s.modalHeader}>
               <Text style={s.modalTitle}>Create Workspace</Text>

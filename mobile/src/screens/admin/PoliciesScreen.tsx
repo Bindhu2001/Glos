@@ -170,7 +170,7 @@ export default function PoliciesScreen() {
       <Modal visible={createOpen} transparent animationType="fade">
         <KeyboardAvoidingView
           style={s.modalOverlay}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior="padding"
         >
           <View style={s.modalBox}>
             <Text style={s.modalTitle}>New Policy</Text>

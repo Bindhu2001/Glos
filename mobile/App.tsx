@@ -21,11 +21,8 @@ const tokenCache = {
       if (!savedKeys.includes(key)) savedKeys.push(key);
     } catch {}
   },
-  async clearCache() {
-    for (const key of savedKeys) {
-      try { await SecureStore.deleteItemAsync(key); } catch {}
-    }
-    savedKeys.length = 0;
+  async clearToken(key: string) {
+    try { await SecureStore.deleteItemAsync(key); } catch {}
   },
 };
 

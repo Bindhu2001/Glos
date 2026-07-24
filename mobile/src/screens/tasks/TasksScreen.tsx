@@ -13,13 +13,15 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { AppColors } from '../../utils/colors';
 import TaskCard from '../../components/tasks/TaskCard';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
+import LoadError from '../../components/common/LoadError';
+import { useLoadWithTimeout } from '../../hooks/useLoadWithTimeout';
 import EmptyState from '../../components/common/EmptyState';
 import { TasksStackParamList } from '../../navigation/types';
 
 type Nav = NativeStackNavigationProp<TasksStackParamList, 'TasksList'>;
 
 const SORT_OPTIONS = [
-  { value: '', label: 'Default' },
+  { value: 'created_at', label: 'Recently Added' },
   { value: 'deadline', label: 'Deadline' },
   { value: 'priority', label: 'Priority' },
   { value: 'status', label: 'Status' },
@@ -50,20 +52,20 @@ export default function TasksScreen() {
   const [tasks, setTasks] = useState<any[]>([]);
   const [members, setMembers] = useState<any[]>([]);
   const [areas, setAreas] = useState<{ id: number; name: string; roleTitle: string }[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { loading, loadError, run } = useLoadWithTimeout();
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [activeFilter, setActiveFilter] = useState('All');
   const [assigneeFilter, setAssigneeFilter] = useState<number | ''>('');
   const [areaFilter, setAreaFilter] = useState('');
-  const [sortBy, setSortBy] = useState('');
+  const [sortBy, setSortBy] = useState('created_at');
   const [showFilters, setShowFilters] = useState(false);
 
   // refs so load() reads current values without being recreated on every filter change
   const activeFilterRef = useRef('All');
   const assigneeFilterRef = useRef<number | ''>('');
   const areaFilterRef = useRef('');
-  const sortByRef = useRef('');
+  const sortByRef = useRef('created_at');
 
   const load = useCallback(async () => {
     if (!workspace) return;
@@ -108,7 +110,7 @@ export default function TasksScreen() {
   }, [workspace, api]);
 
   useEffect(() => {
-    Promise.all([load(), loadContext()]).finally(() => setLoading(false));
+    run(() => Promise.all([load(), loadContext()]));
   }, [load, loadContext]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
@@ -135,20 +137,24 @@ export default function TasksScreen() {
   const resetFilters = async () => {
     setAssigneeFilter(''); assigneeFilterRef.current = '';
     setAreaFilter(''); areaFilterRef.current = '';
-    setSortBy(''); sortByRef.current = '';
+    setSortBy('created_at'); sortByRef.current = 'created_at';
     await load();
   };
 
-  const filtered = tasks.filter((t) => {
-    const matchSearch = !search || t.title.toLowerCase().includes(search.toLowerCase());
-    const statusKey = STATUS_MAP[activeFilter];
-    const matchStatus = statusKey ? t.status === statusKey : true;
-    return matchSearch && matchStatus;
-  });
+  const filtered = (() => {
+    const list = tasks.filter((t) => {
+      const matchSearch = !search || t.title.toLowerCase().includes(search.toLowerCase());
+      const statusKey = STATUS_MAP[activeFilter];
+      const matchStatus = statusKey ? t.status === statusKey : true;
+      return matchSearch && matchStatus;
+    });
+    return list;
+  })();
 
-  const hasActiveFilters = !!(assigneeFilter || areaFilter || sortBy);
+  const hasActiveFilters = !!(assigneeFilter || areaFilter || (sortBy && sortBy !== 'created_at'));
 
   if (loading) return <LoadingSpinner />;
+  if (loadError) return <LoadError onRetry={() => run(() => Promise.all([load(), loadContext()]))} />;
 
   const now = new Date();
   const inProgressCount = tasks.filter(t => t.status === 'in_progress').length;

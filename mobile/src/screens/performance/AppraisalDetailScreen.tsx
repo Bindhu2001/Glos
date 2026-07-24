@@ -11,6 +11,8 @@ import { useApi } from '../../hooks/useApi';
 import { useTheme } from '../../contexts/ThemeContext';
 import { AppColors } from '../../utils/colors';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
+import LoadError from '../../components/common/LoadError';
+import { useLoadWithTimeout } from '../../hooks/useLoadWithTimeout';
 import { PerformanceStackParamList } from '../../navigation/types';
 
 type RouteProps = RouteProp<PerformanceStackParamList, 'AppraisalDetail'>;
@@ -65,7 +67,7 @@ export default function AppraisalDetailScreen() {
   const s = useMemo(() => makeStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
 
-  const [loading, setLoading] = useState(true);
+  const { loading, loadError, run } = useLoadWithTimeout();
   const [submitting, setSubmitting] = useState(false);
   const [appraisal, setAppraisal] = useState<any>(null);
   const [employeeResponse, setEmployeeResponse] = useState<any>(null);
@@ -93,43 +95,37 @@ export default function AppraisalDetailScreen() {
   const [decisionNotes, setDecisionNotes] = useState('');
 
   const load = useCallback(async () => {
-    try {
-      const res = await api.performance.getAppraisal(appId, appraisalId);
-      const data = res.data;
-      const appr = data.appraisal ?? data;
-      setAppraisal(appr);
-      setEmployeeResponse(data.employee_response ?? null);
-      setManagerResponse(data.manager_response ?? null);
-      setFinalDecision(data.final_decision ?? null);
-      setIsEmployee(!!data.is_employee);
-      setIsManager(!!data.is_manager);
-      setIsFinalApprover(!!data.is_final_approver);
+    const res = await api.performance.getAppraisal(appId, appraisalId);
+    const data = res.data;
+    const appr = data.appraisal ?? data;
+    setAppraisal(appr);
+    setEmployeeResponse(data.employee_response ?? null);
+    setManagerResponse(data.manager_response ?? null);
+    setFinalDecision(data.final_decision ?? null);
+    setIsEmployee(!!data.is_employee);
+    setIsManager(!!data.is_manager);
+    setIsFinalApprover(!!data.is_final_approver);
 
-      if (data.employee_response) {
-        setThingsWentWell(data.employee_response.things_went_well ?? '');
-        setCouldBeBetter(data.employee_response.could_be_better ?? '');
-        setNextTermAspirations(data.employee_response.next_term_aspirations ?? '');
-        setSupportRequired(data.employee_response.support_required ?? '');
-      }
-      if (data.manager_response) {
-        setGoalsFeedback(data.manager_response.goals_feedback ?? '');
-        setSkillsFeedback(data.manager_response.skills_feedback ?? '');
-        setValuesFeedback(data.manager_response.values_feedback ?? '');
-        setPotentialAssessment(data.manager_response.potential_assessment ?? '');
-        setRecommendation(data.manager_response.recommendation ?? '');
-        setRecommendationNotes(data.manager_response.recommendation_notes ?? '');
-      }
-      if (data.final_decision) {
-        setDecisionNotes(data.final_decision.decision_notes ?? '');
-      }
-    } catch {
-      Alert.alert('Error', 'Failed to load appraisal');
-    } finally {
-      setLoading(false);
+    if (data.employee_response) {
+      setThingsWentWell(data.employee_response.things_went_well ?? '');
+      setCouldBeBetter(data.employee_response.could_be_better ?? '');
+      setNextTermAspirations(data.employee_response.next_term_aspirations ?? '');
+      setSupportRequired(data.employee_response.support_required ?? '');
+    }
+    if (data.manager_response) {
+      setGoalsFeedback(data.manager_response.goals_feedback ?? '');
+      setSkillsFeedback(data.manager_response.skills_feedback ?? '');
+      setValuesFeedback(data.manager_response.values_feedback ?? '');
+      setPotentialAssessment(data.manager_response.potential_assessment ?? '');
+      setRecommendation(data.manager_response.recommendation ?? '');
+      setRecommendationNotes(data.manager_response.recommendation_notes ?? '');
+    }
+    if (data.final_decision) {
+      setDecisionNotes(data.final_decision.decision_notes ?? '');
     }
   }, [appId, appraisalId, api]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { run(load); }, [load]);
 
   const appraisalObj = appraisal ?? {};
   const canEmployeeRespond = isEmployee && appraisalObj.status === 'pending_employee' && !employeeResponse;
@@ -190,9 +186,10 @@ export default function AppraisalDetailScreen() {
   };
 
   if (loading) return <LoadingSpinner />;
+  if (loadError) return <LoadError onRetry={() => run(load)} />;
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
       <View style={[s.container, { paddingTop: insets.top }]}>
         <View style={s.header}>
           <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn}>

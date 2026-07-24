@@ -52,7 +52,7 @@ export default function InviteMemberScreen() {
   return (
     <KeyboardAvoidingView
       style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior="padding"
     >
       <View style={[s.container, { paddingTop: insets.top }]}>
         <View style={s.header}>

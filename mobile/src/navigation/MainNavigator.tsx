@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../contexts/ThemeContext';
 import { useWorkspace } from '../contexts/WorkspaceContext';
 import {
@@ -84,6 +85,7 @@ function AdminNavigator() {
 export default function MainNavigator() {
   const { colors } = useTheme();
   const { workspace } = useWorkspace();
+  const insets = useSafeAreaInsets();
   const isAdmin = workspace?.role === 'super_admin' || workspace?.role === 'admin';
 
   return (
@@ -96,14 +98,15 @@ export default function MainNavigator() {
           backgroundColor: colors.surface,
           borderTopColor: colors.border,
           borderTopWidth: 1,
-          paddingBottom: 12,
-          paddingTop: 8,
-          height: 72,
+          paddingBottom: insets.bottom + 6,
+          paddingTop: 6,
+          height: 64 + insets.bottom,
           elevation: 0,
         },
-        tabBarItemStyle: { paddingVertical: 2 },
-        tabBarLabelStyle: { fontSize: 11, fontWeight: '700', letterSpacing: 0.2 },
-        tabBarIcon: ({ color, size, focused }) => {
+        tabBarItemStyle: { paddingVertical: 0 },
+        tabBarLabelStyle: { fontSize: 11, fontWeight: '700', letterSpacing: 0.1, marginTop: -2 },
+        tabBarIcon: ({ color, focused }) => {
+          const iconSize = 24;
           const outlineIcons: Record<string, keyof typeof Ionicons.glyphMap> = {
             DashboardTab: 'home-outline',
             TasksTab: 'checkmark-circle-outline',
@@ -122,8 +125,8 @@ export default function MainNavigator() {
           };
           const iconName = focused ? filledIcons[route.name] : outlineIcons[route.name];
           return (
-            <View style={{ alignItems: 'center', gap: 4 }}>
-              <Ionicons name={iconName} size={size} color={color} />
+            <View style={{ alignItems: 'center', gap: 2 }}>
+              <Ionicons name={iconName} size={iconSize} color={color} />
               {focused && (
                 <View style={{
                   width: 16, height: 3, borderRadius: 2,

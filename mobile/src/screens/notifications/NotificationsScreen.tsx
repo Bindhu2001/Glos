@@ -12,6 +12,8 @@ import { AppColors } from '../../utils/colors';
 import { formatRelative } from '../../utils/format';
 import ScreenHeader from '../../components/common/ScreenHeader';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
+import LoadError from '../../components/common/LoadError';
+import { useLoadWithTimeout } from '../../hooks/useLoadWithTimeout';
 import EmptyState from '../../components/common/EmptyState';
 import { RootStackParamList } from '../../navigation/types';
 
@@ -43,23 +45,19 @@ export default function NotificationsScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
   const [notifications, setNotifications] = useState<Notif[]>([]);
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const { loading, loadError, run } = useLoadWithTimeout();
 
   const load = useCallback(async () => {
-    try {
-      const r = await api.notifications.list({ limit: 50 });
-      setNotifications(r.data?.items ?? []);
-    } catch {}
+    const r = await api.notifications.list({ limit: 50 });
+    setNotifications(r.data?.items ?? []);
   }, [api]);
 
-  useEffect(() => {
-    load().finally(() => setLoading(false));
-  }, [load]);
+  useEffect(() => { run(load); }, [load]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await load();
+    await run(load, true);
     setRefreshing(false);
   };
 
@@ -104,6 +102,7 @@ export default function NotificationsScreen() {
   const unreadCount = notifications.filter((n) => !n.read_at).length;
 
   if (loading) return <LoadingSpinner />;
+  if (loadError) return <LoadError onRetry={() => run(load)} />;
 
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>

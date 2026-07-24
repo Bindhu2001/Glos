@@ -141,9 +141,14 @@ public class TaskService {
         Map<String, Object> task = getTask(appId, taskId);
         if (task == null || task.get("timer_start") == null) return;
 
+        try (var s = conn.createStatement()) {
+            s.execute("ALTER TABLE task_time_logs ADD COLUMN duration_seconds INTEGER DEFAULT 0");
+        } catch (SQLException ignored) {}
+
         try (PreparedStatement ps = conn.prepareStatement(
-            "INSERT INTO task_time_logs (task_id, user_id, duration_minutes, logged_on) " +
-            "VALUES (?, ?, CAST((julianday('now') - julianday(timer_start)) * 24 * 60 AS INTEGER), date('now'))")) {
+            "INSERT INTO task_time_logs (task_id, user_id, duration_minutes, duration_seconds, logged_on) " +
+            "VALUES (?, ?, CAST((julianday('now') - julianday(timer_start)) * 24 * 60 AS INTEGER), " +
+            "CAST((julianday('now') - julianday(timer_start)) * 24 * 3600 AS INTEGER), date('now'))")) {
             ps.setLong(1, taskId);
             ps.setLong(2, userId);
             ps.executeUpdate();

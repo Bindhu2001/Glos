@@ -8,7 +8,7 @@ import { useRoute, RouteProp, useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApi } from '../../hooks/useApi';
-import { StatusColors, PriorityColors, AppColors } from '../../utils/colors';
+import { PriorityColors, AppColors } from '../../utils/colors';
 import { useTheme } from '../../contexts/ThemeContext';
 import { TasksStackParamList } from '../../navigation/types';
 import ScreenHeader from '../../components/common/ScreenHeader';
@@ -20,7 +20,6 @@ import LoadingSpinner from '../../components/common/LoadingSpinner';
 
 type Route = RouteProp<TasksStackParamList, 'CreateTask'>;
 
-const STATUSES = ['open', 'in_progress', 'blocked', 'done', 'cancelled'];
 const PRIORITIES = ['low', 'medium', 'high', 'urgent'];
 
 export default function CreateTaskScreen() {
@@ -34,7 +33,6 @@ export default function CreateTaskScreen() {
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [status, setStatus] = useState('open');
   const [priority, setPriority] = useState('medium');
   const [dueDate, setDueDate] = useState('');
   const [saving, setSaving] = useState(false);
@@ -117,7 +115,7 @@ export default function CreateTaskScreen() {
       await api.tasks.create(appId, {
         title: title.trim(),
         description: description.trim() || undefined,
-        status,
+        status: 'open',
         priority,
         due_on: dueDate.trim(),
         assigned_to_user_id: assigneeId ?? null,
@@ -135,7 +133,7 @@ export default function CreateTaskScreen() {
   if (dataLoading) return <LoadingSpinner />;
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
       <View style={[s.container, { paddingTop: insets.top }]}>
         <ScreenHeader
           title="New Task"
@@ -146,24 +144,6 @@ export default function CreateTaskScreen() {
           <Input label="Title *" value={title} onChangeText={setTitle} placeholder="Task title" />
           <Input label="Description" value={description} onChangeText={setDescription}
             placeholder="Describe the task..." multiline numberOfLines={4} />
-
-          <Text style={s.fieldLabel}>Status</Text>
-          <View style={s.chipRow}>
-            {STATUSES.map((st) => {
-              const c = StatusColors[st];
-              return (
-                <TouchableOpacity
-                  key={st}
-                  style={[s.selectorChip, { backgroundColor: status === st ? c.bg : colors.surface, borderColor: status === st ? c.text : colors.border }]}
-                  onPress={() => setStatus(st)}
-                >
-                  <Text style={[s.selectorChipText, { color: status === st ? c.text : colors.gray500 }]}>
-                    {st.replace('_', ' ')}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
 
           <Text style={s.fieldLabel}>Priority</Text>
           <View style={s.chipRow}>

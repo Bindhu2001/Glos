@@ -9,6 +9,16 @@ import { formatRelative } from '../../utils/format';
 
 const EMOJIS = ['👍', '❤️', '🎉', '👏', '🔥'];
 
+const BADGE_META: Record<string, { emoji: string; label: string }> = {
+  teamwork:        { emoji: '🤝', label: 'Teamwork' },
+  innovation:      { emoji: '💡', label: 'Innovation' },
+  leadership:      { emoji: '🌟', label: 'Leadership' },
+  excellence:      { emoji: '🏆', label: 'Excellence' },
+  mentorship:      { emoji: '🎓', label: 'Mentorship' },
+  customer_focus:  { emoji: '💛', label: 'Customer Focus' },
+  problem_solving: { emoji: '🔧', label: 'Problem Solving' },
+};
+
 interface Post {
   id: number;
   content: string;
@@ -22,6 +32,12 @@ interface Post {
   comment_count?: number;
   is_pinned?: boolean;
   my_reactions?: string[];
+  appreciation?: {
+    from_user?: { first_name?: string; last_name?: string; email?: string };
+    to_user?: { first_name?: string; last_name?: string; email?: string };
+    badge?: string;
+    message?: string;
+  };
 }
 
 interface Props {
@@ -71,7 +87,7 @@ export default function PostCard({ post, onPress, onReact, onDelete, onPin, like
           <View style={s.authorRow}>
             <Text style={s.author}>{authorName}</Text>
             {post.is_pinned && (
-              <Ionicons name="pin" size={13} color={colors.primary} style={{ marginLeft: 4 }} />
+              <Text style={{ fontSize: 13, marginLeft: 4 }}>📌</Text>
             )}
           </View>
           <View style={s.metaRow}>
@@ -86,13 +102,22 @@ export default function PostCard({ post, onPress, onReact, onDelete, onPin, like
           onPress={(e) => {
             e.stopPropagation();
             showAlert('Post Options', undefined, [
-              ...(onPin ? [{ text: post.is_pinned ? 'Unpin Post' : 'Pin Post', onPress: onPin }] : []),
-              ...(onDelete ? [{ text: 'Delete Post', style: 'destructive' as const, onPress: () => {
-                showAlert('Delete Post', 'Are you sure you want to delete this post?', [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: 'Delete', style: 'destructive', onPress: onDelete },
-                ]);
-              }}] : []),
+              ...(onPin ? [{
+                text: post.is_pinned ? 'Unpin Post' : 'Pin Post',
+                icon: (post.is_pinned ? 'pin-outline' : 'pin') as any,
+                onPress: onPin,
+              }] : []),
+              ...(onDelete ? [{
+                text: 'Delete Post',
+                style: 'destructive' as const,
+                icon: 'trash-outline' as any,
+                onPress: () => {
+                  showAlert('Delete Post', 'Are you sure you want to delete this post?', [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Delete', style: 'destructive', onPress: onDelete },
+                  ]);
+                },
+              }] : []),
               { text: 'Cancel', style: 'cancel' },
             ]);
           }}
@@ -101,7 +126,39 @@ export default function PostCard({ post, onPress, onReact, onDelete, onPin, like
         </TouchableOpacity>
       </View>
 
-      <Text style={s.content} numberOfLines={4}>{preview}</Text>
+      {postType === 'appreciation' && post.appreciation ? (
+        <View style={s.apprBlock}>
+          {(() => {
+            const meta = BADGE_META[post.appreciation.badge ?? ''];
+            const fromName = [post.appreciation.from_user?.first_name, post.appreciation.from_user?.last_name].filter(Boolean).join(' ') || post.appreciation.from_user?.email || 'Someone';
+            const toName = [post.appreciation.to_user?.first_name, post.appreciation.to_user?.last_name].filter(Boolean).join(' ') || post.appreciation.to_user?.email || 'Someone';
+            return (
+              <>
+                {meta && <Text style={s.apprEmoji}>{meta.emoji}</Text>}
+                <View style={{ flex: 1 }}>
+                  <View style={s.apprNameRow}>
+                    <Text style={s.apprNames} numberOfLines={1}>
+                      <Text style={s.apprBold}>{fromName}</Text>
+                      {' → '}
+                      <Text style={s.apprBold}>{toName}</Text>
+                    </Text>
+                    {meta && (
+                      <View style={s.apprChip}>
+                        <Text style={s.apprChipText}>{meta.label}</Text>
+                      </View>
+                    )}
+                  </View>
+                  {!!post.appreciation.message && (
+                    <Text style={s.apprMsg}>"{post.appreciation.message}"</Text>
+                  )}
+                </View>
+              </>
+            );
+          })()}
+        </View>
+      ) : (
+        <Text style={s.content} numberOfLines={4}>{preview}</Text>
+      )}
 
       {/* Emoji picker row */}
       {showEmojiPicker && (
@@ -182,5 +239,19 @@ function makeStyles(c: AppColors) {
     actions: { flexDirection: 'row', gap: 20, borderTopWidth: 1, borderTopColor: c.border, paddingTop: 10 },
     action: { flexDirection: 'row', alignItems: 'center', gap: 5 },
     actionText: { fontSize: 13, color: c.gray500 },
+    // Appreciation block
+    apprBlock: {
+      flexDirection: 'row', alignItems: 'flex-start', gap: 10,
+      backgroundColor: c.primaryLight, borderRadius: 10, padding: 10, marginBottom: 12,
+    },
+    apprEmoji: { fontSize: 28, lineHeight: 34 },
+    apprNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 4 },
+    apprNames: { fontSize: 13, color: c.textSecondary, flex: 1 },
+    apprBold: { fontWeight: '700', color: c.textPrimary },
+    apprChip: {
+      backgroundColor: c.primary, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10,
+    },
+    apprChipText: { fontSize: 10, fontWeight: '700', color: '#fff' },
+    apprMsg: { fontSize: 13, color: c.textPrimary, fontStyle: 'italic', lineHeight: 18 },
   });
 }

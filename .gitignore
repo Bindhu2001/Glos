@@ -30,6 +30,9 @@ backend-java/target/
 .env.local
 .env.*.local
 
+# Keystore credentials — never commit plaintext secrets
+*-credentials.md
+
 # OS
 .DS_Store
 Thumbs.db

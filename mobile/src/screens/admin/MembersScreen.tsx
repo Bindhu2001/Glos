@@ -98,7 +98,7 @@ export default function MembersScreen() {
           onPress: async () => {
             try {
               await api.members.updateRole(workspace!.id, member.user_id, newRole);
-              load();
+              await load();
             } catch {
               Alert.alert('Error', 'Failed to update role.');
             }
@@ -122,7 +122,7 @@ export default function MembersScreen() {
           onPress: async () => {
             try {
               await api.members.remove(workspace!.id, member.user_id);
-              load();
+              await load();
             } catch {
               Alert.alert('Error', 'Failed to remove member.');
             }
@@ -144,7 +144,7 @@ export default function MembersScreen() {
           onPress: async () => {
             try {
               await api.appInvitations.revoke(workspace!.id, inv.id);
-              load();
+              await load();
             } catch {
               Alert.alert('Error', 'Failed to revoke invitation.');
             }

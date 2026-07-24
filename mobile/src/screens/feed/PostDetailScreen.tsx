@@ -4,7 +4,7 @@ import {
   TouchableOpacity, ActivityIndicator, RefreshControl, Alert,
   KeyboardAvoidingView, Platform,
 } from 'react-native';
-import { useRoute, RouteProp } from '@react-navigation/native';
+import { useRoute, RouteProp, useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApi } from '../../hooks/useApi';
@@ -16,6 +16,8 @@ import ScreenHeader from '../../components/common/ScreenHeader';
 import Avatar from '../../components/common/Avatar';
 import CommentItem from '../../components/tasks/CommentItem';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
+import LoadError from '../../components/common/LoadError';
+import { useLoadWithTimeout } from '../../hooks/useLoadWithTimeout';
 
 type Route = RouteProp<FeedStackParamList, 'PostDetail'>;
 
@@ -32,47 +34,47 @@ function decodeHtml(str: string) {
 export default function PostDetailScreen() {
   const route = useRoute<Route>();
   const { postId, appId } = route.params;
+  const navigation = useNavigation<any>();
   const api = useApi();
   const { colors } = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
 
+  const handleBack = () => {
+    navigation.navigate('FeedList');
+  };
+
   const [post, setPost] = useState<any>(null);
   const [comments, setComments] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [commentText, setCommentText] = useState('');
   const [saving, setSaving] = useState(false);
   const [myReaction, setMyReaction] = useState<string | null>(null);
   const [meId, setMeId] = useState<number | null>(null);
+  const { loading, loadError, run } = useLoadWithTimeout();
 
   const load = useCallback(async () => {
-    setLoading(true);
     setPost(null);
     setComments([]);
-    try {
-      const [posts, cmts] = await Promise.all([
-        api.feed.list(appId),
-        api.feed.getComments(appId, postId),
-      ]);
-      const d = posts.data;
-      const allPosts = Array.isArray(d) ? d : (d?.items ?? d?.posts ?? []);
-      const found = allPosts.find((p: any) => p.id === postId);
-      setPost(found);
-      setComments(cmts.data?.items ?? cmts.data?.comments ?? []);
-    } catch {} finally {
-      setLoading(false);
-    }
-  }, [postId, appId]);
+    const [posts, cmts] = await Promise.all([
+      api.feed.list(appId),
+      api.feed.getComments(appId, postId),
+    ]);
+    const d = posts.data;
+    const allPosts = Array.isArray(d) ? d : (d?.items ?? d?.posts ?? []);
+    const found = allPosts.find((p: any) => p.id === postId);
+    setPost(found);
+    setComments(cmts.data?.items ?? cmts.data?.comments ?? []);
+  }, [postId, appId, api]);
 
   useEffect(() => {
-    load();
+    run(load);
     api.me.getProfile().then((r: any) => setMeId(r.data?.id ?? r.data?.user?.id ?? null)).catch(() => {});
   }, [load]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await load();
+    await run(load, true);
     setRefreshing(false);
   };
 
@@ -109,6 +111,7 @@ export default function PostDetailScreen() {
   };
 
   if (loading) return <LoadingSpinner />;
+  if (loadError) return <LoadError onRetry={() => run(load)} />;
   if (!post) return (
     <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
       <Text style={{ color: '#6b7280' }}>Post not found.</Text>
@@ -120,9 +123,9 @@ export default function PostDetailScreen() {
     ?? ([post.author?.first_name, post.author?.last_name].filter(Boolean).join(' ') || post.author?.email || 'Unknown');
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
     <View style={[s.container, { paddingTop: insets.top }]}>
-      <ScreenHeader title="Post" showBack />
+      <ScreenHeader title="Post" showBack onBack={handleBack} />
       <ScrollView
         contentContainerStyle={s.content}
         showsVerticalScrollIndicator={false}

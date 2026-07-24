@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { useRoute, RouteProp } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,6 +11,8 @@ import ScreenHeader from '../../components/common/ScreenHeader';
 import Avatar from '../../components/common/Avatar';
 import Badge from '../../components/common/Badge';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
+import LoadError from '../../components/common/LoadError';
+import { useLoadWithTimeout } from '../../hooks/useLoadWithTimeout';
 
 type Route = RouteProp<PeopleStackParamList, 'EmployeeDetail'>;
 
@@ -23,16 +25,17 @@ export default function EmployeeDetailScreen() {
   const insets = useSafeAreaInsets();
 
   const [employee, setEmployee] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  const { loading, loadError, run } = useLoadWithTimeout();
 
-  useEffect(() => {
-    api.employees.get(appId, employeeId)
-      .then((r) => setEmployee(r.data.employee ?? r.data))
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [employeeId, appId]);
+  const load = useCallback(async () => {
+    const r = await api.employees.get(appId, employeeId);
+    setEmployee(r.data.employee ?? r.data);
+  }, [appId, employeeId, api]);
+
+  useEffect(() => { run(load); }, [load]);
 
   if (loading) return <LoadingSpinner />;
+  if (loadError) return <LoadError onRetry={() => run(load)} />;
   if (!employee) return null;
 
   return (

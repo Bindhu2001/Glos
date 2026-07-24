@@ -13,6 +13,8 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { AppColors } from '../../utils/colors';
 import Avatar from '../../components/common/Avatar';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
+import LoadError from '../../components/common/LoadError';
+import { useLoadWithTimeout } from '../../hooks/useLoadWithTimeout';
 import EmptyState from '../../components/common/EmptyState';
 import { PeopleStackParamList } from '../../navigation/types';
 
@@ -27,26 +29,22 @@ export default function EmployeesScreen() {
   const insets = useSafeAreaInsets();
 
   const [employees, setEmployees] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
+  const { loading, loadError, run } = useLoadWithTimeout();
 
   const load = useCallback(async () => {
     if (!workspace) return;
-    try {
-      const r = await api.employees.list(workspace.id);
-      const d = r.data;
-      setEmployees(Array.isArray(d) ? d : (d?.items ?? d?.employees ?? []));
-    } catch {}
+    const r = await api.employees.list(workspace.id);
+    const d = r.data;
+    setEmployees(Array.isArray(d) ? d : (d?.items ?? d?.employees ?? []));
   }, [workspace]);
 
-  useEffect(() => {
-    load().finally(() => setLoading(false));
-  }, [load]);
+  useEffect(() => { run(load); }, [load]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await load();
+    await run(load, true);
     setRefreshing(false);
   };
 
@@ -57,9 +55,10 @@ export default function EmployeesScreen() {
   });
 
   if (loading) return <LoadingSpinner />;
+  if (loadError) return <LoadError onRetry={() => run(load)} />;
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
     <View style={[s.container, { paddingTop: insets.top }]}>
       <View style={s.header}>
         <Text style={s.title}>People</Text>

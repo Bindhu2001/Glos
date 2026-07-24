@@ -9,10 +9,11 @@ interface Props {
   title: string;
   subtitle?: string;
   showBack?: boolean;
+  onBack?: () => void;
   right?: ReactNode;
 }
 
-export default function ScreenHeader({ title, subtitle, showBack = false, right }: Props) {
+export default function ScreenHeader({ title, subtitle, showBack = false, onBack, right }: Props) {
   const navigation = useNavigation();
   const { colors } = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
@@ -21,7 +22,7 @@ export default function ScreenHeader({ title, subtitle, showBack = false, right 
     <View style={s.container}>
       <View style={s.row}>
         {showBack && (
-          <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn} hitSlop={8}>
+          <TouchableOpacity onPress={onBack ?? (() => navigation.goBack())} style={s.backBtn} hitSlop={8}>
             <Ionicons name="chevron-back" size={24} color={colors.textPrimary} />
           </TouchableOpacity>
         )}

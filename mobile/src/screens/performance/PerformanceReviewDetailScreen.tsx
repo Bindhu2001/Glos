@@ -12,6 +12,8 @@ import { useWorkspace } from '../../contexts/WorkspaceContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { AppColors } from '../../utils/colors';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
+import LoadError from '../../components/common/LoadError';
+import { useLoadWithTimeout } from '../../hooks/useLoadWithTimeout';
 import { PerformanceStackParamList } from '../../navigation/types';
 
 type RouteProps = RouteProp<PerformanceStackParamList, 'ReviewDetail'>;
@@ -84,9 +86,7 @@ export default function PerformanceReviewDetailScreen() {
   const { colors } = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
-  const isAdmin = workspace?.role === 'super_admin' || workspace?.role === 'admin';
-
-  const [loading, setLoading] = useState(true);
+  const { loading, loadError, run } = useLoadWithTimeout();
   const [submitting, setSubmitting] = useState(false);
   const [review, setReview] = useState<Review | null>(null);
   const [snapshots, setSnapshots] = useState<{ goals: Snapshot[]; skills: Snapshot[]; values: Snapshot[] }>({ goals: [], skills: [], values: [] });
@@ -94,49 +94,50 @@ export default function PerformanceReviewDetailScreen() {
   const [analytics, setAnalytics] = useState<any>(null);
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
   const [draft, setDraft] = useState<Draft>({});
+  const [ratingsByRole, setRatingsByRole] = useState<Record<string, Draft>>({});
   const [feedbackDate, setFeedbackDate] = useState('');
   const [feedbackNotes, setFeedbackNotes] = useState('');
   const [rejectionReason, setRejectionReason] = useState('');
 
   const load = useCallback(async () => {
-    try {
-      const [reviewRes, ratingsRes, analyticsRes, meRes] = await Promise.all([
-        api.performance.getReview(appId, reviewId),
-        api.performance.getReviewRatings(appId, reviewId).catch(() => ({ data: [] })),
-        api.performance.getReviewAnalytics(appId, reviewId).catch(() => ({ data: null })),
-        api.me.getProfile(),
-      ]);
-      const rv: Review = reviewRes.data?.review ?? reviewRes.data;
-      const snaps = reviewRes.data?.snapshots ?? { goals: [], skills: [], values: [] };
-      const fa = reviewRes.data?.finalApprover ?? null;
-      const ratings: any[] = Array.isArray(ratingsRes.data) ? ratingsRes.data : [];
-      const myId: number = meRes.data?.id ?? meRes.data?.user?.id;
+    const [reviewRes, ratingsRes, analyticsRes, meRes] = await Promise.all([
+      api.performance.getReview(appId, reviewId),
+      api.performance.getReviewRatings(appId, reviewId).catch(() => ({ data: [] })),
+      api.performance.getReviewAnalytics(appId, reviewId).catch(() => ({ data: null })),
+      api.me.getProfile(),
+    ]);
+    const rv: Review = reviewRes.data?.review ?? reviewRes.data;
+    const snaps = reviewRes.data?.snapshots ?? { goals: [], skills: [], values: [] };
+    const fa = reviewRes.data?.finalApprover ?? null;
+    const ratings: any[] = Array.isArray(ratingsRes.data) ? ratingsRes.data : [];
+    const myId: number = meRes.data?.id ?? meRes.data?.user?.id;
 
-      setReview(rv);
-      setSnapshots(snaps);
-      setFinalApprover(fa);
-      setAnalytics(analyticsRes.data);
-      setCurrentUserId(myId);
+    setReview(rv);
+    setSnapshots(snaps);
+    setFinalApprover(fa);
+    setAnalytics(analyticsRes.data);
+    setCurrentUserId(myId);
 
-      if (ratings.length > 0) {
-        const d: Draft = {};
-        for (const r of ratings) {
-          const key = `${r.rating_type}-${r.snapshot_id}`;
-          d[key] = { rating: r.rating, comments: r.comments ?? '' };
-        }
-        setDraft(d);
-      }
-
-      if (rv.feedback_discussion_date) setFeedbackDate(rv.feedback_discussion_date.split('T')[0]);
-      if (rv.rejection_reason) setRejectionReason(rv.rejection_reason);
-    } catch {
-      Alert.alert('Error', 'Failed to load review');
-    } finally {
-      setLoading(false);
+    const byRole: Record<string, Draft> = {};
+    for (const r of ratings) {
+      const role = r.rater_role ?? 'self';
+      if (!byRole[role]) byRole[role] = {};
+      const key = `${r.rating_type}-${r.snapshot_id}`;
+      byRole[role][key] = { rating: r.rating, comments: r.comments ?? '' };
     }
+    setRatingsByRole(byRole);
+    const currentRole =
+      rv.status === 'pending_self' ? 'self'
+      : rv.status === 'pending_manager' ? 'manager'
+      : rv.status === 'pending_approver' ? 'final_approver'
+      : null;
+    setDraft(currentRole && byRole[currentRole] ? { ...byRole[currentRole] } : {});
+
+    if (rv.feedback_discussion_date) setFeedbackDate(rv.feedback_discussion_date.split('T')[0]);
+    if (rv.rejection_reason) setRejectionReason(rv.rejection_reason);
   }, [appId, reviewId, api]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { run(load); }, [load]);
 
   const setRating = (key: string, rating: number) => {
     setDraft(prev => ({ ...prev, [key]: { rating, comments: prev[key]?.comments ?? '' } }));
@@ -168,7 +169,7 @@ export default function PerformanceReviewDetailScreen() {
   const canSelfRate = review?.status === 'pending_self' && review?.platform_user_id === currentUserId;
   // Backend doesn't expose manager_user_id; show form to non-reviewees when pending (backend enforces nothing)
   const canManagerRate = review?.status === 'pending_manager' && review?.platform_user_id !== currentUserId;
-  const isDesignatedApprover = finalApprover?.user_id === currentUserId || isAdmin;
+  const isDesignatedApprover = (finalApprover?.user_id != null && finalApprover.user_id === currentUserId) || workspace?.role === 'super_admin';
   const canFinalRate = review?.status === 'pending_approver' && isDesignatedApprover;
   const isViewOnly = !canSelfRate && !canManagerRate && !canFinalRate;
 
@@ -232,6 +233,7 @@ export default function PerformanceReviewDetailScreen() {
   };
 
   if (loading) return <LoadingSpinner />;
+  if (loadError) return <LoadError onRetry={() => run(load)} />;
   if (!review) {
     return (
       <View style={[s.container, { paddingTop: insets.top, alignItems: 'center', justifyContent: 'center' }]}>
@@ -280,8 +282,56 @@ export default function PerformanceReviewDetailScreen() {
     );
   };
 
+  const renderGoalCentricHistory = (type: 'goal' | 'skill' | 'value', snaps: Snapshot[]) => {
+    if (snaps.length === 0) return null;
+    const label = type === 'goal' ? 'Goals' : type === 'skill' ? 'Skills' : 'Values';
+    const nameKey = type === 'goal' ? 'goal_name' : type === 'skill' ? 'skill_name' : 'value_name';
+    const ROLES: { key: string; label: string }[] = [
+      { key: 'self', label: 'SELF' },
+      { key: 'manager', label: 'MANAGER' },
+      { key: 'final_approver', label: 'FINAL APPROVER' },
+    ];
+    return (
+      <>
+        <Text style={s.sectionLabel}>{label}</Text>
+        {snaps.map((snap) => {
+          const rows = ROLES.map(({ key, label: rlabel }) => {
+            const d = ratingsByRole[key]?.[`${type}-${snap.id}`];
+            if (!d || d.rating === 0) return null;
+            return (
+              <View key={key} style={s.roleRow}>
+                <Text style={s.roleRowLabel}>{rlabel}</Text>
+                <View style={s.roleRowRight}>
+                  <View style={{ flexDirection: 'row', gap: 2 }}>
+                    {[1,2,3,4,5].map((star) => (
+                      <Ionicons key={star} name={star <= d.rating ? 'star' : 'star-outline'} size={14} color={star <= d.rating ? '#f59e0b' : '#9ca3af'} />
+                    ))}
+                  </View>
+                  <Text style={s.roleRowRating}>{d.rating}/5</Text>
+                </View>
+                {d.comments ? <Text style={s.roleRowComment}>"{d.comments}"</Text> : null}
+              </View>
+            );
+          }).filter(Boolean);
+          if (rows.length === 0) return null;
+          return (
+            <View key={snap.id} style={s.snapCard}>
+              <View style={s.snapHeader}>
+                <Text style={s.snapName} numberOfLines={2}>{(snap as any)[nameKey] ?? `Item #${snap.id}`}</Text>
+                {snap.weightage != null && (
+                  <View style={s.weightBadge}><Text style={s.weightText}>{snap.weightage}%</Text></View>
+                )}
+              </View>
+              {rows}
+            </View>
+          );
+        })}
+      </>
+    );
+  };
+
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
       <View style={[s.container, { paddingTop: insets.top }]}>
         <View style={s.header}>
           <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn}>
@@ -343,9 +393,24 @@ export default function PerformanceReviewDetailScreen() {
             </View>
           )}
 
-          {renderSnapSection('goal', snapshots.goals)}
-          {renderSnapSection('skill', snapshots.skills)}
-          {renderSnapSection('value', snapshots.values)}
+          {isViewOnly && (
+            <>
+              {renderGoalCentricHistory('goal', snapshots.goals)}
+              {renderGoalCentricHistory('skill', snapshots.skills)}
+              {renderGoalCentricHistory('value', snapshots.values)}
+            </>
+          )}
+
+          {!isViewOnly && (
+            <>
+              <Text style={[s.sectionLabel, { marginTop: 16 }]}>
+                {canSelfRate ? 'Your Rating' : canManagerRate ? 'Manager Rating' : 'Final Rating'}
+              </Text>
+              {renderSnapSection('goal', snapshots.goals)}
+              {renderSnapSection('skill', snapshots.skills)}
+              {renderSnapSection('value', snapshots.values)}
+            </>
+          )}
 
           {canManagerRate && (
             <View style={{ marginTop: 16 }}>
@@ -527,5 +592,26 @@ function makeStyles(c: AppColors) {
       backgroundColor: c.gray100, borderRadius: 10, padding: 12, marginTop: 20,
     },
     viewOnlyText:    { fontSize: 13, color: c.textSecondary, flex: 1 },
+    historySection:  { marginBottom: 8 },
+    historySectionLabel: {
+      fontSize: 12, fontWeight: '700', color: c.primary,
+      textTransform: 'uppercase', letterSpacing: 0.5,
+      marginBottom: 8, marginTop: 8,
+      borderLeftWidth: 3, borderLeftColor: c.primary, paddingLeft: 8,
+    },
+    historyCard:     { opacity: 0.9 },
+    historyComment:  { fontSize: 13, color: c.textSecondary, marginTop: 8, fontStyle: 'italic' },
+
+    roleRow: {
+      marginTop: 10, paddingTop: 10,
+      borderTopWidth: 1, borderTopColor: c.border,
+    },
+    roleRowLabel: {
+      fontSize: 10, fontWeight: '700', color: c.textMuted,
+      letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 4,
+    },
+    roleRowRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    roleRowRating: { fontSize: 14, fontWeight: '700', color: c.textPrimary },
+    roleRowComment: { fontSize: 13, color: c.textSecondary, fontStyle: 'italic', marginTop: 4 },
   });
 }

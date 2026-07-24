@@ -11,13 +11,15 @@ import { useApi } from '../../hooks/useApi';
 import { StatusColors, PriorityColors, AppColors } from '../../utils/colors';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useWorkspace } from '../../contexts/WorkspaceContext';
-import { formatDate, formatRelative, formatDuration, formatTimerDisplay, formatLogEntry, capitalize } from '../../utils/format';
+import { formatDate, formatRelative, formatDuration, formatDurationSeconds, formatTimerDisplay, formatLogEntry, capitalize } from '../../utils/format';
 import { TasksStackParamList } from '../../navigation/types';
 import ScreenHeader from '../../components/common/ScreenHeader';
 import Badge from '../../components/common/Badge';
 import CommentItem from '../../components/tasks/CommentItem';
 import ChecklistItem from '../../components/tasks/ChecklistItem';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
+import LoadError from '../../components/common/LoadError';
+import { useLoadWithTimeout } from '../../hooks/useLoadWithTimeout';
 import Avatar from '../../components/common/Avatar';
 
 type Route = RouteProp<TasksStackParamList, 'TaskDetail'>;
@@ -31,7 +33,23 @@ const STATUSES = [
   { value: 'cancelled', label: 'Cancelled' },
 ];
 
-function formatTimelineEvent(event: any): string {
+const STATUS_LABELS: Record<string, string> = {
+  open: 'Not started',
+  in_progress: 'In progress',
+  blocked: 'Blocked',
+  done: 'Completed',
+  cancelled: 'Cancelled',
+};
+
+function resolveMemberName(members: any[], id: string | number | undefined): string {
+  if (!id) return '';
+  const numId = Number(id);
+  const m = members.find(mb => (mb.user_id ?? mb.id) === numId);
+  if (!m) return '';
+  return m.name ?? (`${m.first_name ?? ''} ${m.last_name ?? ''}`.trim() || m.email || '');
+}
+
+function formatTimelineEvent(event: any, members: any[]): string {
   const { event_type } = event;
   const meta = typeof event.meta === 'string'
     ? (() => { try { return JSON.parse(event.meta); } catch { return {}; } })()
@@ -39,12 +57,21 @@ function formatTimelineEvent(event: any): string {
   switch (event_type) {
     case 'created': return 'Task created';
     case 'status_changed': {
-      const status = meta?.new_status ?? event.new_value ?? '';
-      return `Status changed to ${status.replace(/_/g, ' ') || '—'}`;
+      const oldVal = meta?.old_status ?? event.old_value ?? '';
+      const newVal = meta?.new_status ?? event.new_value ?? '';
+      const oldLabel = STATUS_LABELS[oldVal] ?? (oldVal ? oldVal.replace(/_/g, ' ') : '—');
+      const newLabel = STATUS_LABELS[newVal] ?? (newVal ? newVal.replace(/_/g, ' ') : '—');
+      return `Status changed: ${oldLabel} → ${newLabel}`;
     }
     case 'assignee_changed': {
-      const name = meta?.new_assignee_name ?? event.new_assignee_name ?? '';
-      return name ? `Assigned to ${name}` : 'Assignee removed';
+      const oldName = meta?.old_assignee_name ?? event.old_assignee_name
+        ?? resolveMemberName(members, event.old_value) ?? '';
+      const newName = meta?.new_assignee_name ?? event.new_assignee_name
+        ?? resolveMemberName(members, event.new_value) ?? '';
+      if (oldName && newName) return `Assignee changed: ${oldName} → ${newName}`;
+      if (newName) return `Assigned to ${newName}`;
+      if (oldName) return `Assignee removed (was ${oldName})`;
+      return 'Assignee changed';
     }
     case 'deadline_changed': {
       const d = meta?.new_deadline ?? event.new_value ?? '';
@@ -85,7 +112,7 @@ export default function TaskDetailScreen() {
   const [timeLogs, setTimeLogs] = useState<any[]>([]);
   const [members, setMembers] = useState<any[]>([]);
   const [meId, setMeId] = useState<number | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { loading, loadError, run } = useLoadWithTimeout();
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<TabName>('details');
   const [commentText, setCommentText] = useState('');
@@ -126,31 +153,27 @@ export default function TaskDetailScreen() {
   }, [timerRunning, task?.timer_started_at, task?.timer_accumulated_s]);
 
   const load = useCallback(async () => {
-    try {
-      const [t, c, cl, tl, me, mbrs] = await Promise.all([
-        api.tasks.get(appId, taskId),
-        api.tasks.getComments(appId, taskId),
-        api.tasks.getChecklist(appId, taskId),
-        api.tasks.getTimeLogs(appId, taskId),
-        api.me.getProfile(),
-        api.workspace.getMembers(appId),
-      ]);
-      setTask(t.data.task ?? t.data);
-      setComments(c.data?.items ?? c.data?.comments ?? []);
-      setChecklist(cl.data.items ?? []);
-      setTimeLogs(tl.data?.items ?? tl.data?.logs ?? []);
-      setMeId(me.data?.id ?? me.data?.user?.id ?? null);
-      setMembers(mbrs.data?.members ?? mbrs.data?.items ?? mbrs.data ?? []);
-    } catch {}
-  }, [taskId, appId]);
+    const [t, c, cl, tl, me, mbrs] = await Promise.all([
+      api.tasks.get(appId, taskId),
+      api.tasks.getComments(appId, taskId),
+      api.tasks.getChecklist(appId, taskId),
+      api.tasks.getTimeLogs(appId, taskId),
+      api.me.getProfile(),
+      api.workspace.getMembers(appId),
+    ]);
+    setTask(t.data.task ?? t.data);
+    setComments(c.data?.items ?? c.data?.comments ?? []);
+    setChecklist(cl.data.items ?? []);
+    setTimeLogs(tl.data?.items ?? tl.data?.logs ?? []);
+    setMeId(me.data?.id ?? me.data?.user?.id ?? null);
+    setMembers(mbrs.data?.members ?? mbrs.data?.items ?? mbrs.data ?? []);
+  }, [taskId, appId, api]);
 
-  useEffect(() => {
-    load().finally(() => setLoading(false));
-  }, [load]);
+  useEffect(() => { run(load); }, [load]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await load();
+    await run(load, true);
     setRefreshing(false);
   };
 
@@ -313,13 +336,23 @@ export default function TaskDetailScreen() {
   };
 
   if (loading) return <LoadingSpinner />;
-  if (!task) return null;
+  if (loadError) return <LoadError onRetry={() => run(load)} />;
+  if (!task) return (
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <View style={{ paddingTop: insets.top }}>
+        <ScreenHeader title="Task" showBack />
+      </View>
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ color: colors.textSecondary }}>Task could not be loaded.</Text>
+      </View>
+    </View>
+  );
 
   const isAdmin = workspace?.role === 'super_admin' || workspace?.role === 'admin';
   const isCreator = task.created_by_user_id === meId;
   const isAssignee = task.assigned_to_user_id === meId;
   const canEdit = isCreator || isAssignee || isAdmin;
-  const canControlTimer = isAssignee || isAdmin;
+  const canControlTimer = isAssignee;
 
   const statusColor = StatusColors[task.status] ?? StatusColors.open;
   const priorityColor = PriorityColors[task.priority] ?? PriorityColors.medium;
@@ -345,7 +378,7 @@ export default function TaskDetailScreen() {
   ];
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
     <View style={[s.container, { paddingTop: insets.top }]}>
       <ScreenHeader
         title={task.title}
@@ -376,26 +409,42 @@ export default function TaskDetailScreen() {
         {timerActive && (
           <Text style={s.clockText}>{formatTimerDisplay(liveSeconds)}</Text>
         )}
-        {canControlTimer && !timerActive && (
-          <TouchableOpacity onPress={handleStartTimer} style={s.timerBtn}>
+        {!timerActive && (
+          <TouchableOpacity
+            onPress={handleStartTimer}
+            style={[s.timerBtn, !canControlTimer && s.timerBtnBlurred]}
+            disabled={!canControlTimer}
+          >
             <Ionicons name="play-circle-outline" size={18} color={colors.primary} />
             <Text style={s.timerText}>Start</Text>
           </TouchableOpacity>
         )}
-        {canControlTimer && timerRunning && (
-          <TouchableOpacity onPress={handlePauseTimer} style={s.timerBtn}>
+        {timerRunning && (
+          <TouchableOpacity
+            onPress={handlePauseTimer}
+            style={[s.timerBtn, !canControlTimer && s.timerBtnBlurred]}
+            disabled={!canControlTimer}
+          >
             <Ionicons name="pause-circle-outline" size={18} color={colors.primary} />
             <Text style={s.timerText}>Pause</Text>
           </TouchableOpacity>
         )}
-        {canControlTimer && timerPaused && (
-          <TouchableOpacity onPress={handleStartTimer} style={s.timerBtn}>
+        {timerPaused && (
+          <TouchableOpacity
+            onPress={handleStartTimer}
+            style={[s.timerBtn, !canControlTimer && s.timerBtnBlurred]}
+            disabled={!canControlTimer}
+          >
             <Ionicons name="play-circle-outline" size={18} color={colors.primary} />
             <Text style={s.timerText}>Resume</Text>
           </TouchableOpacity>
         )}
-        {canControlTimer && timerActive && (
-          <TouchableOpacity onPress={handleStopTimer} style={[s.timerBtn, s.timerActive]}>
+        {timerActive && (
+          <TouchableOpacity
+            onPress={handleStopTimer}
+            style={[s.timerBtn, s.timerActive, !canControlTimer && s.timerBtnBlurred]}
+            disabled={!canControlTimer}
+          >
             <Ionicons name="stop-circle-outline" size={18} color={colors.danger} />
             <Text style={[s.timerText, { color: colors.danger }]}>Stop & Log</Text>
           </TouchableOpacity>
@@ -523,7 +572,7 @@ export default function TaskDetailScreen() {
                 <View style={s.logMain}>
                   <View style={s.logTopRow}>
                     <Text style={s.logUser}>{log.user_name ?? 'You'}</Text>
-                    <Text style={s.logDur}>{formatDuration(log.duration_minutes)}</Text>
+                    <Text style={s.logDur}>{log.duration_seconds ? formatDurationSeconds(log.duration_seconds) : formatDuration(log.duration_minutes)}</Text>
                   </View>
                   <Text style={s.logDate}>{formatLogEntry(log.created_at) || formatDate(log.logged_on)}</Text>
                 </View>
@@ -540,14 +589,16 @@ export default function TaskDetailScreen() {
             ) : timeline.length === 0 ? (
               <Text style={s.empty}>No timeline events yet.</Text>
             ) : (
-              timeline.map((event, idx) => (
+              [...timeline]
+              .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+              .map((event, idx, arr) => (
                 <View key={event.id ?? idx} style={s.timelineRow}>
                   <View style={s.timelineDotCol}>
                     <View style={s.timelineDot} />
-                    {idx < timeline.length - 1 && <View style={s.timelineLine} />}
+                    {idx < arr.length - 1 && <View style={s.timelineLine} />}
                   </View>
                   <View style={s.timelineContent}>
-                    <Text style={s.timelineLabel}>{formatTimelineEvent(event)}</Text>
+                    <Text style={s.timelineLabel}>{formatTimelineEvent(event, members)}</Text>
                     <Text style={s.timelineTime}>{formatRelative(event.created_at)}</Text>
                     {event.actor_name && <Text style={s.timelineActor}>by {event.actor_name}</Text>}
                   </View>
@@ -590,7 +641,7 @@ export default function TaskDetailScreen() {
 
       {/* Edit Task Modal */}
       <Modal visible={editModal} transparent animationType="slide" onRequestClose={() => setEditModal(false)}>
-        <KeyboardAvoidingView style={s.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <KeyboardAvoidingView style={s.modalOverlay} behavior="padding">
           <View style={[s.modalSheet, { paddingBottom: insets.bottom + 16, maxHeight: '80%' }]}>
             <View style={s.modalHandle} />
             <Text style={s.modalTitle}>Edit Task</Text>
@@ -722,6 +773,7 @@ function makeStyles(c: AppColors) {
     clockText: { fontSize: 14, fontWeight: '800', color: c.danger, fontVariant: ['tabular-nums'] as any },
     timerBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 8, borderWidth: 1.5, borderColor: c.primary },
     timerActive: { borderColor: c.danger },
+    timerBtnBlurred: { opacity: 0.35 },
     timerText: { fontSize: 13, fontWeight: '600', color: c.primary },
     statusBtn: {
       flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5,

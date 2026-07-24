@@ -224,6 +224,15 @@ export const organisationApi = (client: AxiosInstance) => ({
   get: (appId: number) => client.get(`/apps/${appId}/hr/organisation`),
   update: (appId: number, data: Record<string, unknown>) =>
     client.put(`/apps/${appId}/hr/organisation`, data),
+  uploadLogo: (appId: number, uri: string, mimeType: string) => {
+    const fd = new FormData();
+    fd.append('logo', { uri, name: 'logo.jpg', type: mimeType } as any);
+    return client.post(`/apps/${appId}/hr/organisation/logo`, fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  deleteLogo: (appId: number) =>
+    client.delete(`/apps/${appId}/hr/organisation/logo`),
 });
 
 // ── Roles ────────────────────────────────────────────────────

@@ -121,7 +121,7 @@ export default function CreatePostScreen() {
   };
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
       <View style={[s.container, { paddingTop: insets.top }]}>
         <ScreenHeader
           title="New Post"

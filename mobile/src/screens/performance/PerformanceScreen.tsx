@@ -12,6 +12,8 @@ import { useWorkspace } from '../../contexts/WorkspaceContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { AppColors } from '../../utils/colors';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
+import LoadError from '../../components/common/LoadError';
+import { useLoadWithTimeout } from '../../hooks/useLoadWithTimeout';
 import EmptyState from '../../components/common/EmptyState';
 
 type Tab = 'work' | 'goals' | 'reviews' | 'team' | 'recognitions';
@@ -30,6 +32,7 @@ interface Goal {
 
 interface Review {
   id: number;
+  cycle_id?: number;
   cycle_name?: string;
   status: string;
   self_rating?: number;
@@ -39,6 +42,8 @@ interface Review {
   employee_name?: string;
   reviewee_name?: string;
 }
+
+const reviewTitle = (r: Review) => r.cycle_name || (r.cycle_id ? `Cycle #${r.cycle_id}` : `Review #${r.id}`);
 
 interface Appraisal {
   id: number;
@@ -95,8 +100,8 @@ export default function PerformanceScreen() {
   const isAdmin = workspace?.role === 'super_admin' || workspace?.role === 'admin';
 
   const [activeTab, setActiveTab] = useState<Tab>('work');
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const { loading, loadError, run } = useLoadWithTimeout();
 
   // Personal data
   const [pendingReviews, setPendingReviews] = useState<Review[]>([]);
@@ -113,6 +118,8 @@ export default function PerformanceScreen() {
   const [appreciations, setAppreciations] = useState<any[]>([]);
 
   const [search, setSearch] = useState('');
+
+  const [reviewSubTab, setReviewSubTab] = useState<'active' | 'completed'>('active');
 
   // Create goal modal
   const [showCreateGoal, setShowCreateGoal] = useState(false);
@@ -175,9 +182,7 @@ export default function PerformanceScreen() {
     } catch {} finally { setTeamLoading(false); }
   }, [workspace, api]);
 
-  useEffect(() => {
-    load().finally(() => setLoading(false));
-  }, [load]);
+  useEffect(() => { run(load); }, [load]);
 
   useEffect(() => {
     if (activeTab === 'team') loadTeam();
@@ -185,7 +190,7 @@ export default function PerformanceScreen() {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await (activeTab === 'team' ? loadTeam() : load());
+    await (activeTab === 'team' ? loadTeam() : run(load, true));
     setRefreshing(false);
   };
 
@@ -229,18 +234,15 @@ export default function PerformanceScreen() {
     if (!workspace) return;
     setLoadingModal(true);
     try {
-      const [cyclesRes, meRes, empRes] = await Promise.all([
+      const [cyclesRes, dashRes] = await Promise.all([
         api.performance.getCycles(workspace.id),
-        api.me.getProfile(),
-        api.employees.list(workspace.id),
+        api.dashboard.getMyDashboard(workspace.id),
       ]);
       const cycleList = cyclesRes.data?.items ?? [];
       setCycles(cycleList);
       if (cycleList.length === 1) setSelectedCycleId(cycleList[0].id);
-      const myId = meRes.data?.id ?? meRes.data?.user?.id;
-      const employees: any[] = empRes.data?.items ?? empRes.data?.employees ?? [];
-      const myEmployee = employees.find((e) => e.platform_user_id === myId);
-      if (myEmployee?.role_id) setUserRoleId(myEmployee.role_id);
+      const roles: any[] = dashRes.data?.roles ?? [];
+      if (roles[0]?.id) setUserRoleId(roles[0].id);
     } catch {} finally { setLoadingModal(false); }
   };
 
@@ -281,6 +283,7 @@ export default function PerformanceScreen() {
   };
 
   if (loading) return <LoadingSpinner />;
+  if (loadError) return <LoadError onRetry={() => run(load)} />;
 
   const q = search.toLowerCase();
   const filteredPendingReviews = q ? pendingReviews.filter(r => (r.cycle_name ?? '').toLowerCase().includes(q)) : pendingReviews;
@@ -294,8 +297,8 @@ export default function PerformanceScreen() {
     { key: 'work', label: 'Overview' },
     { key: 'goals', label: 'Goals' },
     { key: 'reviews', label: 'Reviews' },
-    { key: 'team', label: 'Team' },
-    { key: 'recognitions', label: 'Kudos' },
+    ...(isAdmin ? [{ key: 'team' as Tab, label: 'Team' }] : []),
+    { key: 'recognitions', label: 'Recognitions' },
   ];
 
   const latestReview = allReviews.find(r => r.final_rating != null) ?? allReviews[0];
@@ -307,7 +310,7 @@ export default function PerformanceScreen() {
   const totalManagerPending = pendingTeamGoals + pendingManagerReviews;
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
     <View style={[s.container, { paddingTop: insets.top }]}>
       {/* Page header */}
       <View style={s.pageHeader}>
@@ -414,7 +417,7 @@ export default function PerformanceScreen() {
                 onPress={() => navigation.navigate('ReviewDetail', { reviewId: r.id, appId: workspace?.id ?? 0 })}
               >
                 <View style={s.cardRow}>
-                  <Text style={s.cardTitle}>{r.cycle_name ?? `Review #${r.id}`}</Text>
+                  <Text style={s.cardTitle}>{reviewTitle(r)}</Text>
                   <StatusBadge status={r.status} />
                 </View>
                 {r.status === 'pending_self' && (
@@ -462,7 +465,7 @@ export default function PerformanceScreen() {
                   >
                     <View style={s.cardRow}>
                       <View style={{ flex: 1 }}>
-                        <Text style={s.cardTitle}>{r.reviewee_name ?? r.employee_name ?? `Review #${r.id}`}</Text>
+                        <Text style={s.cardTitle}>{r.reviewee_name ?? r.employee_name ?? reviewTitle(r)}</Text>
                         {r.cycle_name && <Text style={s.cardMeta}>{r.cycle_name}</Text>}
                       </View>
                       <StatusBadge status={r.status} />
@@ -560,22 +563,69 @@ export default function PerformanceScreen() {
         {activeTab === 'reviews' && (
           <>
             <Text style={s.sectionLabel}>My Performance Reviews</Text>
-            {filteredReviews.length === 0 ? (
-              <EmptyState icon="document-text-outline" title="No reviews found" />
-            ) : filteredReviews.map((r) => (
+
+            {/* Active / Completed toggle */}
+            <View style={s.revToggleRow}>
               <TouchableOpacity
-                key={r.id} style={s.card} activeOpacity={0.7}
-                onPress={() => navigation.navigate('ReviewDetail', { reviewId: r.id, appId: workspace?.id ?? 0 })}
+                style={[s.revToggleBtn, reviewSubTab === 'active' && s.revToggleBtnActive]}
+                onPress={() => setReviewSubTab('active')}
               >
-                <View style={s.cardRow}>
-                  <Text style={s.cardTitle}>{r.cycle_name ?? `Review #${r.id}`}</Text>
-                  <StatusBadge status={r.status} />
-                </View>
-                {r.self_rating != null && <Text style={s.cardMeta}>Self Rating: {r.self_rating}/5</Text>}
-                {r.manager_rating != null && <Text style={s.cardMeta}>Manager Rating: {r.manager_rating}/5</Text>}
-                {r.final_rating != null && <Text style={s.cardMeta}>Final Rating: {r.final_rating}/5</Text>}
+                <Text style={[s.revToggleBtnText, reviewSubTab === 'active' && s.revToggleBtnTextActive]}>Active</Text>
               </TouchableOpacity>
-            ))}
+              <TouchableOpacity
+                style={[s.revToggleBtn, reviewSubTab === 'completed' && s.revToggleBtnActive]}
+                onPress={() => setReviewSubTab('completed')}
+              >
+                <Text style={[s.revToggleBtnText, reviewSubTab === 'completed' && s.revToggleBtnTextActive]}>Completed</Text>
+              </TouchableOpacity>
+            </View>
+
+            {reviewSubTab === 'active' ? (() => {
+              const activeReviews = filteredReviews.filter(r => !['approved', 'rejected'].includes(r.status));
+              return activeReviews.length === 0 ? (
+                <EmptyState icon="document-text-outline" title="No active reviews" />
+              ) : activeReviews.map((r) => (
+                <TouchableOpacity
+                  key={r.id} style={s.card} activeOpacity={0.7}
+                  onPress={() => navigation.navigate('ReviewDetail', { reviewId: r.id, appId: workspace?.id ?? 0 })}
+                >
+                  <View style={s.cardRow}>
+                    <Text style={s.cardTitle}>{reviewTitle(r)}</Text>
+                    <StatusBadge status={r.status} />
+                  </View>
+                  {r.self_rating != null && <Text style={s.cardMeta}>Self Rating: {r.self_rating}/5</Text>}
+                  {r.manager_rating != null && <Text style={s.cardMeta}>Manager Rating: {r.manager_rating}/5</Text>}
+                  {r.final_rating != null && <Text style={s.cardMeta}>Final Rating: {r.final_rating}/5</Text>}
+                </TouchableOpacity>
+              ));
+            })() : (() => {
+              const completedReviews = filteredReviews.filter(r => ['approved', 'rejected'].includes(r.status));
+              return completedReviews.length === 0 ? (
+                <EmptyState icon="checkmark-done-outline" title="No completed reviews" subtitle="Approved and rejected reviews will appear here." />
+              ) : completedReviews.map((r) => (
+                <TouchableOpacity
+                  key={r.id} style={s.card} activeOpacity={0.7}
+                  onPress={() => navigation.navigate('ReviewDetail', { reviewId: r.id, appId: workspace?.id ?? 0 })}
+                >
+                  <View style={s.cardRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={s.cardTitle}>{reviewTitle(r)}</Text>
+                      {r.final_rating != null && (
+                        <Text style={[s.cardMeta, { color: colors.success, fontWeight: '700' }]}>
+                          Final Rating: {r.final_rating}/5
+                        </Text>
+                      )}
+                    </View>
+                    <StatusBadge status={r.status} />
+                  </View>
+                  {r.self_rating != null && <Text style={s.cardMeta}>Self: {r.self_rating}/5</Text>}
+                  {r.manager_rating != null && <Text style={s.cardMeta}>Manager: {r.manager_rating}/5</Text>}
+                  {r.created_at && (
+                    <Text style={s.cardMeta}>{new Date(r.created_at).toLocaleDateString()}</Text>
+                  )}
+                </TouchableOpacity>
+              ));
+            })()}
           </>
         )}
 
@@ -648,7 +698,7 @@ export default function PerformanceScreen() {
                     <View style={s.cardRow}>
                       <View style={{ flex: 1 }}>
                         <Text style={s.cardTitle}>
-                          {r.reviewee_name ?? r.employee_name ?? `Review #${r.id}`}
+                          {r.reviewee_name ?? r.employee_name ?? reviewTitle(r)}
                         </Text>
                         {r.cycle_name && <Text style={s.cardMeta}>{r.cycle_name}</Text>}
                       </View>
@@ -691,7 +741,7 @@ export default function PerformanceScreen() {
 
       {/* Create Goal Modal */}
       <Modal visible={showCreateGoal} animationType="slide" transparent onRequestClose={() => setShowCreateGoal(false)}>
-        <KeyboardAvoidingView style={s.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <KeyboardAvoidingView style={s.modalOverlay} behavior="padding">
           <View style={s.modalSheetWrapper}>
           <ScrollView style={s.modalSheet} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
             <View style={s.modalHeader}>
@@ -775,7 +825,7 @@ export default function PerformanceScreen() {
       <Modal visible={showRejectModal} transparent animationType="fade">
         <KeyboardAvoidingView
           style={s.modalOverlay}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          behavior="padding"
         >
           <View style={s.rejectSheet}>
             <Text style={s.modalTitle}>Reject Goal</Text>
@@ -942,6 +992,20 @@ function makeStyles(c: AppColors) {
     cycleChipActive: { backgroundColor: c.primary, borderColor: c.primary },
     cycleChipText: { fontSize: 13, fontWeight: '500', color: c.gray600 },
     cycleChipTextActive: { color: '#ffffff' },
+
+    revToggleRow: {
+      flexDirection: 'row', backgroundColor: c.gray100, borderRadius: 10,
+      padding: 3, marginBottom: 14,
+    },
+    revToggleBtn: {
+      flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center',
+    },
+    revToggleBtnActive: {
+      backgroundColor: c.surface,
+      shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 4, elevation: 2,
+    },
+    revToggleBtnText: { fontSize: 13, fontWeight: '600', color: c.textSecondary },
+    revToggleBtnTextActive: { color: c.primary },
 
     // Reject modal
     rejectSheet: {

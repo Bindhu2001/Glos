@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
-  RefreshControl, Switch,
+  RefreshControl, Switch, Linking, Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -11,6 +11,8 @@ import { useWorkspace } from '../../contexts/WorkspaceContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { AppColors } from '../../utils/colors';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
+import LoadError from '../../components/common/LoadError';
+import { useLoadWithTimeout } from '../../hooks/useLoadWithTimeout';
 
 function SectionCard({ title, children, s }: { title: string; children: React.ReactNode; s: ReturnType<typeof makeStyles> }) {
   return (
@@ -54,40 +56,42 @@ export default function ProfileScreen() {
   const navigation = useNavigation<any>();
 
   const [profile, setProfile] = useState<any>(null);
+  const [roleTitle, setRoleTitle] = useState<string | null>(null);
   const [goals, setGoals] = useState<any[]>([]);
   const [appraisals, setAppraisals] = useState<any[]>([]);
   const [unread, setUnread] = useState(0);
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const { loading, loadError, run } = useLoadWithTimeout();
 
   const load = useCallback(async () => {
-    try {
-      const [me, notif, ...perf] = await Promise.all([
-        api.me.getProfile(),
-        api.notifications.unreadCount(),
-        workspace ? api.performance.getGoals(workspace.id) : Promise.resolve({ data: { goals: [] } }),
-        workspace ? api.performance.getAppraisals(workspace.id) : Promise.resolve({ data: { appraisals: [] } }),
-      ]);
-      setProfile(me.data);
-      setUnread(notif.data.count ?? 0);
-      const gData = perf[0].data;
-      setGoals(Array.isArray(gData) ? gData : (gData?.items ?? []));
-      const aData = perf[1].data;
-      setAppraisals(Array.isArray(aData) ? aData : (aData?.items ?? []));
-    } catch {}
+    const [me, notif, ...perf] = await Promise.all([
+      api.me.getProfile(),
+      api.notifications.unreadCount(),
+      workspace ? api.performance.getGoals(workspace.id) : Promise.resolve({ data: { goals: [] } }),
+      workspace ? api.performance.getAppraisals(workspace.id) : Promise.resolve({ data: { appraisals: [] } }),
+      workspace ? api.dashboard.getMyDashboard(workspace.id) : Promise.resolve({ data: { roles: [] } }),
+    ]);
+    setProfile(me.data);
+    setUnread(notif.data.count ?? 0);
+    const gData = perf[0].data;
+    setGoals(Array.isArray(gData) ? gData : (gData?.items ?? []));
+    const aData = perf[1].data;
+    setAppraisals(Array.isArray(aData) ? aData : (aData?.items ?? []));
+    const dash = perf[2].data;
+    const roles: any[] = dash?.roles ?? [];
+    setRoleTitle(roles[0]?.title ?? null);
   }, [workspace, api]);
 
-  useEffect(() => {
-    load().finally(() => setLoading(false));
-  }, [load]);
+  useEffect(() => { run(load); }, [load]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await load();
+    await run(load, true);
     setRefreshing(false);
   };
 
   if (loading) return <LoadingSpinner />;
+  if (loadError) return <LoadError onRetry={() => run(load)} />;
 
   const fullName = [profile?.firstName, profile?.lastName].filter(Boolean).join(' ') || 'You';
 
@@ -112,13 +116,16 @@ export default function ProfileScreen() {
           </View>
           <View style={{ flex: 1 }}>
             <Text style={s.heroName}>{fullName}</Text>
+            {roleTitle ? (
+              <Text style={s.heroRole}>{roleTitle}</Text>
+            ) : null}
             <Text style={s.heroEmail}>{profile?.email}</Text>
-            {workspace && (
-              <View style={[s.memberBadge, { marginLeft: 0, marginTop: 6, alignSelf: 'flex-start' }]}>
-                <Text style={s.memberBadgeText}>{workspace.role.replace('_', ' ')}</Text>
-              </View>
-            )}
           </View>
+          {workspace?.role ? (
+            <View style={s.memberBadge}>
+              <Text style={s.memberBadgeText}>{workspace.role}</Text>
+            </View>
+          ) : null}
         </View>
 
         {/* Workspace */}
@@ -197,6 +204,35 @@ export default function ProfileScreen() {
             />
           </SectionCard>
         )}
+        {/* Account */}
+        <SectionCard title="ACCOUNT" s={s}>
+          <MenuRow
+            icon="trash-outline"
+            label="Request Account Deletion"
+            onPress={() =>
+              Alert.alert(
+                'Delete Account',
+                'This will send a request to permanently delete your account and all associated data. Do you want to continue?',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  {
+                    text: 'Send Request',
+                    style: 'destructive',
+                    onPress: () =>
+                      Linking.openURL(
+                        'mailto:support@glosonline.com?subject=Account%20Deletion%20Request&body=Please%20delete%20my%20account%20and%20all%20associated%20data.%0A%0AEmail%3A%20' +
+                          encodeURIComponent(profile?.email ?? '')
+                      ),
+                  },
+                ]
+              )
+            }
+            danger
+            colors={colors}
+            s={s}
+          />
+        </SectionCard>
+
         <Text style={s.version}>GreatLeap Mobile v1.0.0</Text>
       </ScrollView>
     </View>
@@ -235,7 +271,8 @@ function makeStyles(c: AppColors) {
     },
     avatarText: { fontSize: 18, fontWeight: '900', color: c.primary },
     heroName: { fontSize: 16, fontWeight: '900', color: c.textPrimary, letterSpacing: -0.3 },
-    heroEmail: { fontSize: 11, color: c.textMuted, marginTop: 2 },
+    heroRole: { fontSize: 12, fontWeight: '600', color: c.primary, marginTop: 2 },
+    heroEmail: { fontSize: 11, color: c.textMuted, marginTop: 1 },
     memberBadge: {
       backgroundColor: c.primaryLight,
       paddingHorizontal: 10, paddingVertical: 3, borderRadius: 20,

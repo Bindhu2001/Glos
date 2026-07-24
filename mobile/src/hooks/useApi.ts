@@ -1,4 +1,4 @@
-import { useAuth, useClerk } from '@clerk/clerk-expo';
+import { useAuth, useClerk, useUser } from '@clerk/clerk-expo';
 import { useMemo, useRef, useCallback } from 'react';
 import { createApiClient } from '../api/client';
 import { showAlert } from '../components/common/AlertModal';
@@ -26,6 +26,7 @@ import {
 export function useApi() {
   const { getToken } = useAuth();
   const { signOut } = useClerk();
+  const { user } = useUser();
   const { setWorkspace } = useWorkspace();
   const getTokenRef = useRef(getToken);
   getTokenRef.current = getToken;
@@ -52,10 +53,34 @@ export function useApi() {
   const onWorkspaceRevokedRef = useRef(onWorkspaceRevoked);
   onWorkspaceRevokedRef.current = onWorkspaceRevoked;
 
-  const mkClient = useCallback(async () => {
-    const t = await getTokenRef.current();
-    return createApiClient(t ?? '', () => onDeactivatedRef.current(), () => onWorkspaceRevokedRef.current());
+  const inflightTokenRef = useRef<Promise<string> | null>(null);
+
+  const getCachedToken = useCallback(async (): Promise<string> => {
+    if (!inflightTokenRef.current) {
+      inflightTokenRef.current = getTokenRef.current()
+        .then(t => t ?? '')
+        .finally(() => { setTimeout(() => { inflightTokenRef.current = null; }, 45000); });
+    }
+    return inflightTokenRef.current;
   }, []);
+
+  const userRef = useRef(user);
+  userRef.current = user;
+
+  const mkClient = useCallback(async () => {
+    const t = await getCachedToken();
+    const u = userRef.current;
+    return createApiClient(
+      t,
+      () => onDeactivatedRef.current(),
+      () => onWorkspaceRevokedRef.current(),
+      {
+        email: u?.primaryEmailAddress?.emailAddress ?? '',
+        firstName: u?.firstName ?? '',
+        lastName: u?.lastName ?? '',
+      },
+    );
+  }, [getCachedToken]);
 
   return useMemo(
     () => ({
@@ -438,6 +463,14 @@ export function useApi() {
         update: async (appId: number, data: Record<string, unknown>) => {
           const client = await mkClient();
           return organisationApi(client).update(appId, data);
+        },
+        uploadLogo: async (appId: number, uri: string, mimeType: string) => {
+          const client = await mkClient();
+          return organisationApi(client).uploadLogo(appId, uri, mimeType);
+        },
+        deleteLogo: async (appId: number) => {
+          const client = await mkClient();
+          return organisationApi(client).deleteLogo(appId);
         },
       },
       roles: {

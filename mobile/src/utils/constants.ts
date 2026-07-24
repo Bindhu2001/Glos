@@ -1,4 +1,4 @@
-export const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8080/api';
+export const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'https://qa.glosonline.com/api';
 
 export const TASK_STATUSES = [
   { value: 'todo', label: 'To Do' },

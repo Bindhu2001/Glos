@@ -12,7 +12,9 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { AppColors } from '../../utils/colors';
 import { formatDuration } from '../../utils/format';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
+import LoadError from '../../components/common/LoadError';
 import Logo from '../../components/common/Logo';
+import { useLoadWithTimeout } from '../../hooks/useLoadWithTimeout';
 
 interface DashData {
   tasks?: { total?: number; done?: number; in_progress?: number; open?: number; blocked?: number; overdue?: number; completion_rate?: number };
@@ -119,7 +121,8 @@ function getMemberTasks(m: TeamMember): number {
 
 function getMemberScore(m: TeamMember): number {
   const trend = m.engagement_trend ?? [];
-  return trend.length > 0 ? (trend[trend.length - 1]?.score ?? 0) : 0;
+  const raw = trend.length > 0 ? (trend[trend.length - 1]?.score ?? 0) : 0;
+  return Math.round(raw * 10);
 }
 
 const PODIUM_ICONS = ['🥇', '🥈', '🥉'];
@@ -136,42 +139,35 @@ export default function DashboardScreen() {
   const [teamData, setTeamData] = useState<TeamDashData | null>(null);
   const [userName, setUserName] = useState('');
   const [feed, setFeed] = useState<FeedItem[]>([]);
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [unread, setUnread] = useState(0);
   const [dashView, setDashView] = useState<DashView>('my');
+  const { loading, loadError, run } = useLoadWithTimeout();
 
   const load = useCallback(async () => {
     if (!workspace) return;
     const isMember = workspace.role === 'member';
-    try {
-      const [appRes, dash, notif, me, feedRes, teamRes] = await Promise.all([
-        api.workspace.getApp(workspace.id),
-        api.dashboard.getMyDashboard(workspace.id),
-        api.notifications.unreadCount(),
-        api.me.getProfile(),
-        api.feed.list(workspace.id),
-        !isMember ? api.dashboard.getTeamDashboard(workspace.id) : Promise.resolve(null),
-      ]);
-      const appData = appRes.data?.app ?? appRes.data;
-      if (appData && appData.is_active === false) {
-        setWorkspace(null);
-        return;
-      }
-      setData(dash.data);
-      if (teamRes) setTeamData(teamRes.data);
-      setUnread(notif.data.count ?? 0);
-      const first = me.data?.firstName ?? me.data?.first_name ?? '';
-      const last = me.data?.lastName ?? me.data?.last_name ?? '';
-      setUserName(`${first} ${last}`.trim() || first);
-      const items = feedRes.data?.items ?? feedRes.data ?? [];
-      setFeed(Array.isArray(items) ? items.slice(0, 3) : []);
-    } catch {}
+    const [appRes, dash, notif, me, feedRes, teamRes] = await Promise.all([
+      api.workspace.getApp(workspace.id),
+      api.dashboard.getMyDashboard(workspace.id),
+      api.notifications.unreadCount(),
+      api.me.getProfile(),
+      api.feed.list(workspace.id),
+      !isMember ? api.dashboard.getTeamDashboard(workspace.id) : Promise.resolve(null),
+    ]);
+    const appData = appRes.data?.app ?? appRes.data;
+    if (appData && appData.is_active === false) { setWorkspace(null); return; }
+    setData(dash.data);
+    if (teamRes) setTeamData(teamRes.data);
+    setUnread(notif.data.count ?? 0);
+    const first = me.data?.firstName ?? me.data?.first_name ?? '';
+    const last = me.data?.lastName ?? me.data?.last_name ?? '';
+    setUserName(`${first} ${last}`.trim() || first);
+    const items = feedRes.data?.items ?? feedRes.data ?? [];
+    setFeed(Array.isArray(items) ? items.slice(0, 3) : []);
   }, [workspace, api, setWorkspace]);
 
-  useEffect(() => {
-    load().finally(() => setLoading(false));
-  }, [load]);
+  useEffect(() => { run(load); }, [load]);
 
   useFocusEffect(useCallback(() => {
     if (!workspace) return;
@@ -182,11 +178,12 @@ export default function DashboardScreen() {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await load();
+    await run(load, true);
     setRefreshing(false);
   };
 
   if (loading) return <LoadingSpinner />;
+  if (loadError) return <LoadError onRetry={() => run(load)} />;
 
   const tasks = data?.tasks;
   const total = tasks?.total ?? 0;
@@ -507,58 +504,33 @@ export default function DashboardScreen() {
             {/* Team Leaderboard */}
             {leaderboard.length > 0 && (
               <View style={s.sectionCard}>
-                <Text style={s.sectionHead}>LEADERBOARD</Text>
-                {/* Podium — top 3 */}
-                {leaderboard.length >= 3 && (
-                  <View style={s.podiumRow}>
-                    {[leaderboard[1], leaderboard[0], leaderboard[2]].map((m, i) => {
-                      const rankIdx = i === 0 ? 1 : i === 1 ? 0 : 2;
-                      const name = getMemberName(m);
-                      const score = getMemberScore(m);
-                      const heights = [80, 100, 70];
-                      return (
-                        <View key={m.user_id ?? m.user?.id ?? i} style={[s.podiumCard, { height: heights[i] }]}>
-                          <Text style={s.podiumIcon}>{PODIUM_ICONS[rankIdx]}</Text>
-                          <View style={s.podiumAv}>
-                            <Text style={s.podiumAvTxt}>{initials(name)}</Text>
-                          </View>
-                          <Text style={s.podiumName} numberOfLines={1}>{name.split(' ')[0]}</Text>
-                          {score > 0 && <Text style={s.podiumScore}>{score}</Text>}
+                <Text style={s.sectionHead}>TEAM LEADERBOARD</Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ gap: 12, paddingVertical: 4 }}
+                >
+                  {leaderboard.map((m, idx) => {
+                    const name = getMemberName(m);
+                    const score = getMemberScore(m);
+                    const avColor = idx === 0 ? colors.success
+                      : idx === 1 ? colors.primary
+                      : idx === 2 ? colors.secondary
+                      : colors.gray300;
+                    return (
+                      <View key={m.user_id ?? m.user?.id ?? idx} style={s.lbCard}>
+                        {idx < 3
+                          ? <Text style={s.lbMedal}>{PODIUM_ICONS[idx]}</Text>
+                          : <Text style={s.lbRankNum}>{`#${idx + 1}`}</Text>}
+                        <View style={[s.lbAvatar, { backgroundColor: avColor }]}>
+                          <Text style={s.lbAvatarTxt}>{initials(name)}</Text>
                         </View>
-                      );
-                    })}
-                  </View>
-                )}
-                {/* Ranked list */}
-                {leaderboard.slice(leaderboard.length >= 3 ? 3 : 0).map((m, idx) => {
-                  const rank = (leaderboard.length >= 3 ? 3 : 0) + idx + 1;
-                  const name = getMemberName(m);
-                  const score = getMemberScore(m);
-                  return (
-                    <View key={m.user_id ?? m.user?.id ?? idx} style={s.leaderRow}>
-                      <Text style={s.leaderRank}>#{rank}</Text>
-                      <View style={s.leaderAv}>
-                        <Text style={s.leaderAvTxt}>{initials(name)}</Text>
+                        <Text style={s.lbName} numberOfLines={1}>{name.split(' ')[0]}</Text>
+                        {score > 0 && <Text style={s.lbPts}>{score} pts</Text>}
                       </View>
-                      <Text style={s.leaderName} numberOfLines={1}>{name}</Text>
-                      {score > 0 && <Text style={s.leaderScore}>{score} pts</Text>}
-                    </View>
-                  );
-                })}
-                {leaderboard.length < 3 && leaderboard.map((m, idx) => {
-                  const name = getMemberName(m);
-                  const score = getMemberScore(m);
-                  return (
-                    <View key={m.user_id ?? m.user?.id ?? idx} style={s.leaderRow}>
-                      <Text style={s.leaderRank}>#{idx + 1}</Text>
-                      <View style={s.leaderAv}>
-                        <Text style={s.leaderAvTxt}>{initials(name)}</Text>
-                      </View>
-                      <Text style={s.leaderName} numberOfLines={1}>{name}</Text>
-                      {score > 0 && <Text style={s.leaderScore}>{score} pts</Text>}
-                    </View>
-                  );
-                })}
+                    );
+                  })}
+                </ScrollView>
               </View>
             )}
 
@@ -742,32 +714,16 @@ function makeStyles(c: AppColors) {
     activityTagTxt: { fontSize: 10, fontWeight: '700', color: c.primary },
 
     // Leaderboard
-    podiumRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, marginBottom: 12 },
-    podiumCard: {
-      flex: 1, backgroundColor: c.gray50, borderRadius: 12,
-      borderWidth: 1, borderColor: c.border,
-      alignItems: 'center', justifyContent: 'flex-end', paddingBottom: 10, paddingTop: 8,
+    lbCard: { alignItems: 'center', width: 80 },
+    lbMedal: { fontSize: 20, marginBottom: 6 },
+    lbRankNum: { fontSize: 12, fontWeight: '700', color: c.textMuted, marginBottom: 6 },
+    lbAvatar: {
+      width: 56, height: 56, borderRadius: 28,
+      alignItems: 'center', justifyContent: 'center', marginBottom: 8,
     },
-    podiumIcon: { fontSize: 18, marginBottom: 4 },
-    podiumAv: {
-      width: 34, height: 34, borderRadius: 10,
-      backgroundColor: c.primaryLight, alignItems: 'center', justifyContent: 'center', marginBottom: 4,
-    },
-    podiumAvTxt: { fontSize: 12, fontWeight: '900', color: c.primary },
-    podiumName: { fontSize: 11, fontWeight: '700', color: c.textPrimary, maxWidth: 70 },
-    podiumScore: { fontSize: 10, color: c.textMuted, marginTop: 2 },
-    leaderRow: {
-      flexDirection: 'row', alignItems: 'center', gap: 10,
-      paddingVertical: 8, borderTopWidth: 1, borderTopColor: c.border,
-    },
-    leaderRank: { width: 24, fontSize: 11, fontWeight: '700', color: c.textMuted, textAlign: 'center' },
-    leaderAv: {
-      width: 30, height: 30, borderRadius: 8,
-      backgroundColor: c.gray100, alignItems: 'center', justifyContent: 'center',
-    },
-    leaderAvTxt: { fontSize: 11, fontWeight: '700', color: c.textSecondary },
-    leaderName: { flex: 1, fontSize: 13, fontWeight: '600', color: c.textPrimary },
-    leaderScore: { fontSize: 12, fontWeight: '700', color: c.primary },
+    lbAvatarTxt: { fontSize: 20, fontWeight: '900', color: '#fff' },
+    lbName: { fontSize: 12, fontWeight: '700', color: c.textPrimary, textAlign: 'center' },
+    lbPts: { fontSize: 11, fontWeight: '700', color: c.secondary, marginTop: 2 },
 
     // Mood
     moodCard: {

@@ -11,6 +11,8 @@ import { useWorkspace } from '../../contexts/WorkspaceContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { AppColors } from '../../utils/colors';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
+import LoadError from '../../components/common/LoadError';
+import { useLoadWithTimeout } from '../../hooks/useLoadWithTimeout';
 
 type Tab = 'hours' | 'details';
 
@@ -116,7 +118,7 @@ export default function TaskReportsScreen() {
   const [tab, setTab] = useState<Tab>('hours');
   const [members, setMembers] = useState<Member[]>([]);
   const [meId, setMeId] = useState<number | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { loading, loadError, run } = useLoadWithTimeout();
   const [refreshing, setRefreshing] = useState(false);
 
   // Hours tab
@@ -173,19 +175,16 @@ export default function TaskReportsScreen() {
 
   const isFirstMount = useRef(true);
 
-  useEffect(() => {
-    const init = async () => {
-      let resolvedMeId: number | null = null;
-      try {
-        const r = await api.me.getProfile();
-        resolvedMeId = r.data?.id ?? r.data?.user?.id ?? null;
-        setMeId(resolvedMeId);
-      } catch {}
-      await Promise.all([loadMembers(), loadHours(resolvedMeId), loadDetails()]);
-    };
-    init().finally(() => setLoading(false));
+  const init = useCallback(async () => {
+    let resolvedMeId: number | null = null;
+    const r = await api.me.getProfile();
+    resolvedMeId = r.data?.id ?? r.data?.user?.id ?? null;
+    setMeId(resolvedMeId);
+    await Promise.all([loadMembers(), loadHours(resolvedMeId), loadDetails()]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => { run(init); }, [init]);
 
   useEffect(() => {
     if (isFirstMount.current) { isFirstMount.current = false; return; }
@@ -234,15 +233,21 @@ export default function TaskReportsScreen() {
   );
 
   const filteredDetails = useMemo(() => {
-    return detailsItems.filter(t => {
-      if (statusFilter && t.status !== statusFilter) return false;
-      if (priorityFilter && t.priority !== priorityFilter) return false;
-      if (areaFilter) {
-        if (areaFilter === '_none') return !t.area_name;
-        if (t.area_name !== areaFilter) return false;
-      }
-      return true;
-    });
+    return detailsItems
+      .filter(t => {
+        if (statusFilter && t.status !== statusFilter) return false;
+        if (priorityFilter && t.priority !== priorityFilter) return false;
+        if (areaFilter) {
+          if (areaFilter === '_none') return !t.area_name;
+          if (t.area_name !== areaFilter) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        const at = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const bt = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return bt - at;
+      });
   }, [detailsItems, statusFilter, priorityFilter, areaFilter]);
 
   const areas = useMemo(() => {
@@ -258,7 +263,7 @@ export default function TaskReportsScreen() {
   }, [detailsItems]);
 
   const detailsCompletedCount = filteredDetails.filter(t => t.status === 'done').length;
-  const detailsTotalHours = filteredDetails.reduce((sum, t) => sum + (t.total_hours ?? 0), 0);
+  const detailsTotalHours = filteredDetails.reduce((sum, t) => sum + (Number(t.total_hours) || 0), 0);
 
   const selectedMember = members.find(m => m.user_id === selectedUserId);
   const selectedMemberName = selectedMember
@@ -269,6 +274,7 @@ export default function TaskReportsScreen() {
   const priorityOptions = ['', 'low', 'medium', 'high', 'urgent'];
 
   if (loading) return <LoadingSpinner />;
+  if (loadError) return <LoadError onRetry={() => run(init)} />;
 
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
@@ -382,7 +388,7 @@ export default function TaskReportsScreen() {
                         <View style={{ alignItems: 'flex-end', gap: 4 }}>
                           <View style={[s.badge, { backgroundColor: sc.bg }]}>
                             <Text style={[s.badgeText, { color: sc.text }]}>
-                              {group.status.replace(/_/g, ' ')}
+                              {(group.status ?? '').replace(/_/g, ' ')}
                             </Text>
                           </View>
                           <Text style={[s.hoursTotal, { color: colors.secondary }]}>
@@ -526,7 +532,20 @@ export default function TaskReportsScreen() {
                   .filter((uid: number) => uid !== task.assigned_to_user_id);
 
                 return (
-                  <View key={task.id} style={s.detailCard}>
+                  <TouchableOpacity
+                    key={task.id}
+                    style={s.detailCard}
+                    activeOpacity={0.85}
+                    onPress={() => {
+                      if (!workspace?.id) return;
+                      try {
+                        navigation.getParent()?.navigate('TasksTab', {
+                          screen: 'TaskDetail',
+                          params: { taskId: task.id, appId: workspace.id },
+                        });
+                      } catch {}
+                    }}
+                  >
                     {/* Top row */}
                     <View style={s.detailTop}>
                       <Text style={s.detailNum}>
@@ -534,7 +553,7 @@ export default function TaskReportsScreen() {
                       </Text>
                       <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap', flex: 1, justifyContent: 'flex-end' }}>
                         <View style={[s.badge, { backgroundColor: sc.bg }]}>
-                          <Text style={[s.badgeText, { color: sc.text }]}>{task.status.replace(/_/g, ' ')}</Text>
+                          <Text style={[s.badgeText, { color: sc.text }]}>{(task.status ?? '').replace(/_/g, ' ')}</Text>
                         </View>
                         {pc && (
                           <View style={[s.badge, { backgroundColor: pc.bg }]}>
@@ -587,17 +606,17 @@ export default function TaskReportsScreen() {
                           <Text style={s.metaPillVal}>{fmtDate(task.due_on)}</Text>
                         </View>
                       )}
-                      {task.estimated_hours != null && task.estimated_hours > 0 && (
+                      {task.estimated_hours != null && Number(task.estimated_hours) > 0 && (
                         <View style={s.metaPill}>
                           <Text style={s.metaPillLabel}>Est.</Text>
-                          <Text style={s.metaPillVal}>{task.estimated_hours}h</Text>
+                          <Text style={s.metaPillVal}>{Number(task.estimated_hours).toFixed(1)}h</Text>
                         </View>
                       )}
-                      {task.total_hours != null && task.total_hours > 0 && (
+                      {task.total_hours != null && Number(task.total_hours) > 0 && (
                         <View style={[s.metaPill, { borderColor: colors.secondary + '44' }]}>
                           <Text style={s.metaPillLabel}>Logged</Text>
                           <Text style={[s.metaPillVal, { color: colors.secondary }]}>
-                            {task.total_hours.toFixed(1)}h
+                            {Number(task.total_hours).toFixed(1)}h
                           </Text>
                         </View>
                       )}
@@ -617,7 +636,7 @@ export default function TaskReportsScreen() {
                         <Text style={s.checklistLabel}>{checkDone}/{checkTotal} done</Text>
                       </View>
                     )}
-                  </View>
+                  </TouchableOpacity>
                 );
               })
             )}
