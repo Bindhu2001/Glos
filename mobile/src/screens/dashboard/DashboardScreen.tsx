@@ -8,6 +8,7 @@ import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useApi } from '../../hooks/useApi';
 import { useWorkspace } from '../../contexts/WorkspaceContext';
+import { useHasTeam } from '../../contexts/HasTeamContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { AppColors } from '../../utils/colors';
 import { formatDuration } from '../../utils/format';
@@ -40,6 +41,7 @@ interface TeamMember {
 
 interface TeamDashData {
   members?: TeamMember[];
+  sub_managers?: Array<{ user_id: number; name: string }>;
   team_totals?: {
     member_count?: number;
     hours_this_week?: number;
@@ -130,6 +132,7 @@ const PODIUM_ICONS = ['🥇', '🥈', '🥉'];
 export default function DashboardScreen() {
   const api = useApi();
   const { workspace, setWorkspace } = useWorkspace();
+  const { isAdmin, canSeeTeamContent } = useHasTeam();
   const { colors } = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
@@ -142,32 +145,44 @@ export default function DashboardScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [unread, setUnread] = useState(0);
   const [dashView, setDashView] = useState<DashView>('my');
+  const [mgrScope, setMgrScope] = useState<'direct' | 'all'>('direct');
+  const [viewAs, setViewAs] = useState<number | null>(null);
   const { loading, loadError, run } = useLoadWithTimeout();
+
+  const loadTeamData = useCallback(async () => {
+    if (!workspace || !canSeeTeamContent) return;
+    const teamRes = isAdmin
+      ? await api.dashboard.getTeamDashboard(workspace.id)
+      : await api.dashboard.getManagerDashboard(workspace.id, mgrScope, undefined, viewAs ?? undefined);
+    setTeamData(teamRes.data);
+  }, [workspace, api, isAdmin, canSeeTeamContent, mgrScope, viewAs]);
 
   const load = useCallback(async () => {
     if (!workspace) return;
-    const isMember = workspace.role === 'member';
-    const [appRes, dash, notif, me, feedRes, teamRes] = await Promise.all([
+    // Team/manager content is available to admins and to members who have
+    // reportees in the org chart — matches QA web's Sidebar.jsx `hasTeam` gate.
+    const [appRes, dash, notif, me, feedRes] = await Promise.all([
       api.workspace.getApp(workspace.id),
       api.dashboard.getMyDashboard(workspace.id),
       api.notifications.unreadCount(),
       api.me.getProfile(),
       api.feed.list(workspace.id),
-      !isMember ? api.dashboard.getTeamDashboard(workspace.id) : Promise.resolve(null),
+      loadTeamData(),
     ]);
     const appData = appRes.data?.app ?? appRes.data;
     if (appData && appData.is_active === false) { setWorkspace(null); return; }
     setData(dash.data);
-    if (teamRes) setTeamData(teamRes.data);
     setUnread(notif.data.count ?? 0);
     const first = me.data?.firstName ?? me.data?.first_name ?? '';
     const last = me.data?.lastName ?? me.data?.last_name ?? '';
     setUserName(`${first} ${last}`.trim() || first);
     const items = feedRes.data?.items ?? feedRes.data ?? [];
     setFeed(Array.isArray(items) ? items.slice(0, 3) : []);
-  }, [workspace, api, setWorkspace]);
+  }, [workspace, api, setWorkspace, loadTeamData]);
 
   useEffect(() => { run(load); }, [load]);
+
+  useEffect(() => { if (dashView === 'Team') loadTeamData(); }, [mgrScope, viewAs]);
 
   useFocusEffect(useCallback(() => {
     if (!workspace) return;
@@ -228,7 +243,7 @@ export default function DashboardScreen() {
       </View>
 
       {/* Dashboard view toggle — admins only */}
-      {workspace?.role !== 'member' && (
+      {canSeeTeamContent && (
         <View style={s.viewToggleRow}>
           <TouchableOpacity
             style={[s.viewToggleBtn, dashView === 'my' && s.viewToggleBtnActive]}
@@ -373,7 +388,7 @@ export default function DashboardScreen() {
         )}
 
         {/* ── TEAM DASHBOARD (matches web TeamDashboard.jsx) ── */}
-        {dashView === 'Team' && workspace?.role !== 'member' && (
+        {dashView === 'Team' && canSeeTeamContent && (
           <>
             {/* Date strip */}
             <View style={s.dateStrip}>
@@ -397,6 +412,36 @@ export default function DashboardScreen() {
                 <Text style={s.teamHeadBtnTxt}>All Tasks</Text>
               </TouchableOpacity>
             </View>
+
+            {/* Sub-manager scope switch — only shown for hasTeam members (not admins) who manage other managers */}
+            {!isAdmin && (teamData?.sub_managers?.length ?? 0) > 0 && (
+              <View style={s.scopeRow}>
+                <TouchableOpacity
+                  style={[s.scopeBtn, mgrScope === 'direct' && s.scopeBtnActive]}
+                  onPress={() => { setMgrScope('direct'); setViewAs(null); }}
+                >
+                  <Text style={[s.scopeBtnTxt, mgrScope === 'direct' && s.scopeBtnTxtActive]}>My Direct Team</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[s.scopeBtn, mgrScope === 'all' && s.scopeBtnActive]}
+                  onPress={() => { setMgrScope('all'); setViewAs(null); }}
+                >
+                  <Text style={[s.scopeBtnTxt, mgrScope === 'all' && s.scopeBtnTxtActive]}>Whole Org (incl. sub-teams)</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            {!isAdmin && mgrScope === 'all' && (teamData?.sub_managers?.length ?? 0) > 0 && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.viewAsRow} contentContainerStyle={{ gap: 8, paddingHorizontal: 16 }}>
+                <TouchableOpacity style={[s.viewAsChip, viewAs === null && s.viewAsChipActive]} onPress={() => setViewAs(null)}>
+                  <Text style={[s.viewAsChipTxt, viewAs === null && s.viewAsChipTxtActive]}>Everyone</Text>
+                </TouchableOpacity>
+                {teamData!.sub_managers!.map((sm) => (
+                  <TouchableOpacity key={sm.user_id} style={[s.viewAsChip, viewAs === sm.user_id && s.viewAsChipActive]} onPress={() => setViewAs(sm.user_id)}>
+                    <Text style={[s.viewAsChipTxt, viewAs === sm.user_id && s.viewAsChipTxtActive]}>{sm.name}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
 
             {/* 3 KPI cards */}
             <View style={s.kpiRow}>
@@ -654,6 +699,17 @@ function makeStyles(c: AppColors) {
       backgroundColor: c.primaryLight, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10,
     },
     teamHeadBtnTxt: { fontSize: 12, fontWeight: '700', color: c.primary },
+
+    scopeRow: { flexDirection: 'row', gap: 8, marginHorizontal: 16, marginTop: 10 },
+    scopeBtn: { flex: 1, paddingVertical: 8, borderRadius: 10, alignItems: 'center', backgroundColor: c.gray50, borderWidth: 1, borderColor: c.border },
+    scopeBtnActive: { backgroundColor: c.primary, borderColor: c.primary },
+    scopeBtnTxt: { fontSize: 12, fontWeight: '700', color: c.textSecondary },
+    scopeBtnTxtActive: { color: '#fff' },
+    viewAsRow: { marginTop: 10 },
+    viewAsChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, backgroundColor: c.surface, borderWidth: 1, borderColor: c.border },
+    viewAsChipActive: { backgroundColor: c.primary, borderColor: c.primary },
+    viewAsChipTxt: { fontSize: 12, fontWeight: '600', color: c.textSecondary },
+    viewAsChipTxtActive: { color: '#fff' },
 
     // KPI cards row
     kpiRow: { flexDirection: 'row', gap: 8, marginHorizontal: 16, marginTop: 14 },

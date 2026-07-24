@@ -9,6 +9,7 @@ import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useApi } from '../../hooks/useApi';
 import { useWorkspace } from '../../contexts/WorkspaceContext';
+import { useHasTeam } from '../../contexts/HasTeamContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { AppColors } from '../../utils/colors';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
@@ -98,6 +99,7 @@ export default function PerformanceScreen() {
   const navigation = useNavigation<any>();
 
   const isAdmin = workspace?.role === 'super_admin' || workspace?.role === 'admin';
+  const { canSeeTeamContent } = useHasTeam();
 
   const [activeTab, setActiveTab] = useState<Tab>('work');
   const [refreshing, setRefreshing] = useState(false);
@@ -297,7 +299,7 @@ export default function PerformanceScreen() {
     { key: 'work', label: 'Overview' },
     { key: 'goals', label: 'Goals' },
     { key: 'reviews', label: 'Reviews' },
-    ...(isAdmin ? [{ key: 'team' as Tab, label: 'Team' }] : []),
+    ...(canSeeTeamContent ? [{ key: 'team' as Tab, label: 'Team' }] : []),
     { key: 'recognitions', label: 'Recognitions' },
   ];
 

@@ -15,10 +15,18 @@ export type AuthStackParamList = {
 export type MainTabParamList = {
   DashboardTab: undefined;
   TasksTab: NavigatorScreenParams<TasksStackParamList> | undefined;
+  ChatTab: NavigatorScreenParams<ChatStackParamList> | undefined;
   FeedTab: NavigatorScreenParams<FeedStackParamList> | undefined;
   PerformanceTab: NavigatorScreenParams<PerformanceStackParamList> | undefined;
+  MoreTab: NavigatorScreenParams<MoreStackParamList> | undefined;
   AdminTab: NavigatorScreenParams<AdminStackParamList> | undefined;
   ProfileTab: undefined;
+};
+
+export type ChatStackParamList = {
+  ChatList: undefined;
+  ChatThread: { conversationId: number; appId: number; title?: string };
+  NewConversation: { appId: number };
 };
 
 export type TasksStackParamList = {
@@ -53,4 +61,18 @@ export type AdminStackParamList = {
   Roles: undefined;
   Policies: undefined;
   PolicyDetail: { policyId: number; appId: number };
+};
+
+export type MoreStackParamList = {
+  MoreHome: undefined;
+  ProjectsList: undefined;
+  ProjectDetail: { projectId: number; appId: number };
+  AgreementsList: undefined;
+  AgreementDetail: { agreementId: number; appId: number };
+  Routines: undefined;
+  BusinessReviewsList: undefined;
+  BusinessReviewDetail: { reviewId: number; appId: number };
+  MyOrganisation: undefined;
+  ReportsList: undefined;
+  TaskReports: undefined;
 };

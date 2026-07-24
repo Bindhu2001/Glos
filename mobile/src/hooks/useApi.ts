@@ -1,3 +1,4 @@
+import { AxiosInstance } from 'axios';
 import { useAuth, useClerk, useUser } from '@clerk/clerk-expo';
 import { useMemo, useRef, useCallback } from 'react';
 import { createApiClient } from '../api/client';
@@ -21,7 +22,29 @@ import {
   rolesApi,
   policiesApi,
   departmentsApi,
+  projectsApi,
+  contractsApi,
+  routinesApi,
+  businessReviewsApi,
+  chatApi,
 } from '../api';
+
+// Lazily creates a client per call and proxies straight through to the given
+// api-group factory — avoids hand-writing a wrapper method per endpoint for
+// large modules (projects/contracts/routines/business reviews).
+function bindApiGroup<T extends Record<string, (...args: any[]) => any>>(
+  mkClient: () => Promise<AxiosInstance>,
+  factory: (client: AxiosInstance) => T,
+): T {
+  return new Proxy({} as T, {
+    get(_target, prop: string) {
+      return async (...args: any[]) => {
+        const client = await mkClient();
+        return (factory(client) as any)[prop](...args);
+      };
+    },
+  });
+}
 
 export function useApi() {
   const { getToken } = useAuth();
@@ -110,6 +133,10 @@ export function useApi() {
           const client = await mkClient();
           return workspaceApi(client).adminListApps();
         },
+        hasTeam: async (appId: number) => {
+          const client = await mkClient();
+          return workspaceApi(client).hasTeam(appId);
+        },
       },
       me: {
         getProfile: async () => {
@@ -162,7 +189,28 @@ export function useApi() {
           const client = await mkClient();
           return dashboardApi(client).getTeamDashboard(appId);
         },
+        getManagerDashboard: async (appId: number, scope?: 'direct' | 'all' | 'admin', month?: string, viewAs?: number) => {
+          const client = await mkClient();
+          return dashboardApi(client).getManagerDashboard(appId, scope, month, viewAs);
+        },
+        getManagerTaskStats: async (appId: number, params?: Record<string, unknown>) => {
+          const client = await mkClient();
+          return dashboardApi(client).getManagerTaskStats(appId, params);
+        },
+        getManagerActivityByMember: async (appId: number, params?: Record<string, unknown>) => {
+          const client = await mkClient();
+          return dashboardApi(client).getManagerActivityByMember(appId, params);
+        },
+        isTopHierarchy: async (appId: number) => {
+          const client = await mkClient();
+          return dashboardApi(client).isTopHierarchy(appId);
+        },
       },
+      projects: bindApiGroup(mkClient, projectsApi),
+      contracts: bindApiGroup(mkClient, contractsApi),
+      routines: bindApiGroup(mkClient, routinesApi),
+      businessReviews: bindApiGroup(mkClient, businessReviewsApi),
+      chat: bindApiGroup(mkClient, chatApi),
       tasks: {
         list: async (appId: number, params?: Record<string, unknown>) => {
           const client = await mkClient();

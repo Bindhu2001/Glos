@@ -8,6 +8,7 @@ export const workspaceApi = (client: AxiosInstance) => ({
   getMembers: (appId: number) => client.get(`/apps/${appId}/members`),
   createApp: (data: { type: string; name: string }) => client.post('/apps', data),
   adminListApps: () => client.get('/admin/apps'),
+  hasTeam: (appId: number) => client.get(`/apps/${appId}/hr/org-chart/has-team`),
 });
 
 // ── Me ──────────────────────────────────────────────────────
@@ -39,6 +40,137 @@ export const dashboardApi = (client: AxiosInstance) => ({
     client.get(`/apps/${appId}/hr/dashboard/me`),
   getTeamDashboard: (appId: number) =>
     client.get(`/apps/${appId}/hr/dashboard/team`),
+  getManagerDashboard: (appId: number, scope: 'direct' | 'all' | 'admin' = 'direct', month?: string, viewAs?: number) =>
+    client.get(`/apps/${appId}/hr/dashboard/manager`, { params: { scope, ...(month ? { month } : {}), ...(viewAs ? { view_as: viewAs } : {}) } }),
+  getManagerTaskStats: (appId: number, params?: Record<string, unknown>) =>
+    client.get(`/apps/${appId}/hr/dashboard/manager-task-stats`, { params }),
+  getManagerActivityByMember: (appId: number, params?: Record<string, unknown>) =>
+    client.get(`/apps/${appId}/hr/dashboard/manager-activity-by-member`, { params }),
+  isTopHierarchy: (appId: number) =>
+    client.get(`/apps/${appId}/hr/dashboard/is-top-hierarchy`),
+});
+
+// ── Projects ─────────────────────────────────────────────────
+export const projectsApi = (client: AxiosInstance) => ({
+  list: (appId: number, params?: Record<string, unknown>) =>
+    client.get(`/apps/${appId}/hr/projects`, { params }),
+  listSimple: (appId: number) => client.get(`/apps/${appId}/hr/projects/simple`),
+  dashboard: (appId: number) => client.get(`/apps/${appId}/hr/projects/dashboard`),
+  get: (appId: number, id: number) => client.get(`/apps/${appId}/hr/projects/${id}`),
+  create: (appId: number, data: Record<string, unknown>) =>
+    client.post(`/apps/${appId}/hr/projects`, data),
+  update: (appId: number, id: number, data: Record<string, unknown>) =>
+    client.patch(`/apps/${appId}/hr/projects/${id}`, data),
+  delete: (appId: number, id: number) => client.delete(`/apps/${appId}/hr/projects/${id}`),
+  listMilestones: (appId: number, id: number) =>
+    client.get(`/apps/${appId}/hr/projects/${id}/milestones`),
+  createMilestone: (appId: number, id: number, data: Record<string, unknown>) =>
+    client.post(`/apps/${appId}/hr/projects/${id}/milestones`, data),
+  updateMilestone: (appId: number, id: number, mid: number, data: Record<string, unknown>) =>
+    client.patch(`/apps/${appId}/hr/projects/${id}/milestones/${mid}`, data),
+  deleteMilestone: (appId: number, id: number, mid: number) =>
+    client.delete(`/apps/${appId}/hr/projects/${id}/milestones/${mid}`),
+  financialsSummary: (appId: number, params?: Record<string, unknown>) =>
+    client.get(`/apps/${appId}/hr/projects/financials-summary`, { params }),
+  getFinancials: (appId: number, id: number) =>
+    client.get(`/apps/${appId}/hr/projects/${id}/financials`),
+  listCosts: (appId: number, id: number) => client.get(`/apps/${appId}/hr/projects/${id}/costs`),
+  createCost: (appId: number, id: number, data: Record<string, unknown>) =>
+    client.post(`/apps/${appId}/hr/projects/${id}/costs`, data),
+  deleteCost: (appId: number, id: number, cid: number) =>
+    client.delete(`/apps/${appId}/hr/projects/${id}/costs/${cid}`),
+  requestJoin: (appId: number, id: number) =>
+    client.post(`/apps/${appId}/hr/projects/${id}/join-requests`),
+  acceptJoin: (appId: number, id: number, reqId: number) =>
+    client.post(`/apps/${appId}/hr/projects/${id}/join-requests/${reqId}/accept`),
+  rejectJoin: (appId: number, id: number, reqId: number) =>
+    client.post(`/apps/${appId}/hr/projects/${id}/join-requests/${reqId}/reject`),
+  listComments: (appId: number, id: number) => client.get(`/apps/${appId}/hr/projects/${id}/comments`),
+  createComment: (appId: number, id: number, body: string) =>
+    client.post(`/apps/${appId}/hr/projects/${id}/comments`, { body }),
+  deleteComment: (appId: number, id: number, cid: number) =>
+    client.delete(`/apps/${appId}/hr/projects/${id}/comments/${cid}`),
+});
+
+// ── Contracts / Agreements ───────────────────────────────────
+export const contractsApi = (client: AxiosInstance) => ({
+  listAgreements: (appId: number, params?: Record<string, unknown>) =>
+    client.get(`/apps/${appId}/hr/contracts/agreements`, { params }),
+  getAgreement: (appId: number, id: number) =>
+    client.get(`/apps/${appId}/hr/contracts/agreements/${id}`),
+  createAgreement: (appId: number, data: Record<string, unknown>) =>
+    client.post(`/apps/${appId}/hr/contracts/agreements`, data),
+  updateAgreement: (appId: number, id: number, data: Record<string, unknown>) =>
+    client.patch(`/apps/${appId}/hr/contracts/agreements/${id}`, data),
+  deleteAgreement: (appId: number, id: number) =>
+    client.delete(`/apps/${appId}/hr/contracts/agreements/${id}`),
+  addAgreementService: (appId: number, id: number, data: Record<string, unknown>) =>
+    client.post(`/apps/${appId}/hr/contracts/agreements/${id}/services`, data),
+  updateAgreementService: (appId: number, id: number, casId: number, data: Record<string, unknown>) =>
+    client.patch(`/apps/${appId}/hr/contracts/agreements/${id}/services/${casId}`, data),
+  deleteAgreementService: (appId: number, id: number, casId: number) =>
+    client.delete(`/apps/${appId}/hr/contracts/agreements/${id}/services/${casId}`),
+  listServices: (appId: number, params?: Record<string, unknown>) =>
+    client.get(`/apps/${appId}/hr/contracts/services`, { params }),
+  getReports: (appId: number, params?: Record<string, unknown>) =>
+    client.get(`/apps/${appId}/hr/contracts/reports`, { params }),
+});
+
+// ── Routines ─────────────────────────────────────────────────
+export const routinesApi = (client: AxiosInstance) => ({
+  getAvailable: (appId: number, assigneeId?: number) =>
+    client.get(`/apps/${appId}/hr/routines/available`, { params: assigneeId ? { assigneeId } : undefined }),
+  getDashboard: (appId: number, period?: string) =>
+    client.get(`/apps/${appId}/hr/routines/dashboard`, { params: period ? { period } : undefined }),
+  getTeamDashboard: (appId: number, period?: string, viewAs?: number) =>
+    client.get(`/apps/${appId}/hr/routines/team-dashboard`, { params: { ...(period ? { period } : {}), ...(viewAs ? { view_as: viewAs } : {}) } }),
+});
+
+// ── Chat ─────────────────────────────────────────────────────
+export const chatApi = (client: AxiosInstance) => ({
+  listConversations: (appId: number) => client.get(`/apps/${appId}/chat`),
+  createConversation: (appId: number, data: { type: 'direct' | 'group' | 'note'; name?: string; member_ids?: number[] }) =>
+    client.post(`/apps/${appId}/chat`, data),
+  editGroup: (appId: number, convId: number, data: { name?: string; add_member_ids?: number[]; remove_member_ids?: number[] }) =>
+    client.patch(`/apps/${appId}/chat/${convId}`, data),
+  deleteGroup: (appId: number, convId: number) => client.delete(`/apps/${appId}/chat/${convId}`),
+  pinMessage: (appId: number, convId: number, messageId: number) =>
+    client.post(`/apps/${appId}/chat/${convId}/pin`, { message_id: messageId }),
+  getMessages: (appId: number, convId: number, params?: { limit?: number; before?: number }) =>
+    client.get(`/apps/${appId}/chat/${convId}/messages`, { params }),
+  deleteMessage: (appId: number, msgId: number) => client.delete(`/apps/${appId}/chat/messages/${msgId}`),
+  editMessage: (appId: number, msgId: number, body: string) =>
+    client.patch(`/apps/${appId}/chat/messages/${msgId}`, { body }),
+  reactToMessage: (appId: number, msgId: number, emoji: string) =>
+    client.post(`/apps/${appId}/chat/messages/${msgId}/react`, { emoji }),
+  toggleGroupAdmin: (appId: number, convId: number, userId: number) =>
+    client.post(`/apps/${appId}/chat/${convId}/members/${userId}/admin`, {}),
+});
+
+// ── Business Reviews ─────────────────────────────────────────
+export const businessReviewsApi = (client: AxiosInstance) => ({
+  list: (appId: number, params?: Record<string, unknown>) =>
+    client.get(`/apps/${appId}/hr/business-reviews`, { params }),
+  get: (appId: number, id: number) => client.get(`/apps/${appId}/hr/business-reviews/${id}`),
+  create: (appId: number, data: Record<string, unknown>) =>
+    client.post(`/apps/${appId}/hr/business-reviews`, data),
+  update: (appId: number, id: number, data: Record<string, unknown>) =>
+    client.patch(`/apps/${appId}/hr/business-reviews/${id}`, data),
+  delete: (appId: number, id: number) => client.delete(`/apps/${appId}/hr/business-reviews/${id}`),
+  close: (appId: number, id: number) => client.post(`/apps/${appId}/hr/business-reviews/${id}/close`),
+  dashboard: (appId: number, params?: Record<string, unknown>) =>
+    client.get(`/apps/${appId}/hr/business-reviews/dashboard`, { params }),
+  scopeOptions: (appId: number) => client.get(`/apps/${appId}/hr/business-reviews/scope-options`),
+  addActionItem: (appId: number, id: number, data: Record<string, unknown>) =>
+    client.post(`/apps/${appId}/hr/business-reviews/${id}/action-items`, data),
+  updateActionItem: (appId: number, id: number, aiId: number, data: Record<string, unknown>) =>
+    client.patch(`/apps/${appId}/hr/business-reviews/${id}/action-items/${aiId}`, data),
+  deleteActionItem: (appId: number, id: number, aiId: number) =>
+    client.delete(`/apps/${appId}/hr/business-reviews/${id}/action-items/${aiId}`),
+  addMemberComment: (appId: number, id: number, body: string) =>
+    client.post(`/apps/${appId}/hr/business-reviews/${id}/member-comments`, { body }),
+  deleteMemberComment: (appId: number, id: number, commentId: number) =>
+    client.delete(`/apps/${appId}/hr/business-reviews/${id}/member-comments/${commentId}`),
 });
 
 // ── Tasks ────────────────────────────────────────────────────

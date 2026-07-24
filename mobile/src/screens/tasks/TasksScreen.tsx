@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApi } from '../../hooks/useApi';
 import { useWorkspace } from '../../contexts/WorkspaceContext';
+import { useHasTeam } from '../../contexts/HasTeamContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { AppColors } from '../../utils/colors';
 import TaskCard from '../../components/tasks/TaskCard';
@@ -44,8 +45,8 @@ export default function TasksScreen() {
   const navigation = useNavigation<Nav>();
   const insets = useSafeAreaInsets();
 
-  const isAdmin = workspace?.role === 'super_admin' || workspace?.role === 'admin';
-  const STATUS_FILTERS = isAdmin
+  const { canSeeTeamContent } = useHasTeam();
+  const STATUS_FILTERS = canSeeTeamContent
     ? ['All', 'My Tasks', 'My Team', 'Open', 'In Progress', 'Blocked', 'Done', 'Cancelled']
     : ['All', 'My Tasks', 'Open', 'In Progress', 'Blocked', 'Done', 'Cancelled'];
 
