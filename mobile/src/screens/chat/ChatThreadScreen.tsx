@@ -13,6 +13,9 @@ import { useApi } from '../../hooks/useApi';
 import { getSocket } from '../../lib/socket';
 import { AppColors } from '../../utils/colors';
 import { ChatStackParamList } from '../../navigation/types';
+import { apiErrorMessage } from '../../utils/apiError';
+import { showAlert } from '../../components/common/AlertModal';
+import LoadError from '../../components/common/LoadError';
 
 type Nav = NativeStackNavigationProp<ChatStackParamList, 'ChatThread'>;
 type Rt = RouteProp<ChatStackParamList, 'ChatThread'>;
@@ -31,10 +34,12 @@ export default function ChatThreadScreen() {
   const myUserIdRef = useRef<number | null>(null);
   const [messages, setMessages] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState('');
   const [editingId, setEditingId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
+    setLoading(true);
     try {
       const [meRes, msgRes] = await Promise.all([
         api.me.getProfile(),
@@ -42,7 +47,9 @@ export default function ChatThreadScreen() {
       ]);
       myUserIdRef.current = meRes.data?.id ?? meRes.data?.user_id ?? null;
       setMessages(msgRes.data ?? []);
-    } catch {
+      setError(null);
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Could not load this conversation.'));
     } finally {
       setLoading(false);
     }
@@ -94,13 +101,18 @@ export default function ChatThreadScreen() {
   const send = () => {
     if (!text.trim()) return;
     if (editingId) {
-      api.chat.editMessage(params.appId, editingId, text.trim()).catch(() => {});
+      api.chat.editMessage(params.appId, editingId, text.trim())
+        .catch((err) => showAlert('Could not edit message', apiErrorMessage(err)));
       setEditingId(null);
       setText('');
       return;
     }
     const socket = getSocket();
-    socket?.emit('send_message', { conversation_id: params.conversationId, body: text.trim() });
+    if (!socket) {
+      showAlert('Not connected', 'Chat connection is not ready yet. Please wait a moment and try again.');
+      return;
+    }
+    socket.emit('send_message', { conversation_id: params.conversationId, body: text.trim() });
     setText('');
   };
 
@@ -108,14 +120,14 @@ export default function ChatThreadScreen() {
     if (m.deleted_at) return;
     const isMine = myUserIdRef.current != null && String(m.sender_id) === String(myUserIdRef.current);
     const options: Array<{ text: string; onPress?: () => void; style?: 'destructive' | 'cancel' }> = [
-      { text: '👍 React', onPress: () => api.chat.reactToMessage(params.appId, m.id, '👍').catch(() => {}) },
-      { text: '❤️ React', onPress: () => api.chat.reactToMessage(params.appId, m.id, '❤️').catch(() => {}) },
+      { text: '👍 React', onPress: () => api.chat.reactToMessage(params.appId, m.id, '👍').catch((err) => showAlert('Could not react', apiErrorMessage(err))) },
+      { text: '❤️ React', onPress: () => api.chat.reactToMessage(params.appId, m.id, '❤️').catch((err) => showAlert('Could not react', apiErrorMessage(err))) },
     ];
     if (isMine) {
       options.push({ text: 'Edit', onPress: () => { setEditingId(m.id); setText(m.body); } });
       options.push({
         text: 'Delete', style: 'destructive',
-        onPress: () => api.chat.deleteMessage(params.appId, m.id).catch(() => {}),
+        onPress: () => api.chat.deleteMessage(params.appId, m.id).catch((err) => showAlert('Could not delete message', apiErrorMessage(err))),
       });
     }
     options.push({ text: 'Cancel', style: 'cancel' });
@@ -123,9 +135,10 @@ export default function ChatThreadScreen() {
   };
 
   if (loading) return <ActivityIndicator style={{ flex: 1 }} color={colors.primary} />;
+  if (error) return <LoadError message={error} onRetry={load} />;
 
   return (
-    <KeyboardAvoidingView style={[s.container, { paddingTop: insets.top }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={[s.container, { paddingTop: insets.top }]} behavior="padding">
       <View style={s.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn}>
           <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />

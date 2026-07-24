@@ -8,6 +8,9 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { useApi } from '../../hooks/useApi';
 import { AppColors } from '../../utils/colors';
 import { MoreStackParamList } from '../../navigation/types';
+import { apiErrorMessage } from '../../utils/apiError';
+import { showAlert } from '../../components/common/AlertModal';
+import LoadError from '../../components/common/LoadError';
 
 type Nav = NativeStackNavigationProp<MoreStackParamList, 'BusinessReviewDetail'>;
 type Rt = RouteProp<MoreStackParamList, 'BusinessReviewDetail'>;
@@ -22,14 +25,18 @@ export default function BusinessReviewDetailScreen() {
 
   const [review, setReview] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [newComment, setNewComment] = useState('');
   const [posting, setPosting] = useState(false);
 
   const load = useCallback(async () => {
+    setLoading(true);
     try {
       const res = await api.businessReviews.get(params.appId, params.reviewId);
       setReview(res.data);
-    } catch {
+      setError(null);
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Could not load this review.'));
     } finally {
       setLoading(false);
     }
@@ -44,19 +51,21 @@ export default function BusinessReviewDetailScreen() {
       await api.businessReviews.addMemberComment(params.appId, params.reviewId, newComment.trim());
       setNewComment('');
       await load();
-    } catch {
+    } catch (err) {
+      showAlert('Could not post comment', apiErrorMessage(err));
     } finally {
       setPosting(false);
     }
   };
 
   if (loading) return <ActivityIndicator style={{ flex: 1 }} color={colors.primary} />;
+  if (error) return <LoadError message={error} onRetry={load} />;
   if (!review) return null;
 
   const actionItems = review.action_items ?? review.actionItems ?? [];
 
   return (
-    <KeyboardAvoidingView style={[s.container, { paddingTop: insets.top }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={[s.container, { paddingTop: insets.top }]} behavior="padding">
       <View style={s.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn}>
           <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />

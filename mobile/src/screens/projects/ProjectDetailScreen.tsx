@@ -8,6 +8,9 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { useApi } from '../../hooks/useApi';
 import { AppColors } from '../../utils/colors';
 import { MoreStackParamList } from '../../navigation/types';
+import { apiErrorMessage } from '../../utils/apiError';
+import { showAlert } from '../../components/common/AlertModal';
+import LoadError from '../../components/common/LoadError';
 
 type Nav = NativeStackNavigationProp<MoreStackParamList, 'ProjectDetail'>;
 type Rt = RouteProp<MoreStackParamList, 'ProjectDetail'>;
@@ -24,10 +27,12 @@ export default function ProjectDetailScreen() {
   const [milestones, setMilestones] = useState<any[]>([]);
   const [comments, setComments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [newComment, setNewComment] = useState('');
   const [posting, setPosting] = useState(false);
 
   const load = useCallback(async () => {
+    setLoading(true);
     try {
       const [pRes, mRes, cRes] = await Promise.all([
         api.projects.get(params.appId, params.projectId),
@@ -37,7 +42,9 @@ export default function ProjectDetailScreen() {
       setProject(pRes.data);
       setMilestones(mRes.data?.items ?? mRes.data ?? []);
       setComments(cRes.data?.items ?? cRes.data ?? []);
-    } catch {
+      setError(null);
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Could not load this project.'));
     } finally {
       setLoading(false);
     }
@@ -52,17 +59,19 @@ export default function ProjectDetailScreen() {
       await api.projects.createComment(params.appId, params.projectId, newComment.trim());
       setNewComment('');
       await load();
-    } catch {
+    } catch (err) {
+      showAlert('Could not post comment', apiErrorMessage(err));
     } finally {
       setPosting(false);
     }
   };
 
   if (loading) return <ActivityIndicator style={{ flex: 1 }} color={colors.primary} />;
+  if (error) return <LoadError message={error} onRetry={load} />;
   if (!project) return null;
 
   return (
-    <KeyboardAvoidingView style={[s.container, { paddingTop: insets.top }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={[s.container, { paddingTop: insets.top }]} behavior="padding">
       <View style={s.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn}>
           <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />

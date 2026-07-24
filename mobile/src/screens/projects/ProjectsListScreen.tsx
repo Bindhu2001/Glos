@@ -9,6 +9,8 @@ import { useWorkspace } from '../../contexts/WorkspaceContext';
 import { useApi } from '../../hooks/useApi';
 import { AppColors } from '../../utils/colors';
 import { MoreStackParamList } from '../../navigation/types';
+import { apiErrorMessage } from '../../utils/apiError';
+import LoadError from '../../components/common/LoadError';
 
 type Nav = NativeStackNavigationProp<MoreStackParamList, 'ProjectsList'>;
 
@@ -30,6 +32,7 @@ export default function ProjectsListScreen() {
   const [projects, setProjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async (isRefresh = false) => {
     if (!workspace?.id) return;
@@ -37,7 +40,9 @@ export default function ProjectsListScreen() {
     try {
       const res = await api.projects.list(workspace.id);
       setProjects(res.data?.items ?? res.data ?? []);
-    } catch {
+      setError(null);
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Could not load projects.'));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -58,6 +63,8 @@ export default function ProjectsListScreen() {
 
       {loading ? (
         <ActivityIndicator style={{ flex: 1 }} color={colors.primary} />
+      ) : error ? (
+        <LoadError message={error} onRetry={() => load()} />
       ) : (
         <ScrollView
           contentContainerStyle={s.list}

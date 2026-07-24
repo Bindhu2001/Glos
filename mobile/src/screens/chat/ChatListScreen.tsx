@@ -11,6 +11,8 @@ import { useApi } from '../../hooks/useApi';
 import { getSocket } from '../../lib/socket';
 import { AppColors } from '../../utils/colors';
 import { ChatStackParamList } from '../../navigation/types';
+import { apiErrorMessage } from '../../utils/apiError';
+import LoadError from '../../components/common/LoadError';
 
 type Nav = NativeStackNavigationProp<ChatStackParamList, 'ChatList'>;
 
@@ -40,6 +42,7 @@ export default function ChatListScreen() {
   const [conversations, setConversations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async (isRefresh = false) => {
     if (!workspace?.id) return;
@@ -47,7 +50,9 @@ export default function ChatListScreen() {
     try {
       const res = await api.chat.listConversations(workspace.id);
       setConversations(res.data ?? []);
-    } catch {
+      setError(null);
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Could not load conversations.'));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -93,6 +98,8 @@ export default function ChatListScreen() {
 
       {loading ? (
         <ActivityIndicator style={{ flex: 1 }} color={colors.primary} />
+      ) : error ? (
+        <LoadError message={error} onRetry={() => load()} />
       ) : (
         <ScrollView
           contentContainerStyle={s.list}

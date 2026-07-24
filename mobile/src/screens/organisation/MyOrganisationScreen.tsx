@@ -7,6 +7,8 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { useWorkspace } from '../../contexts/WorkspaceContext';
 import { useApi } from '../../hooks/useApi';
 import { AppColors } from '../../utils/colors';
+import { apiErrorMessage } from '../../utils/apiError';
+import LoadError from '../../components/common/LoadError';
 
 function parseCoreValues(raw?: string): string[] {
   if (!raw) return [];
@@ -23,13 +25,17 @@ export default function MyOrganisationScreen() {
 
   const [org, setOrg] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!workspace?.id) return;
+    setLoading(true);
     try {
       const res = await api.organisation.get(workspace.id);
       setOrg(res.data);
-    } catch {
+      setError(null);
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Could not load organisation details.'));
     } finally {
       setLoading(false);
     }
@@ -38,6 +44,7 @@ export default function MyOrganisationScreen() {
   useEffect(() => { load(); }, [load]);
 
   if (loading) return <ActivityIndicator style={{ flex: 1 }} color={colors.primary} />;
+  if (error) return <LoadError message={error} onRetry={load} />;
   if (!org) return null;
 
   const coreValues = parseCoreValues(org.core_values);

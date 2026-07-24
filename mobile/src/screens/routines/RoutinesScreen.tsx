@@ -8,6 +8,8 @@ import { useWorkspace } from '../../contexts/WorkspaceContext';
 import { useHasTeam } from '../../contexts/HasTeamContext';
 import { useApi } from '../../hooks/useApi';
 import { AppColors } from '../../utils/colors';
+import { apiErrorMessage } from '../../utils/apiError';
+import LoadError from '../../components/common/LoadError';
 
 type RView = 'my' | 'team';
 
@@ -23,6 +25,7 @@ export default function RoutinesScreen() {
   const [view, setView] = useState<RView>('my');
   const [stats, setStats] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async (v: RView) => {
     if (!workspace?.id) return;
@@ -35,8 +38,10 @@ export default function RoutinesScreen() {
         const res = await api.routines.getTeamDashboard(workspace.id, 'week');
         setStats(res.data?.members ?? res.data?.routine_stats ?? []);
       }
-    } catch {
+      setError(null);
+    } catch (err) {
       setStats([]);
+      setError(apiErrorMessage(err, 'Could not load routines.'));
     } finally {
       setLoading(false);
     }
@@ -67,6 +72,8 @@ export default function RoutinesScreen() {
 
       {loading ? (
         <ActivityIndicator style={{ flex: 1 }} color={colors.primary} />
+      ) : error ? (
+        <LoadError message={error} onRetry={() => load(view)} />
       ) : (
         <ScrollView contentContainerStyle={s.list} showsVerticalScrollIndicator={false}>
           {stats.length === 0 ? (

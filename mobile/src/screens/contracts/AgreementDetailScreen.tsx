@@ -8,6 +8,8 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { useApi } from '../../hooks/useApi';
 import { AppColors } from '../../utils/colors';
 import { MoreStackParamList } from '../../navigation/types';
+import { apiErrorMessage } from '../../utils/apiError';
+import LoadError from '../../components/common/LoadError';
 
 type Nav = NativeStackNavigationProp<MoreStackParamList, 'AgreementDetail'>;
 type Rt = RouteProp<MoreStackParamList, 'AgreementDetail'>;
@@ -22,12 +24,16 @@ export default function AgreementDetailScreen() {
 
   const [agreement, setAgreement] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    setLoading(true);
     try {
       const res = await api.contracts.getAgreement(params.appId, params.agreementId);
       setAgreement(res.data);
-    } catch {
+      setError(null);
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Could not load this agreement.'));
     } finally {
       setLoading(false);
     }
@@ -36,6 +42,7 @@ export default function AgreementDetailScreen() {
   useEffect(() => { load(); }, [load]);
 
   if (loading) return <ActivityIndicator style={{ flex: 1 }} color={colors.primary} />;
+  if (error) return <LoadError message={error} onRetry={load} />;
   if (!agreement) return null;
 
   return (

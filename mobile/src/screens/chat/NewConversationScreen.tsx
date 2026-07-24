@@ -8,6 +8,9 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { useApi } from '../../hooks/useApi';
 import { AppColors } from '../../utils/colors';
 import { ChatStackParamList } from '../../navigation/types';
+import { apiErrorMessage } from '../../utils/apiError';
+import { showAlert } from '../../components/common/AlertModal';
+import LoadError from '../../components/common/LoadError';
 
 type Nav = NativeStackNavigationProp<ChatStackParamList, 'NewConversation'>;
 type Rt = RouteProp<ChatStackParamList, 'NewConversation'>;
@@ -28,16 +31,26 @@ export default function NewConversationScreen() {
 
   const [members, setMembers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<number[]>([]);
   const [groupName, setGroupName] = useState('');
   const [creating, setCreating] = useState(false);
 
-  useEffect(() => {
-    api.members.list(params.appId)
-      .then((res) => setMembers(res.data?.items ?? res.data ?? []))
-      .catch(() => setMembers([]))
+  const load = useCallback(() => {
+    setLoading(true);
+    Promise.all([api.members.list(params.appId), api.me.getProfile()])
+      .then(([membersRes, meRes]) => {
+        const myId = meRes.data?.id ?? meRes.data?.user_id;
+        const all = membersRes.data?.items ?? membersRes.data ?? [];
+        // Exclude self — you can't start a direct/group chat with only yourself.
+        setMembers(all.filter((m: any) => String(m.user_id) !== String(myId)));
+        setError(null);
+      })
+      .catch((err) => setError(apiErrorMessage(err, 'Could not load members.')))
       .finally(() => setLoading(false));
   }, [params.appId]);
+
+  useEffect(() => { load(); }, [load]);
 
   const toggle = (userId: number) => {
     setSelected((prev) => (prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]));
@@ -58,7 +71,8 @@ export default function NewConversationScreen() {
       const conv = res.data;
       const name = conv.display_name ?? conv.name ?? 'Conversation';
       navigation.replace('ChatThread', { conversationId: conv.id, appId: params.appId, title: name });
-    } catch {
+    } catch (err) {
+      showAlert('Could not start conversation', apiErrorMessage(err));
     } finally {
       setCreating(false);
     }
@@ -86,6 +100,10 @@ export default function NewConversationScreen() {
 
       {loading ? (
         <ActivityIndicator style={{ flex: 1 }} color={colors.primary} />
+      ) : error ? (
+        <LoadError message={error} onRetry={load} />
+      ) : members.length === 0 ? (
+        <Text style={s.emptyText}>No other members in this workspace yet.</Text>
       ) : (
         <ScrollView contentContainerStyle={s.list}>
           {members.map((m) => {
@@ -131,6 +149,7 @@ function makeStyles(c: AppColors) {
       paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, color: c.textPrimary,
     },
     list: { padding: 16, gap: 4 },
+    emptyText: { textAlign: 'center', marginTop: 40, fontSize: 13, color: c.textMuted },
     row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10 },
     checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 1.5, borderColor: c.border, alignItems: 'center', justifyContent: 'center' },
     checkboxActive: { backgroundColor: c.primary, borderColor: c.primary },

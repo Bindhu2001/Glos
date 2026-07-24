@@ -145,7 +145,7 @@ export default function DashboardScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [unread, setUnread] = useState(0);
   const [dashView, setDashView] = useState<DashView>('my');
-  const [mgrScope, setMgrScope] = useState<'direct' | 'all'>('direct');
+  const [mgrScope, setMgrScope] = useState<'direct' | 'all' | 'admin'>('direct');
   const [viewAs, setViewAs] = useState<number | null>(null);
   const { loading, loadError, run } = useLoadWithTimeout();
 
@@ -413,20 +413,26 @@ export default function DashboardScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* Sub-manager scope switch — only shown for hasTeam members (not admins) who manage other managers */}
-            {!isAdmin && (teamData?.sub_managers?.length ?? 0) > 0 && (
+            {/* Scope switch — matches web TeamDashboard.jsx's Direct Reportees / Entire Team / All Members select */}
+            {!isAdmin && (
               <View style={s.scopeRow}>
                 <TouchableOpacity
                   style={[s.scopeBtn, mgrScope === 'direct' && s.scopeBtnActive]}
                   onPress={() => { setMgrScope('direct'); setViewAs(null); }}
                 >
-                  <Text style={[s.scopeBtnTxt, mgrScope === 'direct' && s.scopeBtnTxtActive]}>My Direct Team</Text>
+                  <Text style={[s.scopeBtnTxt, mgrScope === 'direct' && s.scopeBtnTxtActive]}>Direct Reportees</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[s.scopeBtn, mgrScope === 'all' && s.scopeBtnActive]}
                   onPress={() => { setMgrScope('all'); setViewAs(null); }}
                 >
-                  <Text style={[s.scopeBtnTxt, mgrScope === 'all' && s.scopeBtnTxtActive]}>Whole Org (incl. sub-teams)</Text>
+                  <Text style={[s.scopeBtnTxt, mgrScope === 'all' && s.scopeBtnTxtActive]}>Entire Team</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[s.scopeBtn, mgrScope === 'admin' && s.scopeBtnActive]}
+                  onPress={() => { setMgrScope('admin'); setViewAs(null); }}
+                >
+                  <Text style={[s.scopeBtnTxt, mgrScope === 'admin' && s.scopeBtnTxtActive]}>All Members</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -703,7 +709,7 @@ function makeStyles(c: AppColors) {
     scopeRow: { flexDirection: 'row', gap: 8, marginHorizontal: 16, marginTop: 10 },
     scopeBtn: { flex: 1, paddingVertical: 8, borderRadius: 10, alignItems: 'center', backgroundColor: c.gray50, borderWidth: 1, borderColor: c.border },
     scopeBtnActive: { backgroundColor: c.primary, borderColor: c.primary },
-    scopeBtnTxt: { fontSize: 12, fontWeight: '700', color: c.textSecondary },
+    scopeBtnTxt: { fontSize: 10.5, fontWeight: '700', color: c.textSecondary, textAlign: 'center' },
     scopeBtnTxtActive: { color: '#fff' },
     viewAsRow: { marginTop: 10 },
     viewAsChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, backgroundColor: c.surface, borderWidth: 1, borderColor: c.border },

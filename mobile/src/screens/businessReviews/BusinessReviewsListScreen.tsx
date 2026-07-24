@@ -9,6 +9,8 @@ import { useWorkspace } from '../../contexts/WorkspaceContext';
 import { useApi } from '../../hooks/useApi';
 import { AppColors } from '../../utils/colors';
 import { MoreStackParamList } from '../../navigation/types';
+import { apiErrorMessage } from '../../utils/apiError';
+import LoadError from '../../components/common/LoadError';
 
 type Nav = NativeStackNavigationProp<MoreStackParamList, 'BusinessReviewsList'>;
 
@@ -25,6 +27,7 @@ export default function BusinessReviewsListScreen() {
   const [reviews, setReviews] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async (isRefresh = false) => {
     if (!workspace?.id) return;
@@ -32,7 +35,9 @@ export default function BusinessReviewsListScreen() {
     try {
       const res = await api.businessReviews.list(workspace.id, { attendee_only: workspace.role === 'member' ? 'true' : undefined });
       setReviews(res.data?.reviews ?? res.data ?? []);
-    } catch {
+      setError(null);
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Could not load business reviews.'));
     } finally {
       setLoading(false);
       setRefreshing(false);

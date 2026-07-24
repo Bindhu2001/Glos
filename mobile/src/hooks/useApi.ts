@@ -37,7 +37,12 @@ function bindApiGroup<T extends Record<string, (...args: any[]) => any>>(
   factory: (client: AxiosInstance) => T,
 ): T {
   return new Proxy({} as T, {
-    get(_target, prop: string) {
+    get(_target, prop) {
+      // Guard 'then'/symbols so this proxy is never mistaken for a thenable
+      // (e.g. if a caller does `await api.projects` instead of a method call) —
+      // otherwise JS's implicit thenable check would call a function that
+      // throws instead of just returning undefined like a normal object would.
+      if (typeof prop !== 'string' || prop === 'then') return undefined;
       return async (...args: any[]) => {
         const client = await mkClient();
         return (factory(client) as any)[prop](...args);
