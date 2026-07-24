@@ -79,7 +79,9 @@ export default function CreatePostScreen() {
         const items: any[] = Array.isArray(r.data) ? r.data : (r.data?.items ?? []);
         setRoles(items.map((r: any) => ({ id: r.id, name: r.name })));
       }
-    } catch {}
+    } catch (err: any) {
+      showAlert('Could not load list', err?.response?.data?.error ?? err?.message ?? 'Please try again.');
+    }
     setListsLoading(false);
   };
 

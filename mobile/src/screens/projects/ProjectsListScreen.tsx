@@ -14,11 +14,14 @@ import LoadError from '../../components/common/LoadError';
 
 type Nav = NativeStackNavigationProp<MoreStackParamList, 'ProjectsList'>;
 
+// Matches qa-production/frontend/src/pages/workspace/Projects.jsx STATUS_META
 const STATUS_COLORS: Record<string, string> = {
-  on_track: '#059669',
-  at_risk: '#d97706',
-  delayed: '#dc2626',
-  completed: '#6b7280',
+  active: '#38bdf8',
+  completed: '#4ade80',
+  overdue: '#f87171',
+  near_end: '#fbbf24',
+  inactive: '#94a3b8',
+  deleted: '#f87171',
 };
 
 export default function ProjectsListScreen() {
@@ -93,7 +96,7 @@ export default function ProjectsListScreen() {
                     <Text style={s.cardTitle}>{p.name}</Text>
                     <View style={s.metaRow}>
                       {p.client_name ? <Text style={s.metaText}>{p.client_name}</Text> : null}
-                      <Text style={s.metaText}>{p.task_completion_pct ?? p.pct ?? 0}% tasks done</Text>
+                      <Text style={s.metaText}>{p.total_tasks ?? 0} task{p.total_tasks === 1 ? '' : 's'} · {p.completion_pct ?? 0}% done</Text>
                     </View>
                   </View>
                   <View style={[s.statusBadge, { backgroundColor: statusColor + '18', borderColor: statusColor + '44' }]}>

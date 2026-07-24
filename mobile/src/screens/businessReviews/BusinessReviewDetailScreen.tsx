@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, ActivityIndicator, TextInput, KeyboardAvoidingView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
@@ -9,12 +9,20 @@ import { useApi } from '../../hooks/useApi';
 import { AppColors } from '../../utils/colors';
 import { MoreStackParamList } from '../../navigation/types';
 import { apiErrorMessage } from '../../utils/apiError';
-import { showAlert } from '../../components/common/AlertModal';
 import LoadError from '../../components/common/LoadError';
 
 type Nav = NativeStackNavigationProp<MoreStackParamList, 'BusinessReviewDetail'>;
 type Rt = RouteProp<MoreStackParamList, 'BusinessReviewDetail'>;
 
+const TYPE_LABELS: Record<string, string> = {
+  daily: 'Daily Check-In',
+  weekly: 'Weekly Review',
+  monthly: 'Monthly Review',
+};
+
+// Backend GET /:id (routes/hr/business_reviews.js) returns
+// { review, manager, reportees, attendees, assessments, actionItems, reporteeData, projects, routineCompletion }
+// — NOT a flat review object, so this must be destructured accordingly.
 export default function BusinessReviewDetailScreen() {
   const navigation = useNavigation<Nav>();
   const { params } = useRoute<Rt>();
@@ -24,16 +32,18 @@ export default function BusinessReviewDetailScreen() {
   const s = useMemo(() => makeStyles(colors), [colors]);
 
   const [review, setReview] = useState<any>(null);
+  const [manager, setManager] = useState<any>(null);
+  const [actionItems, setActionItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [newComment, setNewComment] = useState('');
-  const [posting, setPosting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const res = await api.businessReviews.get(params.appId, params.reviewId);
-      setReview(res.data);
+      setReview(res.data?.review ?? null);
+      setManager(res.data?.manager ?? null);
+      setActionItems(res.data?.actionItems ?? []);
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, 'Could not load this review.'));
@@ -44,33 +54,17 @@ export default function BusinessReviewDetailScreen() {
 
   useEffect(() => { load(); }, [load]);
 
-  const postComment = async () => {
-    if (!newComment.trim()) return;
-    setPosting(true);
-    try {
-      await api.businessReviews.addMemberComment(params.appId, params.reviewId, newComment.trim());
-      setNewComment('');
-      await load();
-    } catch (err) {
-      showAlert('Could not post comment', apiErrorMessage(err));
-    } finally {
-      setPosting(false);
-    }
-  };
-
   if (loading) return <ActivityIndicator style={{ flex: 1 }} color={colors.primary} />;
   if (error) return <LoadError message={error} onRetry={load} />;
   if (!review) return null;
 
-  const actionItems = review.action_items ?? review.actionItems ?? [];
-
   return (
-    <KeyboardAvoidingView style={[s.container, { paddingTop: insets.top }]} behavior="padding">
+    <View style={[s.container, { paddingTop: insets.top }]}>
       <View style={s.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn}>
           <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
         </TouchableOpacity>
-        <Text style={s.title} numberOfLines={1}>{review.type ?? 'Business Review'}</Text>
+        <Text style={s.title} numberOfLines={1}>{TYPE_LABELS[review.type] ?? review.type ?? 'Business Review'}</Text>
         <View style={{ width: 36 }} />
       </View>
 
@@ -86,13 +80,50 @@ export default function BusinessReviewDetailScreen() {
               <Text style={s.metaVal}>{new Date(review.review_date).toLocaleDateString()}</Text>
             </View>
           ) : null}
-          {review.manager ? (
+          {review.period_start && review.period_end ? (
+            <View style={s.metaRow}>
+              <Text style={s.metaLabel}>Period</Text>
+              <Text style={s.metaVal}>{new Date(review.period_start).toLocaleDateString()} – {new Date(review.period_end).toLocaleDateString()}</Text>
+            </View>
+          ) : null}
+          {manager?.name ? (
             <View style={s.metaRow}>
               <Text style={s.metaLabel}>Manager</Text>
-              <Text style={s.metaVal}>{review.manager?.name ?? review.manager}</Text>
+              <Text style={s.metaVal}>{manager.name}</Text>
             </View>
           ) : null}
         </View>
+
+        {review.meeting_notes ? (
+          <>
+            <Text style={s.sectionHead}>MEETING NOTES</Text>
+            <Text style={s.paragraph}>{review.meeting_notes}</Text>
+          </>
+        ) : null}
+        {review.summary ? (
+          <>
+            <Text style={s.sectionHead}>SUMMARY</Text>
+            <Text style={s.paragraph}>{review.summary}</Text>
+          </>
+        ) : null}
+        {review.achievements ? (
+          <>
+            <Text style={s.sectionHead}>ACHIEVEMENTS</Text>
+            <Text style={s.paragraph}>{review.achievements}</Text>
+          </>
+        ) : null}
+        {review.key_risks ? (
+          <>
+            <Text style={s.sectionHead}>KEY RISKS</Text>
+            <Text style={s.paragraph}>{review.key_risks}</Text>
+          </>
+        ) : null}
+        {review.improvement_plans ? (
+          <>
+            <Text style={s.sectionHead}>IMPROVEMENT PLANS</Text>
+            <Text style={s.paragraph}>{review.improvement_plans}</Text>
+          </>
+        ) : null}
 
         <Text style={s.sectionHead}>ACTION ITEMS</Text>
         {actionItems.length === 0 ? (
@@ -105,25 +136,15 @@ export default function BusinessReviewDetailScreen() {
                 size={18}
                 color={a.status === 'done' ? colors.success : colors.gray400}
               />
-              <Text style={s.itemTitle}>{a.title ?? a.description}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={s.itemTitle}>{a.title ?? a.description}</Text>
+                {a.assigned_to_user_id_name ? <Text style={s.metaLabel}>{a.assigned_to_user_id_name}</Text> : null}
+              </View>
             </View>
           ))
         )}
       </ScrollView>
-
-      <View style={[s.commentBar, { paddingBottom: insets.bottom + 8 }]}>
-        <TextInput
-          style={s.commentInput}
-          placeholder="Add a comment..."
-          placeholderTextColor={colors.textMuted}
-          value={newComment}
-          onChangeText={setNewComment}
-        />
-        <TouchableOpacity style={s.sendBtn} onPress={postComment} disabled={posting}>
-          <Ionicons name="send" size={16} color="#fff" />
-        </TouchableOpacity>
-      </View>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
@@ -146,19 +167,10 @@ function makeStyles(c: AppColors) {
     metaRow: { flexDirection: 'row', justifyContent: 'space-between' },
     metaLabel: { fontSize: 12, color: c.textMuted },
     metaVal: { fontSize: 12, fontWeight: '700', color: c.textPrimary, textTransform: 'capitalize' },
-    sectionHead: { fontSize: 11, fontWeight: '700', color: c.textMuted, letterSpacing: 1, marginTop: 8, marginBottom: 10 },
+    sectionHead: { fontSize: 11, fontWeight: '700', color: c.textMuted, letterSpacing: 1, marginTop: 8, marginBottom: 8 },
+    paragraph: { fontSize: 13, color: c.textSecondary, lineHeight: 19, marginBottom: 8 },
     emptyText: { fontSize: 13, color: c.textMuted, marginBottom: 12 },
     itemRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
     itemTitle: { fontSize: 13, fontWeight: '600', color: c.textPrimary, flex: 1 },
-    commentBar: {
-      flexDirection: 'row', alignItems: 'center', gap: 8,
-      paddingHorizontal: 16, paddingTop: 8,
-      backgroundColor: c.surface, borderTopWidth: 1, borderTopColor: c.border,
-    },
-    commentInput: {
-      flex: 1, backgroundColor: c.background, borderRadius: 20, borderWidth: 1, borderColor: c.border,
-      paddingHorizontal: 14, paddingVertical: 9, fontSize: 13, color: c.textPrimary,
-    },
-    sendBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: c.primary, alignItems: 'center', justifyContent: 'center' },
   });
 }

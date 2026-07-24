@@ -14,6 +14,12 @@ import LoadError from '../../components/common/LoadError';
 
 type Nav = NativeStackNavigationProp<MoreStackParamList, 'BusinessReviewsList'>;
 
+const TYPE_LABELS: Record<string, string> = {
+  daily: 'Daily Check-In',
+  weekly: 'Weekly Review',
+  monthly: 'Monthly Review',
+};
+
 const STATUS_COLORS: Record<string, string> = { open: '#059669', closed: '#6b7280' };
 
 export default function BusinessReviewsListScreen() {
@@ -83,7 +89,7 @@ export default function BusinessReviewsListScreen() {
                     <Ionicons name="bar-chart-outline" size={20} color="#d97706" />
                   </View>
                   <View style={s.cardBody}>
-                    <Text style={s.cardTitle}>{r.type ?? 'Review'} · {r.review_date ? new Date(r.review_date).toLocaleDateString() : ''}</Text>
+                    <Text style={s.cardTitle}>{TYPE_LABELS[r.type] ?? r.type ?? 'Review'} · {r.review_date ? new Date(r.review_date).toLocaleDateString() : ''}</Text>
                     <View style={s.metaRow}>
                       {r.manager?.name ?? r.manager ? <Text style={s.metaText}>{r.manager?.name ?? r.manager}</Text> : null}
                     </View>
