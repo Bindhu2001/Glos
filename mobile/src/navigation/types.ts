@@ -73,6 +73,7 @@ export type MoreStackParamList = {
   BusinessReviewsList: undefined;
   BusinessReviewDetail: { reviewId: number; appId: number };
   MyOrganisation: undefined;
+  EmployeeHierarchy: undefined;
   ReportsList: undefined;
   TaskReports: undefined;
 };

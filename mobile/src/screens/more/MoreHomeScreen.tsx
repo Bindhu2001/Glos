@@ -24,6 +24,7 @@ export default function MoreHomeScreen() {
     { screen: 'Routines' as const, icon: 'calendar-outline' as const, label: 'Routines', desc: 'Recurring team routines', color: '#059669', show: canSeeTeamContent },
     { screen: 'BusinessReviewsList' as const, icon: 'bar-chart-outline' as const, label: 'Business Reviews', desc: 'Periodic team performance reviews', color: '#d97706', show: canSeeTeamContent },
     { screen: 'MyOrganisation' as const, icon: 'business-outline' as const, label: 'My Organisation', desc: 'View organisation details', color: '#7c3aed', show: !isAdmin },
+    { screen: 'EmployeeHierarchy' as const, icon: 'git-network-outline' as const, label: 'Employee Hierarchy', desc: 'Who reports to whom across the org', color: '#0d9488', show: true },
     { screen: 'ReportsList' as const, icon: 'stats-chart-outline' as const, label: 'Reports', desc: 'Task, project, performance and other reports', color: '#dc2626', show: true },
   ].filter((m) => m.show);
 

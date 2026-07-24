@@ -45,6 +45,7 @@ import RoutinesScreen from '../screens/routines/RoutinesScreen';
 import BusinessReviewsListScreen from '../screens/businessReviews/BusinessReviewsListScreen';
 import BusinessReviewDetailScreen from '../screens/businessReviews/BusinessReviewDetailScreen';
 import MyOrganisationScreen from '../screens/organisation/MyOrganisationScreen';
+import EmployeeHierarchyScreen from '../screens/organisation/EmployeeHierarchyScreen';
 import ReportsListScreen from '../screens/reports/ReportsListScreen';
 
 const Tab = createBottomTabNavigator<MainTabParamList>();
@@ -122,6 +123,7 @@ function MoreNavigator() {
       <MoreStack.Screen name="BusinessReviewsList" component={BusinessReviewsListScreen} />
       <MoreStack.Screen name="BusinessReviewDetail" component={BusinessReviewDetailScreen} />
       <MoreStack.Screen name="MyOrganisation" component={MyOrganisationScreen} />
+      <MoreStack.Screen name="EmployeeHierarchy" component={EmployeeHierarchyScreen} />
       <MoreStack.Screen name="ReportsList" component={ReportsListScreen} />
       <MoreStack.Screen name="TaskReports" component={TaskReportsScreen} />
     </MoreStack.Navigator>
