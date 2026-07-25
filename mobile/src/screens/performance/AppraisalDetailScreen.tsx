@@ -73,6 +73,7 @@ export default function AppraisalDetailScreen() {
   const [employeeResponse, setEmployeeResponse] = useState<any>(null);
   const [managerResponse, setManagerResponse] = useState<any>(null);
   const [finalDecision, setFinalDecision] = useState<any>(null);
+  const [reviewSummaries, setReviewSummaries] = useState<any[]>([]);
   const [isEmployee, setIsEmployee] = useState(false);
   const [isManager, setIsManager] = useState(false);
   const [isFinalApprover, setIsFinalApprover] = useState(false);
@@ -102,6 +103,7 @@ export default function AppraisalDetailScreen() {
     setEmployeeResponse(data.employee_response ?? null);
     setManagerResponse(data.manager_response ?? null);
     setFinalDecision(data.final_decision ?? null);
+    setReviewSummaries(data.review_summaries ?? []);
     setIsEmployee(!!data.is_employee);
     setIsManager(!!data.is_manager);
     setIsFinalApprover(!!data.is_final_approver);
@@ -209,6 +211,35 @@ export default function AppraisalDetailScreen() {
         </View>
 
         <ScrollView contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
+
+          {/* Linked performance reviews for this appraisal's included cycles */}
+          {reviewSummaries.length > 0 && (
+            <>
+              <Text style={s.sectionTitle}>Linked Reviews</Text>
+              {reviewSummaries.map((rs: any, i: number) => {
+                const cycle = rs.cycle ?? rs;
+                const review = rs.review ?? rs.performance_review ?? null;
+                return (
+                  <TouchableOpacity
+                    key={rs.id ?? cycle.id ?? i}
+                    style={s.responseBlock}
+                    activeOpacity={review?.id ? 0.7 : 1}
+                    onPress={() => review?.id && navigation.navigate('ReviewDetail', { reviewId: review.id, appId })}
+                  >
+                    <Text style={s.responseLabel}>{cycle.cycle_name ?? `Cycle #${cycle.id ?? i + 1}`}{cycle.year ? ` (${cycle.year})` : ''}</Text>
+                    {review ? (
+                      <>
+                        <Text style={s.responseText}>Status: {(review.status ?? '').replace(/_/g, ' ') || '—'}</Text>
+                        {review.final_score != null && <Text style={s.responseText}>Final Score: {review.final_score}/5</Text>}
+                      </>
+                    ) : (
+                      <Text style={s.responseText}>No review found for this cycle</Text>
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </>
+          )}
 
           {/* Employee self-reflection form */}
           {canEmployeeRespond && (

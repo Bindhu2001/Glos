@@ -86,10 +86,10 @@ export default function RoutinesScreen() {
     setLoading(true);
     try {
       if (v === 'my') {
-        const res = await api.routines.getDashboard(workspace.id, 'week');
+        const res = await api.routines.getDashboard(workspace.id, { period: 'week' });
         setMyStats(res.data?.routine_stats ?? []);
       } else {
-        const res = await api.routines.getTeamDashboard(workspace.id, 'week');
+        const res = await api.routines.getTeamDashboard(workspace.id, { period: 'week' });
         setReportees(res.data?.reportees ?? []);
       }
       setError(null);

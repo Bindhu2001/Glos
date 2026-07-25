@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import React, { useEffect, useState, useMemo } from 'react';
+import { NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { StatusBar } from 'expo-status-bar';
 import { useAuth } from '@clerk/clerk-expo';
 import { RootStackParamList } from './types';
 import { useWorkspace } from '../contexts/WorkspaceContext';
-import { ThemeProvider } from '../contexts/ThemeContext';
+import { ThemeProvider, useTheme } from '../contexts/ThemeContext';
 import AuthNavigator from './AuthNavigator';
 import MainNavigator from './MainNavigator';
 import WorkspaceSelectScreen from '../screens/workspace/WorkspaceSelectScreen';
@@ -20,6 +21,25 @@ function Navigator() {
   const { isSignedIn, isLoaded } = useAuth();
   const { workspace, setWorkspace, isLoading: workspaceLoading } = useWorkspace();
   const [clerkTimedOut, setClerkTimedOut] = useState(false);
+  const { colors, isDark } = useTheme();
+
+  // React Navigation defaults to a light background for the native screen
+  // container regardless of app theme — without this, every push/pop
+  // transition flashes white behind the screen for a frame in dark mode.
+  const navTheme = useMemo(() => {
+    const base = isDark ? DarkTheme : DefaultTheme;
+    return {
+      ...base,
+      colors: {
+        ...base.colors,
+        background: colors.background,
+        card: colors.surface,
+        text: colors.textPrimary,
+        border: colors.border,
+        primary: colors.primary,
+      },
+    };
+  }, [isDark, colors]);
 
   useEffect(() => {
     if (isLoaded && !isSignedIn && workspace) {
@@ -49,8 +69,9 @@ function Navigator() {
 
   return (
     <>
-      <NavigationContainer>
-        <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
+      <NavigationContainer theme={navTheme}>
+        <Stack.Navigator screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
           {!effectivelySignedIn ? (
             <Stack.Screen name="Auth" component={AuthNavigator} />
           ) : !workspace ? (

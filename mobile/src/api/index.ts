@@ -46,8 +46,18 @@ export const dashboardApi = (client: AxiosInstance) => ({
     client.get(`/apps/${appId}/hr/dashboard/manager-task-stats`, { params }),
   getManagerActivityByMember: (appId: number, params?: Record<string, unknown>) =>
     client.get(`/apps/${appId}/hr/dashboard/manager-activity-by-member`, { params }),
+  getTeamActivityByMember: (appId: number, params?: Record<string, unknown>) =>
+    client.get(`/apps/${appId}/hr/dashboard/team-activity-by-member`, { params }),
   isTopHierarchy: (appId: number) =>
     client.get(`/apps/${appId}/hr/dashboard/is-top-hierarchy`),
+  getLeaderboard: (appId: number) =>
+    client.get(`/apps/${appId}/hr/dashboard/leaderboard`),
+  getMonthHours: (appId: number, month: string) =>
+    client.get(`/apps/${appId}/hr/dashboard/month-hours`, { params: { month } }),
+  getUpcomingEvents: (appId: number) =>
+    client.get(`/apps/${appId}/hr/members/upcoming-events`),
+  sendWish: (appId: number, userId: number, type: 'birthday' | 'work_anniversary') =>
+    client.post(`/apps/${appId}/hr/members/${userId}/wish`, { type }),
 });
 
 // ── Projects ─────────────────────────────────────────────────
@@ -112,6 +122,16 @@ export const contractsApi = (client: AxiosInstance) => ({
     client.delete(`/apps/${appId}/hr/contracts/agreements/${id}/services/${casId}`),
   listServices: (appId: number, params?: Record<string, unknown>) =>
     client.get(`/apps/${appId}/hr/contracts/services`, { params }),
+  listClients: (appId: number, params?: Record<string, unknown>) =>
+    client.get(`/apps/${appId}/hr/contracts/clients`, { params }),
+  getClient: (appId: number, id: number) =>
+    client.get(`/apps/${appId}/hr/contracts/clients/${id}`),
+  createClient: (appId: number, data: Record<string, unknown>) =>
+    client.post(`/apps/${appId}/hr/contracts/clients`, data),
+  updateClient: (appId: number, id: number, data: Record<string, unknown>) =>
+    client.patch(`/apps/${appId}/hr/contracts/clients/${id}`, data),
+  deleteClient: (appId: number, id: number) =>
+    client.delete(`/apps/${appId}/hr/contracts/clients/${id}`),
   getReports: (appId: number, params?: Record<string, unknown>) =>
     client.get(`/apps/${appId}/hr/contracts/reports`, { params }),
 });
@@ -120,10 +140,10 @@ export const contractsApi = (client: AxiosInstance) => ({
 export const routinesApi = (client: AxiosInstance) => ({
   getAvailable: (appId: number, assigneeId?: number) =>
     client.get(`/apps/${appId}/hr/routines/available`, { params: assigneeId ? { assigneeId } : undefined }),
-  getDashboard: (appId: number, period?: string) =>
-    client.get(`/apps/${appId}/hr/routines/dashboard`, { params: period ? { period } : undefined }),
-  getTeamDashboard: (appId: number, period?: string, viewAs?: number) =>
-    client.get(`/apps/${appId}/hr/routines/team-dashboard`, { params: { ...(period ? { period } : {}), ...(viewAs ? { view_as: viewAs } : {}) } }),
+  getDashboard: (appId: number, params?: { period?: string; mode?: 'month'; month?: string; userId?: number }) =>
+    client.get(`/apps/${appId}/hr/routines/dashboard`, { params }),
+  getTeamDashboard: (appId: number, params?: { period?: string; mode?: 'month'; month?: string; scope?: 'direct' | 'all' | 'admin'; view_as?: number }) =>
+    client.get(`/apps/${appId}/hr/routines/team-dashboard`, { params }),
 });
 
 // ── Chat ─────────────────────────────────────────────────────
@@ -157,7 +177,8 @@ export const businessReviewsApi = (client: AxiosInstance) => ({
   update: (appId: number, id: number, data: Record<string, unknown>) =>
     client.patch(`/apps/${appId}/hr/business-reviews/${id}`, data),
   delete: (appId: number, id: number) => client.delete(`/apps/${appId}/hr/business-reviews/${id}`),
-  close: (appId: number, id: number) => client.post(`/apps/${appId}/hr/business-reviews/${id}/close`),
+  close: (appId: number, id: number, data?: Record<string, unknown>) =>
+    client.post(`/apps/${appId}/hr/business-reviews/${id}/close`, data ?? {}),
   dashboard: (appId: number, params?: Record<string, unknown>) =>
     client.get(`/apps/${appId}/hr/business-reviews/dashboard`, { params }),
   scopeOptions: (appId: number) => client.get(`/apps/${appId}/hr/business-reviews/scope-options`),
@@ -255,20 +276,32 @@ export const feedApi = (client: AxiosInstance) => ({
 export const performanceApi = (client: AxiosInstance) => ({
   getCycles: (appId: number) =>
     client.get(`/apps/${appId}/hr/performance-review-cycles`),
+  getWorkflowStatus: (appId: number, params?: Record<string, unknown>) =>
+    client.get(`/apps/${appId}/hr/workflow-status`, { params }),
   getGoals: (appId: number, params?: Record<string, unknown>) =>
     client.get(`/apps/${appId}/hr/goals`, { params }),
   createGoal: (appId: number, data: Record<string, unknown>) =>
     client.post(`/apps/${appId}/hr/goals`, data),
+  updateGoal: (appId: number, goalId: number, data: Record<string, unknown>) =>
+    client.patch(`/apps/${appId}/hr/goals/${goalId}`, data),
+  toggleGoalActive: (appId: number, goalId: number) =>
+    client.patch(`/apps/${appId}/hr/goals/${goalId}/toggle-active`),
   submitGoalForApproval: (appId: number, goalId: number) =>
     client.post(`/apps/${appId}/hr/goals/${goalId}/submit-for-approval`),
   approveGoal: (appId: number, goalId: number) =>
     client.patch(`/apps/${appId}/hr/goals/${goalId}/approve`),
   rejectGoal: (appId: number, goalId: number, rejection_reason: string) =>
     client.patch(`/apps/${appId}/hr/goals/${goalId}/reject`, { rejection_reason }),
+  approveGoalsBatch: (appId: number, goal_ids: number[]) =>
+    client.patch(`/apps/${appId}/hr/goals/approve-batch`, { goal_ids }),
+  rejectGoalsBatch: (appId: number, goal_ids: number[], rejection_reason: string) =>
+    client.patch(`/apps/${appId}/hr/goals/reject-batch`, { goal_ids, rejection_reason }),
   listTeamGoals: (appId: number) =>
     client.get(`/apps/${appId}/hr/goals/team`),
   getAppraisals: (appId: number, params?: Record<string, unknown>) =>
     client.get(`/apps/${appId}/hr/appraisals`, { params }),
+  createAppraisal: (appId: number, data: Record<string, unknown>) =>
+    client.post(`/apps/${appId}/hr/appraisals`, data),
   listMyReviews: (appId: number) =>
     client.get(`/apps/${appId}/hr/performance-reviews`),
   listPendingForMe: (appId: number) =>
@@ -319,6 +352,8 @@ export const appreciationsApi = (client: AxiosInstance) => ({
     client.get(`/apps/${appId}/hr/appreciations/for/${userId}`),
   getByCycle: (appId: number, cycleId: number) =>
     client.get(`/apps/${appId}/hr/appreciations/by-cycle/${cycleId}`),
+  getTeamStats: (appId: number, params: { scope: 'direct' | 'all' | 'admin' | 'team'; month?: string; view_as?: number }) =>
+    client.get(`/apps/${appId}/hr/appreciations/team-stats`, { params }),
 });
 
 // ── Time Logs ────────────────────────────────────────────────

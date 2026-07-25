@@ -11,6 +11,15 @@ import { MoreStackParamList } from '../../navigation/types';
 
 type Nav = NativeStackNavigationProp<MoreStackParamList, 'MoreHome'>;
 
+interface MenuItem {
+  screen: keyof MoreStackParamList;
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  desc: string;
+  color: string;
+  show: boolean;
+}
+
 export default function MoreHomeScreen() {
   const navigation = useNavigation<Nav>();
   const { colors } = useTheme();
@@ -18,15 +27,32 @@ export default function MoreHomeScreen() {
   const s = useMemo(() => makeStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
 
-  const MENU_ITEMS = [
-    { screen: 'ProjectsList' as const, icon: 'folder-open-outline' as const, label: 'Projects', desc: 'Track project milestones and progress', color: '#0891b2', show: true },
-    { screen: 'AgreementsList' as const, icon: 'document-text-outline' as const, label: 'Agreements', desc: 'Client contracts and compliance', color: '#4f46e5', show: true },
-    { screen: 'Routines' as const, icon: 'calendar-outline' as const, label: 'Routines', desc: 'Recurring team routines', color: '#059669', show: canSeeTeamContent },
-    { screen: 'BusinessReviewsList' as const, icon: 'bar-chart-outline' as const, label: 'Business Reviews', desc: 'Periodic team performance reviews', color: '#d97706', show: canSeeTeamContent },
-    { screen: 'MyOrganisation' as const, icon: 'business-outline' as const, label: 'My Organisation', desc: 'View organisation details', color: '#7c3aed', show: !isAdmin },
-    { screen: 'EmployeeHierarchy' as const, icon: 'git-network-outline' as const, label: 'Employee Hierarchy', desc: 'Who reports to whom across the org', color: '#0d9488', show: true },
-    { screen: 'ReportsList' as const, icon: 'stats-chart-outline' as const, label: 'Reports', desc: 'Task, project, performance and other reports', color: '#dc2626', show: true },
-  ].filter((m) => m.show);
+  const rawSections: { label: string; items: MenuItem[] }[] = [
+    {
+      label: 'WORK',
+      items: [
+        { screen: 'ProjectsList', icon: 'folder-open-outline', label: 'Projects', desc: 'Track project milestones and progress', color: '#0891b2', show: true },
+        { screen: 'AgreementsList', icon: 'document-text-outline', label: 'Agreements', desc: 'Client contracts and compliance', color: '#4f46e5', show: true },
+        { screen: 'Routines', icon: 'calendar-outline', label: 'Routines', desc: 'Recurring team routines', color: '#059669', show: canSeeTeamContent },
+        { screen: 'BusinessReviewsList', icon: 'bar-chart-outline', label: 'Business Reviews', desc: 'Periodic team performance reviews', color: '#d97706', show: canSeeTeamContent },
+      ],
+    },
+    {
+      label: 'ORGANISATION',
+      items: [
+        { screen: 'MyOrganisation', icon: 'business-outline', label: 'My Organisation', desc: 'View organisation details', color: '#7c3aed', show: !isAdmin },
+      ],
+    },
+    {
+      label: 'INSIGHTS',
+      items: [
+        { screen: 'ReportsList', icon: 'stats-chart-outline', label: 'Reports', desc: 'Task, project, performance and other reports', color: '#dc2626', show: true },
+      ],
+    },
+  ];
+  const sections = rawSections
+    .map((sec) => ({ ...sec, items: sec.items.filter((m) => m.show) }))
+    .filter((sec) => sec.items.length > 0);
 
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
@@ -35,22 +61,29 @@ export default function MoreHomeScreen() {
         <Text style={s.subtitle}>Projects, agreements and more</Text>
       </View>
       <ScrollView contentContainerStyle={s.list} showsVerticalScrollIndicator={false}>
-        {MENU_ITEMS.map((item) => (
-          <TouchableOpacity
-            key={item.screen}
-            style={s.card}
-            activeOpacity={0.7}
-            onPress={() => navigation.navigate(item.screen)}
-          >
-            <View style={[s.iconBox, { backgroundColor: item.color + '18' }]}>
-              <Ionicons name={item.icon} size={22} color={item.color} />
+        {sections.map((sec) => (
+          <View key={sec.label} style={s.section}>
+            <Text style={s.sectionLabel}>{sec.label}</Text>
+            <View style={s.sectionCard}>
+              {sec.items.map((item, i) => (
+                <TouchableOpacity
+                  key={item.screen}
+                  style={[s.row, i < sec.items.length - 1 && s.rowDivider]}
+                  activeOpacity={0.6}
+                  onPress={() => navigation.navigate(item.screen as any)}
+                >
+                  <View style={[s.iconBox, { backgroundColor: item.color + '18' }]}>
+                    <Ionicons name={item.icon} size={20} color={item.color} />
+                  </View>
+                  <View style={s.rowBody}>
+                    <Text style={s.rowLabel}>{item.label}</Text>
+                    <Text style={s.rowDesc}>{item.desc}</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color={colors.gray400} />
+                </TouchableOpacity>
+              ))}
             </View>
-            <View style={s.cardBody}>
-              <Text style={s.cardLabel}>{item.label}</Text>
-              <Text style={s.cardDesc}>{item.desc}</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={colors.gray400} />
-          </TouchableOpacity>
+          </View>
         ))}
       </ScrollView>
     </View>
@@ -67,15 +100,25 @@ function makeStyles(c: AppColors) {
     },
     title: { fontSize: 28, fontFamily: SERIF, color: c.textPrimary },
     subtitle: { fontSize: 12, color: c.textSecondary, marginTop: 4 },
-    list: { padding: 16, gap: 10 },
-    card: {
-      flexDirection: 'row', alignItems: 'center', gap: 14,
-      backgroundColor: c.surface, borderRadius: 14, padding: 16,
-      borderWidth: 1, borderColor: c.border,
+    list: { padding: 16, paddingTop: 12, paddingBottom: 32 },
+    section: { marginBottom: 20 },
+    sectionLabel: {
+      fontSize: 11, fontWeight: '700', color: c.textMuted, letterSpacing: 1,
+      marginBottom: 8, marginLeft: 4,
     },
-    iconBox: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-    cardBody: { flex: 1, gap: 2 },
-    cardLabel: { fontSize: 15, fontWeight: '700', color: c.textPrimary },
-    cardDesc: { fontSize: 12, color: c.textSecondary },
+    sectionCard: {
+      backgroundColor: c.surface, borderRadius: 16,
+      borderWidth: 1, borderColor: c.border, overflow: 'hidden',
+      shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 4, elevation: 1,
+    },
+    row: {
+      flexDirection: 'row', alignItems: 'center', gap: 14,
+      paddingHorizontal: 16, paddingVertical: 14,
+    },
+    rowDivider: { borderBottomWidth: 1, borderBottomColor: c.border },
+    iconBox: { width: 42, height: 42, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+    rowBody: { flex: 1, gap: 2 },
+    rowLabel: { fontSize: 15, fontWeight: '700', color: c.textPrimary },
+    rowDesc: { fontSize: 12, color: c.textSecondary },
   });
 }

@@ -15,13 +15,57 @@ import { formatDuration } from '../../utils/format';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import LoadError from '../../components/common/LoadError';
 import Logo from '../../components/common/Logo';
+import Avatar from '../../components/common/Avatar';
 import { useLoadWithTimeout } from '../../hooks/useLoadWithTimeout';
+import BusinessReviewCalendarWidget from './widgets/BusinessReviewCalendarWidget';
+import HoursTrendWidget from './widgets/HoursTrendWidget';
+import LeaderboardWidget, { LeaderboardEntry } from './widgets/LeaderboardWidget';
+import TaskCompletionWidget from './widgets/TaskCompletionWidget';
+import TeamRoutineAnalysisWidget from './widgets/TeamRoutineAnalysisWidget';
+import AppreciationsFeedbackWidget from './widgets/AppreciationsFeedbackWidget';
+import TeamActivityTableWidget from './widgets/TeamActivityTableWidget';
+
+const PROJECT_STATUS_COLORS: Record<string, string> = {
+  active: '#38bdf8', completed: '#4ade80', overdue: '#f87171', near_end: '#fbbf24', inactive: '#94a3b8', deleted: '#f87171',
+};
+
+interface TrendPoint { minutes: number; day?: string; week?: string; month?: string }
+
+interface PendingReview { id: number; status: string; cycle_name?: string; periodicity?: string; year?: number }
+
+interface UpcomingEvent { type: 'birthday' | 'work_anniversary'; name: string; user_id: number; date: string; days_until: number; years?: number }
+
+interface RoutineStat {
+  routine: { id: number; description: string; periodicity: string };
+  role_name?: string;
+  combined_pct: number | null;
+  status: 'not_applicable' | 'not_started' | 'pending' | 'incomplete' | 'completed';
+  tasks_completed: number;
+  tasks_total: number;
+}
+
+interface TeamRoutineReportee {
+  user: { id: number; first_name?: string; last_name?: string; email?: string };
+  overall_efficiency: number | null;
+  routine_stats: RoutineStat[];
+  is_manager?: boolean;
+}
 
 interface DashData {
-  tasks?: { total?: number; done?: number; in_progress?: number; open?: number; blocked?: number; overdue?: number; completion_rate?: number };
+  user?: { id?: number };
+  primary_role_name?: string | null;
+  roles?: Array<{ id?: number; title?: string; level?: number }>;
+  has_reportees?: boolean;
+  tasks?: {
+    total?: number; done?: number; in_progress?: number; open?: number; blocked?: number; overdue?: number; completion_rate?: number;
+    completed_today?: number; due_today?: number; today_planned_minutes?: number; today_on_time_pct?: number;
+  };
   hours?: { today?: { minutes?: number }; this_week?: { minutes?: number }; this_month?: { minutes?: number } };
+  daily_trend?: TrendPoint[];
+  weekly_trend?: TrendPoint[];
+  monthly_trend?: TrendPoint[];
+  my_pending_reviews?: PendingReview[];
   latest_review?: any;
-  roles?: any[];
 }
 
 interface TeamMember {
@@ -31,17 +75,19 @@ interface TeamMember {
   last_name?: string;
   email?: string;
   tasks_total?: number;
-  tasks?: { total?: number };
+  tasks?: { total?: number; not_started_est_hrs?: number; in_progress_est_hrs?: number };
   tasks_done?: number;
   hours_this_week?: number;
   hours?: number;
   overdue?: number;
+  glos_score?: { total?: number };
   engagement_trend?: Array<{ score?: number }>;
 }
 
 interface TeamDashData {
   members?: TeamMember[];
   sub_managers?: Array<{ user_id: number; name: string }>;
+  min_hours_per_week?: number;
   team_totals?: {
     member_count?: number;
     hours_this_week?: number;
@@ -122,9 +168,11 @@ function getMemberTasks(m: TeamMember): number {
 }
 
 function getMemberScore(m: TeamMember): number {
-  const trend = m.engagement_trend ?? [];
-  const raw = trend.length > 0 ? (trend[trend.length - 1]?.score ?? 0) : 0;
-  return Math.round(raw * 10);
+  return m.glos_score?.total ?? 0;
+}
+
+function getMemberWorkloadHrs(m: TeamMember): number {
+  return (m.tasks?.not_started_est_hrs ?? 0) + (m.tasks?.in_progress_est_hrs ?? 0);
 }
 
 const PODIUM_ICONS = ['🥇', '🥈', '🥉'];
@@ -141,6 +189,7 @@ export default function DashboardScreen() {
   const [data, setData] = useState<DashData | null>(null);
   const [teamData, setTeamData] = useState<TeamDashData | null>(null);
   const [userName, setUserName] = useState('');
+  const [myPhotoUrl, setMyPhotoUrl] = useState<string | null>(null);
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [unread, setUnread] = useState(0);
@@ -149,25 +198,79 @@ export default function DashboardScreen() {
   const [viewAs, setViewAs] = useState<number | null>(null);
   const { loading, loadError, run } = useLoadWithTimeout();
 
+  // My Dashboard extra widgets
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [events, setEvents] = useState<UpcomingEvent[]>([]);
+  const [wished, setWished] = useState<Set<number>>(new Set());
+  const [myProjects, setMyProjects] = useState<any[]>([]);
+  const [myRoutines, setMyRoutines] = useState<RoutineStat[]>([]);
+
+  // Team Dashboard extra widgets
+  const [teamRoutines, setTeamRoutines] = useState<TeamRoutineReportee[]>([]);
+  const [apprMembers, setApprMembers] = useState<any[]>([]);
+  const [apprTotals, setApprTotals] = useState<{ total_appr: number; total_fb: number }>({ total_appr: 0, total_fb: 0 });
+
+  const currentMonth = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  }, []);
+
+  const loadMyExtras = useCallback(async (appId: number) => {
+    const [lb, ev, proj, rout] = await Promise.all([
+      api.dashboard.getLeaderboard(appId).catch(() => ({ data: {} })),
+      api.dashboard.getUpcomingEvents(appId).catch(() => ({ data: {} })),
+      api.projects.list(appId, { mine: true }).catch(() => ({ data: [] })),
+      api.routines.getDashboard(appId, { mode: 'month', month: currentMonth }).catch(() => ({ data: {} })),
+    ]);
+    const lbMembers = lb.data?.members ?? [];
+    setLeaderboard(lbMembers.map((m: any) => ({
+      id: m.user?.id, name: [m.user?.first_name, m.user?.last_name].filter(Boolean).join(' ') || m.user?.email || 'Member',
+      score: m.glos_score?.total ?? 0, categories: m.glos_score?.categories ?? [],
+    })));
+    setEvents((ev.data?.events ?? []).filter((e: UpcomingEvent) => !(e.type === 'work_anniversary' && e.years === 0)));
+    const projItems = proj.data?.items ?? proj.data ?? [];
+    setMyProjects(Array.isArray(projItems) ? projItems : []);
+    setMyRoutines(rout.data?.routine_stats ?? []);
+  }, [api, currentMonth]);
+
+  // Admins default to the "admin" scope (equivalent to the old full-org
+  // getTeamDashboard view) but can still switch to Direct Reportees/Entire
+  // Team if they also manage people directly — matches web's scope dropdown,
+  // which shows all three options to admins and only the first two to plain
+  // managers (see Sidebar.jsx / TeamDashboard.jsx showAdminScope logic).
+  useEffect(() => {
+    if (isAdmin) setMgrScope('admin');
+  }, [isAdmin]);
+
   const loadTeamData = useCallback(async () => {
     if (!workspace || !canSeeTeamContent) return;
-    const teamRes = isAdmin
-      ? await api.dashboard.getTeamDashboard(workspace.id)
-      : await api.dashboard.getManagerDashboard(workspace.id, mgrScope, undefined, viewAs ?? undefined);
+    const teamRes = await api.dashboard.getManagerDashboard(workspace.id, mgrScope, undefined, viewAs ?? undefined);
     setTeamData(teamRes.data);
-  }, [workspace, api, isAdmin, canSeeTeamContent, mgrScope, viewAs]);
+
+    const apiScope = mgrScope === 'all' ? 'team' : mgrScope;
+    const scopeViewAs = mgrScope === 'all' && viewAs != null ? viewAs : undefined;
+    const [routRes, apprRes] = await Promise.all([
+      api.routines.getTeamDashboard(workspace.id, { mode: 'month', month: currentMonth, scope: mgrScope, view_as: scopeViewAs }).catch(() => ({ data: {} })),
+      api.appreciations.getTeamStats(workspace.id, { scope: apiScope, month: currentMonth, view_as: scopeViewAs }).catch(() => ({ data: {} })),
+    ]);
+    setTeamRoutines(routRes.data?.reportees ?? []);
+    setApprMembers(apprRes.data?.members ?? []);
+    setApprTotals({ total_appr: apprRes.data?.total_appr ?? 0, total_fb: apprRes.data?.total_fb ?? 0 });
+  }, [workspace, api, isAdmin, canSeeTeamContent, mgrScope, viewAs, currentMonth]);
 
   const load = useCallback(async () => {
     if (!workspace) return;
     // Team/manager content is available to admins and to members who have
     // reportees in the org chart — matches QA web's Sidebar.jsx `hasTeam` gate.
-    const [appRes, dash, notif, me, feedRes] = await Promise.all([
+    const [appRes, dash, notif, me, feedRes, , , membersRes] = await Promise.all([
       api.workspace.getApp(workspace.id),
       api.dashboard.getMyDashboard(workspace.id),
       api.notifications.unreadCount(),
       api.me.getProfile(),
       api.feed.list(workspace.id),
+      loadMyExtras(workspace.id),
       loadTeamData(),
+      api.workspace.getMembers(workspace.id).catch(() => ({ data: {} })),
     ]);
     const appData = appRes.data?.app ?? appRes.data;
     if (appData && appData.is_active === false) { setWorkspace(null); return; }
@@ -176,13 +279,27 @@ export default function DashboardScreen() {
     const first = me.data?.firstName ?? me.data?.first_name ?? '';
     const last = me.data?.lastName ?? me.data?.last_name ?? '';
     setUserName(`${first} ${last}`.trim() || first);
+    const myId = me.data?.id;
+    const memberRows: any[] = membersRes.data?.members ?? membersRes.data?.items ?? membersRes.data ?? [];
+    const myMember = memberRows.find((m: any) => String(m.user_id ?? m.id) === String(myId));
+    setMyPhotoUrl(myMember?.photo_url ?? null);
     const items = feedRes.data?.items ?? feedRes.data ?? [];
     setFeed(Array.isArray(items) ? items.slice(0, 3) : []);
-  }, [workspace, api, setWorkspace, loadTeamData]);
+  }, [workspace, api, setWorkspace, loadMyExtras, loadTeamData]);
 
   useEffect(() => { run(load); }, [load]);
 
   useEffect(() => { if (dashView === 'Team') loadTeamData(); }, [mgrScope, viewAs]);
+
+  const onWish = useCallback(async (userId: number, type: 'birthday' | 'work_anniversary') => {
+    if (!workspace) return;
+    try {
+      await api.dashboard.sendWish(workspace.id, userId, type);
+      setWished((prev) => new Set(prev).add(userId));
+    } catch {
+      // ignore — non-critical action
+    }
+  }, [workspace, api]);
 
   useFocusEffect(useCallback(() => {
     if (!workspace) return;
@@ -214,13 +331,18 @@ export default function DashboardScreen() {
 
   const tt = teamData?.team_totals;
   const members = teamData?.members ?? [];
+  const minHoursPerWeek = teamData?.min_hours_per_week ?? 40;
 
-  const leaderboard = [...members].sort((a, b) => getMemberScore(b) - getMemberScore(a));
+  const teamLeaderboard: LeaderboardEntry[] = members.map((m) => ({
+    id: m.user_id ?? m.user?.id ?? 0,
+    name: getMemberName(m),
+    score: getMemberScore(m),
+  }));
 
   const workloadSorted = [...members]
-    .sort((a, b) => getMemberTasks(b) - getMemberTasks(a))
-    .slice(0, 5);
-  const workloadMax = Math.max(...workloadSorted.map(getMemberTasks), 1);
+    .sort((a, b) => getMemberWorkloadHrs(b) - getMemberWorkloadHrs(a))
+    .slice(0, 6);
+  const workloadMax = Math.max(...workloadSorted.map(getMemberWorkloadHrs), minHoursPerWeek);
 
   const taskTotal = tt?.team_tasks?.total ?? 0;
   const taskCompleted = tt?.team_tasks?.completed ?? 0;
@@ -236,8 +358,8 @@ export default function DashboardScreen() {
             <Ionicons name="notifications-outline" size={20} color={colors.primary} />
             {unread > 0 && <View style={s.notifDot} />}
           </TouchableOpacity>
-          <TouchableOpacity style={s.avatar} onPress={() => navigation.navigate('ProfileTab')}>
-            <Text style={s.avatarTxt}>{initials(displayName)}</Text>
+          <TouchableOpacity style={s.avatarWrap} onPress={() => navigation.navigate('ProfileTab')}>
+            <Avatar name={displayName} photoUrl={myPhotoUrl} size={36} />
           </TouchableOpacity>
         </View>
       </View>
@@ -280,9 +402,20 @@ export default function DashboardScreen() {
 
             {/* Greeting */}
             <View style={s.greetSection}>
-              <Text style={s.greetLine}>{getGreeting()}</Text>
-              <Text style={s.greetName}>{displayName}</Text>
-              <Text style={s.greetTagline}>— ready when you are.</Text>
+              <View style={s.greetRow}>
+                <TouchableOpacity onPress={() => navigation.navigate('ProfileTab')}>
+                  <Avatar name={displayName} photoUrl={myPhotoUrl} size={56} />
+                </TouchableOpacity>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.greetLine}>{getGreeting()}</Text>
+                  <Text style={s.greetName} numberOfLines={1}>{displayName}</Text>
+                  {(data?.primary_role_name ?? data?.roles?.[0]?.title) ? (
+                    <Text style={s.greetRole}>{data?.primary_role_name ?? data?.roles?.[0]?.title}</Text>
+                  ) : (
+                    <Text style={s.greetTagline}>— ready when you are.</Text>
+                  )}
+                </View>
+              </View>
             </View>
 
             {/* This week logged card */}
@@ -327,6 +460,185 @@ export default function DashboardScreen() {
                 <Text style={s.statSub}>{overdue > 0 ? 'overdue' : 'done'}</Text>
               </View>
             </View>
+
+            {/* Today's Summary */}
+            <View style={s.sectionCard}>
+              <Text style={s.sectionHead}>TODAY'S SUMMARY</Text>
+              <View style={s.todayGrid}>
+                <View style={s.todayCell}>
+                  <Text style={s.todayVal}>{tasks?.completed_today ?? 0}</Text>
+                  <Text style={s.todayLbl}>Tasks Done</Text>
+                </View>
+                <View style={s.todayCell}>
+                  <Text style={s.todayVal}>{formatDuration(todayMins)}</Text>
+                  <Text style={s.todayLbl}>
+                    Hours Logged{tasks?.today_planned_minutes ? ` / ${formatDuration(tasks.today_planned_minutes)}` : ''}
+                  </Text>
+                </View>
+                <View style={s.todayCell}>
+                  <Text style={s.todayVal}>{tasks?.due_today ?? 0}</Text>
+                  <Text style={s.todayLbl}>Due Today</Text>
+                </View>
+                <View style={s.todayCell}>
+                  {(() => {
+                    const otr = tasks?.today_on_time_pct ?? null;
+                    const color = otr == null ? colors.textMuted : otr >= 80 ? colors.success : otr >= 50 ? colors.warning : colors.danger;
+                    return <Text style={[s.todayVal, { color }]}>{otr != null ? `${otr}%` : '—'}</Text>;
+                  })()}
+                  <Text style={s.todayLbl}>On-Time Rate</Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Business Review Calendar */}
+            {workspace && (
+              <BusinessReviewCalendarWidget appId={workspace.id} mode="my" hasReportees={data?.has_reportees} colors={colors} />
+            )}
+
+            {/* Upcoming Events */}
+            {events.length > 0 && (
+              <View style={s.sectionCard}>
+                <Text style={s.sectionHead}>UPCOMING EVENTS (NEXT 15 DAYS)</Text>
+                {events.map((e) => (
+                  <View key={`${e.type}-${e.user_id}-${e.date}`} style={s.eventRow}>
+                    <View style={s.eventIconBox}>
+                      <Ionicons name={e.type === 'birthday' ? 'gift-outline' : 'trophy-outline'} size={16} color={colors.secondary} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={s.eventName}>{e.name}</Text>
+                      <Text style={s.eventSub}>
+                        {e.type === 'birthday' ? 'Birthday' : `Work Anniversary${e.years ? ` · ${e.years}yr` : ''}`}
+                        {' · '}{e.days_until === 0 ? 'Today' : `in ${e.days_until}d`}
+                      </Text>
+                    </View>
+                    {e.days_until === 0 && (
+                      <TouchableOpacity
+                        style={[s.wishBtn, wished.has(e.user_id) && s.wishBtnDone]}
+                        disabled={wished.has(e.user_id)}
+                        onPress={() => onWish(e.user_id, e.type)}
+                      >
+                        <Text style={s.wishBtnTxt}>{wished.has(e.user_id) ? 'Wished' : 'Wish'}</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {/* My Performance Reviews */}
+            {(data?.my_pending_reviews ?? []).length > 0 && (
+              <View style={s.sectionCard}>
+                <Text style={s.sectionHead}>MY PERFORMANCE REVIEWS</Text>
+                {(data!.my_pending_reviews!).slice(0, 2).map((r) => {
+                  const stage = r.status === 'pending_self'
+                    ? { label: 'Self Review Pending', color: colors.warning }
+                    : r.status === 'pending_manager'
+                    ? { label: 'Manager Review Pending', color: colors.primary }
+                    : { label: 'Approval Pending', color: '#8b5cf6' };
+                  return (
+                    <View key={r.id} style={s.reviewRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={s.reviewCycle}>{r.cycle_name ?? 'Review'} {r.year ?? ''}</Text>
+                        <Text style={[s.reviewStage, { color: stage.color }]}>{stage.label}</Text>
+                      </View>
+                      {r.status === 'pending_self' && (
+                        <TouchableOpacity style={s.reviewBtn} onPress={() => navigation.navigate('PerformanceTab')}>
+                          <Text style={s.reviewBtnTxt}>Complete Now</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+
+            {/* Hours Logged Trend */}
+            <HoursTrendWidget
+              daily={data?.daily_trend ?? []}
+              weekly={data?.weekly_trend ?? []}
+              monthly={data?.monthly_trend ?? []}
+              colors={colors}
+            />
+
+            {/* My Projects */}
+            {myProjects.length > 0 && (
+              <View style={s.sectionCard}>
+                <Text style={s.sectionHead}>MY PROJECTS</Text>
+                {myProjects.slice(0, 6).map((p) => {
+                  const statusColor = PROJECT_STATUS_COLORS[p.computed_status] ?? '#6b7280';
+                  const isOwner = p.owner_user_id === data?.user?.id;
+                  return (
+                    <TouchableOpacity
+                      key={p.id}
+                      style={s.projRow}
+                      onPress={() => navigation.navigate('MoreTab', { screen: 'ProjectDetail', params: { projectId: p.id, appId: workspace!.id } })}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <View style={s.projNameRow}>
+                          <Text style={s.projName} numberOfLines={1}>{p.name}</Text>
+                          {isOwner && <View style={s.ownerPill}><Text style={s.ownerPillTxt}>Owner</Text></View>}
+                        </View>
+                        <Text style={s.projSub}>{p.total_tasks ?? 0} tasks · {p.completion_pct ?? 0}% done</Text>
+                      </View>
+                      <View style={[s.projStatusBadge, { backgroundColor: statusColor + '22', borderColor: statusColor + '55' }]}>
+                        <Text style={[s.projStatusTxt, { color: statusColor }]}>{(p.computed_status ?? 'active').replace('_', ' ')}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
+
+            {/* GLOS Leaderboard */}
+            <LeaderboardWidget title="GLOS LEADERBOARD" entries={leaderboard} meId={data?.user?.id} colors={colors} />
+
+            {/* My Routines */}
+            {myRoutines.length > 0 && (
+              <View style={s.sectionCard}>
+                <Text style={s.sectionHead}>MY ROUTINES</Text>
+                {(() => {
+                  const eff = myRoutines.length
+                    ? Math.round((myRoutines.filter((r) => r.status === 'completed').length / myRoutines.length) * 100)
+                    : 0;
+                  const onTrack = myRoutines.filter((r) => r.status === 'completed').length;
+                  const needsAttn = myRoutines.filter((r) => ['pending', 'incomplete', 'not_started'].includes(r.status)).length;
+                  return (
+                    <View style={s.routineKpiRow}>
+                      <View style={s.routineKpiCell}><Text style={[s.routineKpiVal, { color: eff >= 80 ? colors.success : eff >= 50 ? colors.warning : colors.danger }]}>{eff}%</Text><Text style={s.routineKpiLbl}>Efficiency</Text></View>
+                      <View style={s.routineKpiCell}><Text style={s.routineKpiVal}>{onTrack}</Text><Text style={s.routineKpiLbl}>On Track</Text></View>
+                      <View style={s.routineKpiCell}><Text style={[s.routineKpiVal, needsAttn > 0 && { color: colors.danger }]}>{needsAttn}</Text><Text style={s.routineKpiLbl}>Attention</Text></View>
+                      <View style={s.routineKpiCell}><Text style={s.routineKpiVal}>{myRoutines.length}</Text><Text style={s.routineKpiLbl}>Total</Text></View>
+                    </View>
+                  );
+                })()}
+                {myRoutines.slice(0, 6).map((r) => {
+                  const statusColor = r.status === 'completed' ? colors.success : r.status === 'pending' ? colors.warning : r.status === 'incomplete' ? colors.danger : colors.gray400;
+                  return (
+                    <View key={r.routine.id} style={s.routineRow}>
+                      <Text style={s.routineDesc} numberOfLines={1}>{r.routine.description}</Text>
+                      <View style={[s.routineBadge, { backgroundColor: statusColor + '22', borderColor: statusColor + '55' }]}>
+                        <Text style={[s.routineBadgeTxt, { color: statusColor }]}>
+                          {r.combined_pct != null ? `${r.combined_pct}%` : r.status.replace('_', ' ')}
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                })}
+                <TouchableOpacity onPress={() => navigation.navigate('MoreTab', { screen: 'Routines' })}>
+                  <Text style={s.viewAllLink}>View all →</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* Task Completion */}
+            <TaskCompletionWidget
+              total={tasks?.total ?? 0}
+              done={tasks?.done ?? 0}
+              open={tasks?.open ?? 0}
+              overdue={tasks?.overdue ?? 0}
+              blocked={tasks?.blocked ?? 0}
+              colors={colors}
+            />
 
             {/* Switch workspace */}
             <TouchableOpacity style={s.switchRow} onPress={() => setWorkspace(null)}>
@@ -413,30 +725,32 @@ export default function DashboardScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* Scope switch — matches web TeamDashboard.jsx's Direct Reportees / Entire Team / All Members select */}
-            {!isAdmin && (
-              <View style={s.scopeRow}>
-                <TouchableOpacity
-                  style={[s.scopeBtn, mgrScope === 'direct' && s.scopeBtnActive]}
-                  onPress={() => { setMgrScope('direct'); setViewAs(null); }}
-                >
-                  <Text style={[s.scopeBtnTxt, mgrScope === 'direct' && s.scopeBtnTxtActive]}>Direct Reportees</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[s.scopeBtn, mgrScope === 'all' && s.scopeBtnActive]}
-                  onPress={() => { setMgrScope('all'); setViewAs(null); }}
-                >
-                  <Text style={[s.scopeBtnTxt, mgrScope === 'all' && s.scopeBtnTxtActive]}>Entire Team</Text>
-                </TouchableOpacity>
+            {/* Scope switch — matches web TeamDashboard.jsx's Direct Reportees / Entire Team / All Members select.
+                Shown to admins too (they can also have their own hierarchy), not just plain managers;
+                "All Members" is admin-only, matching web's canWrite/owner gate. */}
+            <View style={s.scopeRow}>
+              <TouchableOpacity
+                style={[s.scopeBtn, mgrScope === 'direct' && s.scopeBtnActive]}
+                onPress={() => { setMgrScope('direct'); setViewAs(null); }}
+              >
+                <Text style={[s.scopeBtnTxt, mgrScope === 'direct' && s.scopeBtnTxtActive]}>Direct Reportees</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[s.scopeBtn, mgrScope === 'all' && s.scopeBtnActive]}
+                onPress={() => { setMgrScope('all'); setViewAs(null); }}
+              >
+                <Text style={[s.scopeBtnTxt, mgrScope === 'all' && s.scopeBtnTxtActive]}>Entire Team</Text>
+              </TouchableOpacity>
+              {isAdmin && (
                 <TouchableOpacity
                   style={[s.scopeBtn, mgrScope === 'admin' && s.scopeBtnActive]}
                   onPress={() => { setMgrScope('admin'); setViewAs(null); }}
                 >
                   <Text style={[s.scopeBtnTxt, mgrScope === 'admin' && s.scopeBtnTxtActive]}>All Members</Text>
                 </TouchableOpacity>
-              </View>
-            )}
-            {!isAdmin && mgrScope === 'all' && (teamData?.sub_managers?.length ?? 0) > 0 && (
+              )}
+            </View>
+            {mgrScope === 'all' && (teamData?.sub_managers?.length ?? 0) > 0 && (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.viewAsRow} contentContainerStyle={{ gap: 8, paddingHorizontal: 16 }}>
                 <TouchableOpacity style={[s.viewAsChip, viewAs === null && s.viewAsChipActive]} onPress={() => setViewAs(null)}>
                   <Text style={[s.viewAsChipTxt, viewAs === null && s.viewAsChipTxtActive]}>Everyone</Text>
@@ -504,25 +818,40 @@ export default function DashboardScreen() {
               </View>
             </View>
 
-            {/* Team Workload bars */}
+            {/* Team Workload bars — pending hours (not_started + in_progress est) vs min hours/week */}
             {workloadSorted.length > 0 && (
               <View style={s.sectionCard}>
-                <Text style={s.sectionHead}>TEAM WORKLOAD</Text>
+                <Text style={s.sectionHead}>TEAM WORKLOAD{minHoursPerWeek ? ` (min ${minHoursPerWeek}h/week)` : ''}</Text>
                 {workloadSorted.map((m, idx) => {
                   const name = getMemberName(m);
-                  const taskCount = getMemberTasks(m);
-                  const pct = workloadMax > 0 ? taskCount / workloadMax : 0;
+                  const hrs = getMemberWorkloadHrs(m);
+                  const pct = workloadMax > 0 ? hrs / workloadMax : 0;
+                  const barColor = hrs >= minHoursPerWeek ? colors.danger : hrs >= minHoursPerWeek * 0.2 ? colors.warning : colors.success;
                   return (
                     <View key={m.user_id ?? m.user?.id ?? idx} style={s.workloadRow}>
                       <Text style={s.workloadName} numberOfLines={1}>{name}</Text>
                       <View style={s.workloadBarBg}>
-                        <View style={[s.workloadBarFill, { width: `${Math.round(pct * 100)}%` as any, backgroundColor: colors.primary }]} />
+                        <View style={[s.workloadBarFill, { width: `${Math.round(pct * 100)}%` as any, backgroundColor: barColor }]} />
                       </View>
-                      <Text style={s.workloadCount}>{taskCount}</Text>
+                      <Text style={s.workloadCount}>{hrs.toFixed(1)}h</Text>
                     </View>
                   );
                 })}
               </View>
+            )}
+
+            {/* Team Activity by employee */}
+            <TeamActivityTableWidget appId={workspace!.id} isAdmin={isAdmin} scope={mgrScope} viewAs={viewAs} colors={colors} />
+
+            {/* Routine Analysis */}
+            <TeamRoutineAnalysisWidget reportees={teamRoutines} colors={colors} />
+
+            {/* Appreciations & Feedback */}
+            <AppreciationsFeedbackWidget members={apprMembers} totalAppr={apprTotals.total_appr} totalFb={apprTotals.total_fb} colors={colors} />
+
+            {/* Business Review Calendar (reviews this manager conducts) */}
+            {data?.user?.id != null && (
+              <BusinessReviewCalendarWidget appId={workspace!.id} mode="team" meId={data.user.id} colors={colors} />
             )}
 
             {/* Recent Team Activity */}
@@ -552,38 +881,8 @@ export default function DashboardScreen() {
               </View>
             )}
 
-            {/* Team Leaderboard */}
-            {leaderboard.length > 0 && (
-              <View style={s.sectionCard}>
-                <Text style={s.sectionHead}>TEAM LEADERBOARD</Text>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={{ gap: 12, paddingVertical: 4 }}
-                >
-                  {leaderboard.map((m, idx) => {
-                    const name = getMemberName(m);
-                    const score = getMemberScore(m);
-                    const avColor = idx === 0 ? colors.success
-                      : idx === 1 ? colors.primary
-                      : idx === 2 ? colors.secondary
-                      : colors.gray300;
-                    return (
-                      <View key={m.user_id ?? m.user?.id ?? idx} style={s.lbCard}>
-                        {idx < 3
-                          ? <Text style={s.lbMedal}>{PODIUM_ICONS[idx]}</Text>
-                          : <Text style={s.lbRankNum}>{`#${idx + 1}`}</Text>}
-                        <View style={[s.lbAvatar, { backgroundColor: avColor }]}>
-                          <Text style={s.lbAvatarTxt}>{initials(name)}</Text>
-                        </View>
-                        <Text style={s.lbName} numberOfLines={1}>{name.split(' ')[0]}</Text>
-                        {score > 0 && <Text style={s.lbPts}>{score} pts</Text>}
-                      </View>
-                    );
-                  })}
-                </ScrollView>
-              </View>
-            )}
+            {/* Team Leaderboard — ranked by GLOS score within the current scope */}
+            <LeaderboardWidget title="TEAM LEADERBOARD" entries={teamLeaderboard} meId={data?.user?.id} colors={colors} />
 
             {/* Team Mood */}
             {tt?.team_mood != null && (
@@ -631,8 +930,7 @@ function makeStyles(c: AppColors) {
     topRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
     iconBtn: { width: 36, height: 36, borderRadius: 10, backgroundColor: c.primaryLight, alignItems: 'center', justifyContent: 'center' },
     notifDot: { position: 'absolute', top: 6, right: 6, width: 8, height: 8, borderRadius: 4, backgroundColor: c.danger, borderWidth: 1.5, borderColor: c.surface },
-    avatar: { width: 36, height: 36, borderRadius: 10, backgroundColor: c.primaryLight, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: c.primary + '55' },
-    avatarTxt: { fontSize: 13, fontWeight: '900', color: c.primary },
+    avatarWrap: { borderRadius: 18, borderWidth: 1.5, borderColor: c.primary + '55', overflow: 'hidden' },
 
     viewToggleRow: {
       flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingVertical: 10,
@@ -660,8 +958,10 @@ function makeStyles(c: AppColors) {
     wsLabel: { fontSize: 11, fontWeight: '700', color: c.primary, letterSpacing: 0.5 },
 
     greetSection: { paddingHorizontal: 20, paddingTop: 22, paddingBottom: 4 },
-    greetLine: { fontSize: 32, fontFamily: SERIF, color: c.textPrimary, lineHeight: 40 },
-    greetName: { fontSize: 32, fontFamily: SERIF, color: c.primary, lineHeight: 40 },
+    greetRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+    greetLine: { fontSize: 22, fontFamily: SERIF, color: c.textPrimary, lineHeight: 26 },
+    greetName: { fontSize: 26, fontFamily: SERIF, color: c.primary, lineHeight: 32 },
+    greetRole: { fontSize: 12, color: c.textSecondary, fontWeight: '600', marginTop: 4 },
     greetTagline: { fontSize: 14, color: c.textSecondary, fontStyle: 'italic', marginTop: 6 },
 
     loggedCard: {
@@ -830,5 +1130,48 @@ function makeStyles(c: AppColors) {
     typePillBlue: { backgroundColor: c.primaryLight },
     typePillGreen: { backgroundColor: c.successLight },
     typePillTxt: { fontSize: 10, fontWeight: '700' },
+
+    // Today's Summary
+    todayGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+    todayCell: { width: '47%' },
+    todayVal: { fontSize: 20, fontWeight: '800', color: c.textPrimary, letterSpacing: -0.5 },
+    todayLbl: { fontSize: 10, color: c.textMuted, marginTop: 2 },
+
+    // Upcoming Events
+    eventRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: c.border },
+    eventIconBox: { width: 32, height: 32, borderRadius: 10, backgroundColor: c.infoLight, alignItems: 'center', justifyContent: 'center' },
+    eventName: { fontSize: 12, fontWeight: '700', color: c.textPrimary },
+    eventSub: { fontSize: 11, color: c.textMuted, marginTop: 1 },
+    wishBtn: { backgroundColor: c.primary, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
+    wishBtnDone: { backgroundColor: c.gray300 },
+    wishBtnTxt: { fontSize: 11, fontWeight: '700', color: '#fff' },
+
+    // My Performance Reviews
+    reviewRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: c.border },
+    reviewCycle: { fontSize: 12, fontWeight: '700', color: c.textPrimary },
+    reviewStage: { fontSize: 11, fontWeight: '700', marginTop: 2 },
+    reviewBtn: { backgroundColor: c.primaryLight, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
+    reviewBtnTxt: { fontSize: 11, fontWeight: '700', color: c.primary },
+
+    // My Projects
+    projRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: c.border },
+    projNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    projName: { fontSize: 12, fontWeight: '700', color: c.textPrimary, flexShrink: 1 },
+    ownerPill: { backgroundColor: c.warningLight, paddingHorizontal: 6, paddingVertical: 1, borderRadius: 6 },
+    ownerPillTxt: { fontSize: 9, fontWeight: '700', color: c.warning },
+    projSub: { fontSize: 11, color: c.textMuted, marginTop: 2 },
+    projStatusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1 },
+    projStatusTxt: { fontSize: 10, fontWeight: '700', textTransform: 'capitalize' },
+
+    // My Routines
+    routineKpiRow: { flexDirection: 'row', marginBottom: 12 },
+    routineKpiCell: { flex: 1, alignItems: 'center' },
+    routineKpiVal: { fontSize: 15, fontWeight: '800', color: c.textPrimary },
+    routineKpiLbl: { fontSize: 9, color: c.textMuted, marginTop: 2 },
+    routineRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: c.border },
+    routineDesc: { flex: 1, fontSize: 12, fontWeight: '600', color: c.textPrimary },
+    routineBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1 },
+    routineBadgeTxt: { fontSize: 10, fontWeight: '700', textTransform: 'capitalize' },
+    viewAllLink: { fontSize: 12, fontWeight: '700', color: c.primary, marginTop: 8, textAlign: 'right' },
   });
 }

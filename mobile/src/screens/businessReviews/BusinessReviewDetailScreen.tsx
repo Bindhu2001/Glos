@@ -1,15 +1,19 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, ActivityIndicator, Modal } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useApi } from '../../hooks/useApi';
+import { useHasTeam } from '../../contexts/HasTeamContext';
 import { AppColors } from '../../utils/colors';
 import { MoreStackParamList } from '../../navigation/types';
 import { apiErrorMessage } from '../../utils/apiError';
+import { showAlert } from '../../components/common/AlertModal';
 import LoadError from '../../components/common/LoadError';
+import Input from '../../components/common/Input';
+import Button from '../../components/common/Button';
 
 type Nav = NativeStackNavigationProp<MoreStackParamList, 'BusinessReviewDetail'>;
 type Rt = RouteProp<MoreStackParamList, 'BusinessReviewDetail'>;
@@ -18,6 +22,7 @@ const TYPE_LABELS: Record<string, string> = {
   daily: 'Daily Check-In',
   weekly: 'Weekly Review',
   monthly: 'Monthly Review',
+  other: 'Custom Review',
 };
 
 // Backend GET /:id (routes/hr/business_reviews.js) returns
@@ -28,6 +33,7 @@ export default function BusinessReviewDetailScreen() {
   const { params } = useRoute<Rt>();
   const { colors } = useTheme();
   const api = useApi();
+  const { isAdmin } = useHasTeam();
   const insets = useSafeAreaInsets();
   const s = useMemo(() => makeStyles(colors), [colors]);
 
@@ -36,14 +42,26 @@ export default function BusinessReviewDetailScreen() {
   const [actionItems, setActionItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [meId, setMeId] = useState<number | null>(null);
+
+  const [closeModal, setCloseModal] = useState(false);
+  const [summary, setSummary] = useState('');
+  const [achievements, setAchievements] = useState('');
+  const [keyRisks, setKeyRisks] = useState('');
+  const [improvementPlans, setImprovementPlans] = useState('');
+  const [closing, setClosing] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.businessReviews.get(params.appId, params.reviewId);
+      const [res, meRes] = await Promise.all([
+        api.businessReviews.get(params.appId, params.reviewId),
+        api.me.getProfile(),
+      ]);
       setReview(res.data?.review ?? null);
       setManager(res.data?.manager ?? null);
       setActionItems(res.data?.actionItems ?? []);
+      setMeId(meRes.data?.id ?? meRes.data?.user?.id ?? null);
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, 'Could not load this review.'));
@@ -54,7 +72,47 @@ export default function BusinessReviewDetailScreen() {
 
   useEffect(() => { load(); }, [load]);
 
-  if (loading) return <ActivityIndicator style={{ flex: 1 }} color={colors.primary} />;
+  const canManage = isAdmin || (meId != null && review?.manager_user_id === meId);
+
+  const deleteReview = () => {
+    showAlert(
+      'Delete Review',
+      'Are you sure you want to delete this business review? This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete', style: 'destructive', onPress: async () => {
+            try {
+              await api.businessReviews.delete(params.appId, params.reviewId);
+              navigation.goBack();
+            } catch (err) {
+              showAlert('Could not delete review', apiErrorMessage(err));
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const closeReview = async () => {
+    setClosing(true);
+    try {
+      await api.businessReviews.close(params.appId, params.reviewId, {
+        summary: summary.trim() || undefined,
+        achievements: achievements.trim() || undefined,
+        key_risks: keyRisks.trim() || undefined,
+        improvement_plans: improvementPlans.trim() || undefined,
+      });
+      setCloseModal(false);
+      await load();
+    } catch (err) {
+      showAlert('Could not close review', apiErrorMessage(err));
+    } finally {
+      setClosing(false);
+    }
+  };
+
+  if (loading) return <View style={{ flex: 1, backgroundColor: colors.background }}><ActivityIndicator style={{ flex: 1 }} color={colors.primary} /></View>;
   if (error) return <LoadError message={error} onRetry={load} />;
   if (!review) return null;
 
@@ -65,7 +123,13 @@ export default function BusinessReviewDetailScreen() {
           <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
         </TouchableOpacity>
         <Text style={s.title} numberOfLines={1}>{TYPE_LABELS[review.type] ?? review.type ?? 'Business Review'}</Text>
-        <View style={{ width: 36 }} />
+        {canManage ? (
+          <TouchableOpacity style={s.backBtn} onPress={deleteReview}>
+            <Ionicons name="trash-outline" size={20} color={colors.danger} />
+          </TouchableOpacity>
+        ) : (
+          <View style={{ width: 36 }} />
+        )}
       </View>
 
       <ScrollView contentContainerStyle={s.body} showsVerticalScrollIndicator={false}>
@@ -93,6 +157,10 @@ export default function BusinessReviewDetailScreen() {
             </View>
           ) : null}
         </View>
+
+        {review.status === 'open' && canManage && (
+          <Button label="Close Review" onPress={() => setCloseModal(true)} style={{ marginBottom: 16 }} fullWidth />
+        )}
 
         {review.meeting_notes ? (
           <>
@@ -144,6 +212,26 @@ export default function BusinessReviewDetailScreen() {
           ))
         )}
       </ScrollView>
+
+      <Modal visible={closeModal} transparent animationType="fade" onRequestClose={() => setCloseModal(false)}>
+        <View style={s.modalBackdrop}>
+          <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }} keyboardShouldPersistTaps="handled">
+            <View style={s.modalCard}>
+              <View style={s.modalHead}>
+                <Text style={s.modalTitle}>Close Review</Text>
+                <TouchableOpacity onPress={() => setCloseModal(false)}>
+                  <Ionicons name="close" size={22} color={colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+              <Input label="Summary" value={summary} onChangeText={setSummary} placeholder="Optional" multiline numberOfLines={3} />
+              <Input label="Achievements" value={achievements} onChangeText={setAchievements} placeholder="Optional" multiline numberOfLines={3} />
+              <Input label="Key Risks" value={keyRisks} onChangeText={setKeyRisks} placeholder="Optional" multiline numberOfLines={3} />
+              <Input label="Improvement Plans" value={improvementPlans} onChangeText={setImprovementPlans} placeholder="Optional" multiline numberOfLines={3} />
+              <Button label="Close Review" onPress={closeReview} loading={closing} fullWidth />
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -172,5 +260,9 @@ function makeStyles(c: AppColors) {
     emptyText: { fontSize: 13, color: c.textMuted, marginBottom: 12 },
     itemRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
     itemTitle: { fontSize: 13, fontWeight: '600', color: c.textPrimary, flex: 1 },
+    modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', padding: 20 },
+    modalCard: { backgroundColor: c.surface, borderRadius: 16, padding: 18 },
+    modalHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
+    modalTitle: { fontSize: 17, fontWeight: '800', color: c.textPrimary },
   });
 }

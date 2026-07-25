@@ -1,6 +1,5 @@
 import 'react-native-gesture-handler';
 import React from 'react';
-import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ClerkProvider } from '@clerk/clerk-expo';
 import * as SecureStore from 'expo-secure-store';
@@ -31,7 +30,6 @@ export default function App() {
     <ClerkProvider publishableKey={CLERK_PUBLISHABLE_KEY} tokenCache={tokenCache}>
       <SafeAreaProvider>
         <WorkspaceProvider>
-          <StatusBar style="dark" />
           <AppNavigator />
         </WorkspaceProvider>
       </SafeAreaProvider>

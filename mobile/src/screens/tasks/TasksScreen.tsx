@@ -18,6 +18,7 @@ import LoadError from '../../components/common/LoadError';
 import { useLoadWithTimeout } from '../../hooks/useLoadWithTimeout';
 import EmptyState from '../../components/common/EmptyState';
 import { TasksStackParamList } from '../../navigation/types';
+import MemberPickerModal from '../../components/common/MemberPickerModal';
 
 type Nav = NativeStackNavigationProp<TasksStackParamList, 'TasksList'>;
 
@@ -37,6 +38,52 @@ const STATUS_MAP: Record<string, string> = {
   'Cancelled': 'cancelled',
 };
 
+const PRIORITY_OPTIONS = [
+  { value: 'urgent', label: 'Urgent' },
+  { value: 'high', label: 'High' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'low', label: 'Low' },
+];
+
+const DEADLINE_PRESETS = [
+  { value: 'overdue', label: 'Overdue' },
+  { value: 'today', label: 'Today' },
+  { value: 'this_week', label: 'This Week' },
+  { value: 'next_week', label: 'Next Week' },
+  { value: 'this_month', label: 'This Month' },
+];
+
+function startOfWeek(d: Date) {
+  const x = new Date(d);
+  const day = x.getDay();
+  const diffToMon = (day + 6) % 7;
+  x.setDate(x.getDate() - diffToMon);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+function matchesDeadlinePreset(deadline: string | null | undefined, preset: string, now: Date): boolean {
+  if (!deadline) return false;
+  const d = new Date(deadline);
+  const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (preset === 'overdue') return d < now;
+  if (preset === 'today') return d.toDateString() === today0.toDateString();
+  if (preset === 'this_week') {
+    const start = startOfWeek(now);
+    const end = new Date(start); end.setDate(start.getDate() + 6); end.setHours(23, 59, 59, 999);
+    return d >= start && d <= end;
+  }
+  if (preset === 'next_week') {
+    const start = startOfWeek(now); start.setDate(start.getDate() + 7);
+    const end = new Date(start); end.setDate(start.getDate() + 6); end.setHours(23, 59, 59, 999);
+    return d >= start && d <= end;
+  }
+  if (preset === 'this_month') {
+    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+  }
+  return true;
+}
+
 export default function TasksScreen() {
   const api = useApi();
   const { workspace } = useWorkspace();
@@ -45,7 +92,7 @@ export default function TasksScreen() {
   const navigation = useNavigation<Nav>();
   const insets = useSafeAreaInsets();
 
-  const { canSeeTeamContent } = useHasTeam();
+  const { canSeeTeamContent, isAdmin } = useHasTeam();
   const STATUS_FILTERS = canSeeTeamContent
     ? ['All', 'My Tasks', 'My Team', 'Open', 'In Progress', 'Blocked', 'Done', 'Cancelled']
     : ['All', 'My Tasks', 'Open', 'In Progress', 'Blocked', 'Done', 'Cancelled'];
@@ -53,19 +100,27 @@ export default function TasksScreen() {
   const [tasks, setTasks] = useState<any[]>([]);
   const [members, setMembers] = useState<any[]>([]);
   const [areas, setAreas] = useState<{ id: number; name: string; roleTitle: string }[]>([]);
+  const [projects, setProjects] = useState<{ id: number; name: string }[]>([]);
+  const [teamMemberIds, setTeamMemberIds] = useState<number[]>([]);
+  const [myUserId, setMyUserId] = useState<number | null>(null);
   const { loading, loadError, run } = useLoadWithTimeout();
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [activeFilter, setActiveFilter] = useState('All');
-  const [assigneeFilter, setAssigneeFilter] = useState<number | ''>('');
+  const [assigneeFilters, setAssigneeFilters] = useState<number[]>([]);
   const [areaFilter, setAreaFilter] = useState('');
+  const [projectFilter, setProjectFilter] = useState<number | ''>('');
+  const [priorityFilter, setPriorityFilter] = useState('');
+  const [deadlinePreset, setDeadlinePreset] = useState('');
+  const [needSupport, setNeedSupport] = useState(false);
   const [sortBy, setSortBy] = useState('created_at');
   const [showFilters, setShowFilters] = useState(false);
+  const [showAssigneeModal, setShowAssigneeModal] = useState(false);
 
   // refs so load() reads current values without being recreated on every filter change
   const activeFilterRef = useRef('All');
-  const assigneeFilterRef = useRef<number | ''>('');
   const areaFilterRef = useRef('');
+  const projectFilterRef = useRef<number | ''>('');
   const sortByRef = useRef('created_at');
 
   const load = useCallback(async () => {
@@ -74,9 +129,9 @@ export default function TasksScreen() {
       const filter = activeFilterRef.current;
       const params: Record<string, unknown> = {};
       if (filter === 'My Tasks') params.mine = 1;
-      if (assigneeFilterRef.current !== '') params.assigned_to_user_id = assigneeFilterRef.current;
       if (areaFilterRef.current === 'others') params.area_id = 'others';
       else if (areaFilterRef.current) params.area_id = areaFilterRef.current;
+      if (projectFilterRef.current !== '') params.project_id = projectFilterRef.current;
       if (sortByRef.current) params.sort = sortByRef.current;
       const r = await api.tasks.list(workspace.id, params);
       setTasks(r.data?.items ?? r.data?.tasks ?? []);
@@ -86,12 +141,30 @@ export default function TasksScreen() {
   const loadContext = useCallback(async () => {
     if (!workspace) return;
     try {
-      const [mRes, rRes] = await Promise.all([
+      const [mRes, rRes, meRes, projRes] = await Promise.all([
         api.members.list(workspace.id),
         api.roles.list(workspace.id),
+        api.me.getProfile(),
+        api.projects.listSimple(workspace.id).catch(() => ({ data: [] })),
       ]);
       const memberRows: any[] = mRes.data?.items ?? [];
       setMembers(memberRows);
+      const meId = meRes.data?.id ?? meRes.data?.user?.id ?? null;
+      setMyUserId(meId);
+      const projRows: any[] = projRes.data?.items ?? projRes.data ?? [];
+      setProjects(projRows.map((p: any) => ({ id: p.id, name: p.name })));
+
+      // Scope the assignee filter to "my team" (self + subordinates) for managers,
+      // matching web's Assignee dropdown restriction — admins see everyone.
+      if (canSeeTeamContent && !isAdmin) {
+        try {
+          const teamRes = await api.dashboard.getManagerDashboard(workspace.id, 'all');
+          const ids: number[] = (teamRes.data?.members ?? []).map((m: any) => m.user?.id).filter(Boolean);
+          setTeamMemberIds(ids);
+        } catch { setTeamMemberIds(meId ? [meId] : []); }
+      } else if (isAdmin) {
+        setTeamMemberIds(memberRows.map((m: any) => m.user_id).filter(Boolean));
+      }
 
       const roleRows: any[] = rRes.data?.items ?? [];
       const flat: { id: number; name: string; roleTitle: string }[] = [];
@@ -108,7 +181,7 @@ export default function TasksScreen() {
       );
       setAreas(flat);
     } catch {}
-  }, [workspace, api]);
+  }, [workspace, api, canSeeTeamContent, isAdmin]);
 
   useEffect(() => {
     run(() => Promise.all([load(), loadContext()]));
@@ -128,31 +201,46 @@ export default function TasksScreen() {
     await load();
   };
 
-  const applyFilter = async (opts: { assignee?: number | ''; area?: string; sort?: string }) => {
-    if (opts.assignee !== undefined) { setAssigneeFilter(opts.assignee); assigneeFilterRef.current = opts.assignee; }
+  const applyFilter = async (opts: { area?: string; project?: number | ''; sort?: string }) => {
     if (opts.area !== undefined) { setAreaFilter(opts.area); areaFilterRef.current = opts.area; }
+    if (opts.project !== undefined) { setProjectFilter(opts.project); projectFilterRef.current = opts.project; }
     if (opts.sort !== undefined) { setSortBy(opts.sort); sortByRef.current = opts.sort; }
     await load();
   };
 
   const resetFilters = async () => {
-    setAssigneeFilter(''); assigneeFilterRef.current = '';
+    setAssigneeFilters([]);
     setAreaFilter(''); areaFilterRef.current = '';
+    setProjectFilter(''); projectFilterRef.current = '';
+    setPriorityFilter('');
+    setDeadlinePreset('');
+    setNeedSupport(false);
     setSortBy('created_at'); sortByRef.current = 'created_at';
     await load();
   };
 
   const filtered = (() => {
+    const now = new Date();
     const list = tasks.filter((t) => {
-      const matchSearch = !search || t.title.toLowerCase().includes(search.toLowerCase());
+      const matchSearch = !search || (t.title ?? '').toLowerCase().includes(search.toLowerCase());
       const statusKey = STATUS_MAP[activeFilter];
       const matchStatus = statusKey ? t.status === statusKey : true;
-      return matchSearch && matchStatus;
+      const matchTeam = activeFilter === 'My Team'
+        ? teamMemberIds.includes(t.assigned_to_user_id)
+        : true;
+      const matchAssignee = assigneeFilters.length === 0 || assigneeFilters.includes(t.assigned_to_user_id);
+      const matchPriority = !priorityFilter || t.priority === priorityFilter;
+      const matchDeadline = !deadlinePreset || matchesDeadlinePreset(t.deadline ?? t.due_on, deadlinePreset, now);
+      const matchNeedSupport = !needSupport || t.review_status === 'need_support';
+      return matchSearch && matchStatus && matchTeam && matchAssignee && matchPriority && matchDeadline && matchNeedSupport;
     });
     return list;
   })();
 
-  const hasActiveFilters = !!(assigneeFilter || areaFilter || (sortBy && sortBy !== 'created_at'));
+  const hasActiveFilters = !!(
+    assigneeFilters.length > 0 || areaFilter || projectFilter || priorityFilter || deadlinePreset || needSupport
+    || (sortBy && sortBy !== 'created_at')
+  );
 
   if (loading) return <LoadingSpinner />;
   if (loadError) return <LoadError onRetry={() => run(() => Promise.all([load(), loadContext()]))} />;
@@ -175,6 +263,12 @@ export default function TasksScreen() {
 
   const assigneeName = (m: any) =>
     `${m.first_name ?? ''} ${m.last_name ?? ''}`.trim() || m.email;
+
+  // Matches web's Assignee dropdown: hidden for plain members with no reportees,
+  // scoped to self+subordinates for managers, all members for admins.
+  const assigneeOptions = canSeeTeamContent
+    ? (isAdmin ? members : members.filter((m) => teamMemberIds.includes(m.user_id)))
+    : [];
 
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
@@ -226,17 +320,6 @@ export default function TasksScreen() {
                 </TouchableOpacity>
               )}
             </View>
-            <TouchableOpacity
-              style={[s.filterBtn, hasActiveFilters && s.filterBtnActive]}
-              onPress={() => setShowFilters(true)}
-            >
-              <Ionicons
-                name="options-outline"
-                size={18}
-                color={hasActiveFilters ? '#fff' : colors.textPrimary}
-              />
-              {hasActiveFilters && <View style={s.filterDot} />}
-            </TouchableOpacity>
           </View>
 
           <ScrollView
@@ -261,6 +344,50 @@ export default function TasksScreen() {
                 <Text style={[s.chipText, activeFilter === f && s.chipTextActive]}>{f}</Text>
               </TouchableOpacity>
             ))}
+
+            {assigneeOptions.length > 0 && (
+              <TouchableOpacity
+                style={[s.chip, assigneeFilters.length > 0 && s.chipActive]}
+                onPress={() => setShowAssigneeModal(true)}
+              >
+                <Ionicons
+                  name="person-outline"
+                  size={12}
+                  color={assigneeFilters.length > 0 ? '#fff' : colors.gray600}
+                  style={{ marginRight: 4 }}
+                />
+                <Text style={[s.chipText, assigneeFilters.length > 0 && s.chipTextActive]}>
+                  Assignee{assigneeFilters.length > 0 ? ` (${assigneeFilters.length})` : ''}
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity
+              style={[s.chip, needSupport && s.chipActive]}
+              onPress={() => setNeedSupport((v) => !v)}
+            >
+              <Ionicons
+                name="help-buoy-outline"
+                size={12}
+                color={needSupport ? '#fff' : colors.gray600}
+                style={{ marginRight: 4 }}
+              />
+              <Text style={[s.chipText, needSupport && s.chipTextActive]}>Need Support</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[s.chip, (!!areaFilter || !!projectFilter || !!priorityFilter || !!deadlinePreset || (sortBy !== 'created_at')) && s.chipActive]}
+              onPress={() => setShowFilters(true)}
+            >
+              <Ionicons
+                name="options-outline"
+                size={12}
+                color={(!!areaFilter || !!projectFilter || !!priorityFilter || !!deadlinePreset || (sortBy !== 'created_at')) ? '#fff' : colors.gray600}
+                style={{ marginRight: 4 }}
+              />
+              <Text style={[s.chipText, (!!areaFilter || !!projectFilter || !!priorityFilter || !!deadlinePreset || (sortBy !== 'created_at')) && s.chipTextActive]}>More Filters</Text>
+            </TouchableOpacity>
+
             {hasActiveFilters && (
               <TouchableOpacity style={s.resetChip} onPress={resetFilters}>
                 <Ionicons name="close" size={12} color={colors.danger} style={{ marginRight: 3 }} />
@@ -314,24 +441,66 @@ export default function TasksScreen() {
               </View>
 
               <ScrollView showsVerticalScrollIndicator={false}>
-                {/* Assignee */}
-                <Text style={s.sectionLabel}>ASSIGNEE</Text>
+                {/* Project */}
+                {projects.length > 0 && (
+                  <>
+                    <Text style={s.sectionLabel}>PROJECT</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.sheetChipsRow}>
+                      <TouchableOpacity
+                        style={[s.sheetChip, projectFilter === '' && s.sheetChipActive]}
+                        onPress={() => applyFilter({ project: '' })}
+                      >
+                        <Text style={[s.sheetChipText, projectFilter === '' && s.sheetChipTextActive]}>All</Text>
+                      </TouchableOpacity>
+                      {projects.map((p) => (
+                        <TouchableOpacity
+                          key={p.id}
+                          style={[s.sheetChip, projectFilter === p.id && s.sheetChipActive]}
+                          onPress={() => applyFilter({ project: projectFilter === p.id ? '' : p.id })}
+                        >
+                          <Text style={[s.sheetChipText, projectFilter === p.id && s.sheetChipTextActive]}>{p.name}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  </>
+                )}
+
+                {/* Priority */}
+                <Text style={s.sectionLabel}>PRIORITY</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.sheetChipsRow}>
                   <TouchableOpacity
-                    style={[s.sheetChip, assigneeFilter === '' && s.sheetChipActive]}
-                    onPress={() => applyFilter({ assignee: '' })}
+                    style={[s.sheetChip, priorityFilter === '' && s.sheetChipActive]}
+                    onPress={() => setPriorityFilter('')}
                   >
-                    <Text style={[s.sheetChipText, assigneeFilter === '' && s.sheetChipTextActive]}>All</Text>
+                    <Text style={[s.sheetChipText, priorityFilter === '' && s.sheetChipTextActive]}>All</Text>
                   </TouchableOpacity>
-                  {members.map((m) => (
+                  {PRIORITY_OPTIONS.map((p) => (
                     <TouchableOpacity
-                      key={m.user_id}
-                      style={[s.sheetChip, assigneeFilter === m.user_id && s.sheetChipActive]}
-                      onPress={() => applyFilter({ assignee: assigneeFilter === m.user_id ? '' : m.user_id })}
+                      key={p.value}
+                      style={[s.sheetChip, priorityFilter === p.value && s.sheetChipActive]}
+                      onPress={() => setPriorityFilter(priorityFilter === p.value ? '' : p.value)}
                     >
-                      <Text style={[s.sheetChipText, assigneeFilter === m.user_id && s.sheetChipTextActive]}>
-                        {assigneeName(m)}
-                      </Text>
+                      <Text style={[s.sheetChipText, priorityFilter === p.value && s.sheetChipTextActive]}>{p.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+
+                {/* Deadline */}
+                <Text style={s.sectionLabel}>DEADLINE</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.sheetChipsRow}>
+                  <TouchableOpacity
+                    style={[s.sheetChip, deadlinePreset === '' && s.sheetChipActive]}
+                    onPress={() => setDeadlinePreset('')}
+                  >
+                    <Text style={[s.sheetChipText, deadlinePreset === '' && s.sheetChipTextActive]}>All</Text>
+                  </TouchableOpacity>
+                  {DEADLINE_PRESETS.map((d) => (
+                    <TouchableOpacity
+                      key={d.value}
+                      style={[s.sheetChip, deadlinePreset === d.value && s.sheetChipActive]}
+                      onPress={() => setDeadlinePreset(deadlinePreset === d.value ? '' : d.value)}
+                    >
+                      <Text style={[s.sheetChipText, deadlinePreset === d.value && s.sheetChipTextActive]}>{d.label}</Text>
                     </TouchableOpacity>
                   ))}
                 </ScrollView>
@@ -383,6 +552,21 @@ export default function TasksScreen() {
             </View>
           </View>
         </Modal>
+
+        {/* Assignee multi-select modal */}
+        <MemberPickerModal
+          visible={showAssigneeModal}
+          title="Filter by Assignee"
+          multi
+          allowClear={false}
+          options={assigneeOptions.map((m) => ({
+            id: m.user_id,
+            name: `${assigneeName(m)}${String(m.user_id) === String(myUserId) ? ' (you)' : ''}`,
+          }))}
+          selected={assigneeFilters}
+          onChange={setAssigneeFilters}
+          onClose={() => setShowAssigneeModal(false)}
+        />
     </View>
   );
 }
@@ -482,6 +666,12 @@ function makeStyles(c: AppColors) {
       fontSize: 10, fontWeight: '700', color: c.textMuted, letterSpacing: 1,
       marginHorizontal: 20, marginTop: 18, marginBottom: 10,
     },
+    sectionLabelRow: {
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+      marginHorizontal: 20, marginTop: 18, marginBottom: 10,
+    },
+    sectionLabelInline: { fontSize: 10, fontWeight: '700', color: c.textMuted, letterSpacing: 1 },
+    sectionClear: { fontSize: 12, fontWeight: '700', color: c.danger },
     sheetChipsRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 20, paddingBottom: 4 },
     sheetChipsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 20, paddingBottom: 4 },
     sheetChip: {

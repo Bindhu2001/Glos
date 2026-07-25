@@ -21,10 +21,17 @@ type Tab = 'work' | 'goals' | 'reviews' | 'team' | 'recognitions';
 
 interface Goal {
   id: number;
+  role_id?: number;
   goal_name: string;
   description?: string;
   status: string;
   weightage?: number;
+  target_l1?: string;
+  target_l2?: string;
+  target_l3?: string;
+  target_l4?: string;
+  target_l5?: string;
+  is_active?: number | boolean;
   cycle_id?: number;
   cycle_name?: string;
   employee_name?: string;
@@ -36,9 +43,9 @@ interface Review {
   cycle_id?: number;
   cycle_name?: string;
   status: string;
-  self_rating?: number;
-  manager_rating?: number;
-  final_rating?: number;
+  self_score?: number;
+  manager_score?: number;
+  final_score?: number;
   created_at?: string;
   employee_name?: string;
   reviewee_name?: string;
@@ -123,14 +130,15 @@ export default function PerformanceScreen() {
 
   const [reviewSubTab, setReviewSubTab] = useState<'active' | 'completed'>('active');
 
-  // Create goal modal
+  // Create/Edit goal modal
   const [showCreateGoal, setShowCreateGoal] = useState(false);
+  const [editingGoalId, setEditingGoalId] = useState<number | null>(null);
   const [goalTitle, setGoalTitle] = useState('');
   const [goalDesc, setGoalDesc] = useState('');
   const [goalWeightage, setGoalWeightage] = useState('');
+  const [goalTargets, setGoalTargets] = useState<string[]>(['', '', '', '', '']);
   const [saving, setSaving] = useState(false);
-  const [cycles, setCycles] = useState<any[]>([]);
-  const [selectedCycleId, setSelectedCycleId] = useState<number | null>(null);
+  const [roles, setRoles] = useState<any[]>([]);
   const [userRoleId, setUserRoleId] = useState<number | null>(null);
   const [loadingModal, setLoadingModal] = useState(false);
 
@@ -230,28 +238,39 @@ export default function PerformanceScreen() {
     } finally { setRejecting(false); }
   };
 
-  // ── Create goal ───────────────────────────────────────────
+  // ── Create / Edit goal ───────────────────────────────────────
+  const resetGoalForm = () => {
+    setGoalTitle(''); setGoalDesc(''); setGoalWeightage(''); setGoalTargets(['', '', '', '', '']);
+    setEditingGoalId(null);
+  };
+
   const openCreateGoal = async () => {
+    resetGoalForm();
     setShowCreateGoal(true);
     if (!workspace) return;
     setLoadingModal(true);
     try {
-      const [cyclesRes, dashRes] = await Promise.all([
-        api.performance.getCycles(workspace.id),
-        api.dashboard.getMyDashboard(workspace.id),
-      ]);
-      const cycleList = cyclesRes.data?.items ?? [];
-      setCycles(cycleList);
-      if (cycleList.length === 1) setSelectedCycleId(cycleList[0].id);
-      const roles: any[] = dashRes.data?.roles ?? [];
-      if (roles[0]?.id) setUserRoleId(roles[0].id);
+      const dashRes = await api.dashboard.getMyDashboard(workspace.id);
+      const roleList: any[] = dashRes.data?.roles ?? [];
+      setRoles(roleList);
+      if (roleList[0]?.id) setUserRoleId(roleList[0].id);
     } catch {} finally { setLoadingModal(false); }
+  };
+
+  const openEditGoal = (g: Goal) => {
+    setEditingGoalId(g.id);
+    setGoalTitle(g.goal_name ?? '');
+    setGoalDesc(g.description ?? '');
+    setGoalWeightage(g.weightage != null ? String(g.weightage) : '');
+    setGoalTargets([g.target_l1 ?? '', g.target_l2 ?? '', g.target_l3 ?? '', g.target_l4 ?? '', g.target_l5 ?? '']);
+    setUserRoleId(g.role_id ?? null);
+    setRoles([]);
+    setShowCreateGoal(true);
   };
 
   const handleCreateGoal = async () => {
     if (!goalTitle.trim() || !workspace) return;
-    if (!selectedCycleId) { Alert.alert('Validation', 'Please select a review cycle.'); return; }
-    if (!userRoleId) { Alert.alert('Error', 'No role is assigned to your profile. Ask your admin.'); return; }
+    if (!editingGoalId && !userRoleId) { Alert.alert('Error', 'No role is assigned to your profile. Ask your admin.'); return; }
     const w = parseFloat(goalWeightage);
     if (!goalWeightage || isNaN(w) || w <= 0 || w > 100) {
       Alert.alert('Validation', 'Weightage must be a number between 1 and 100.');
@@ -259,19 +278,37 @@ export default function PerformanceScreen() {
     }
     setSaving(true);
     try {
-      await api.performance.createGoal(workspace.id, {
+      const payload: Record<string, unknown> = {
         goal_name: goalTitle.trim(),
         description: goalDesc.trim() || undefined,
         weightage: w,
-        role_id: userRoleId,
-        cycle_id: selectedCycleId,
-      });
-      setGoalTitle(''); setGoalDesc(''); setGoalWeightage(''); setSelectedCycleId(null);
+        target_l1: goalTargets[0].trim() || undefined,
+        target_l2: goalTargets[1].trim() || undefined,
+        target_l3: goalTargets[2].trim() || undefined,
+        target_l4: goalTargets[3].trim() || undefined,
+        target_l5: goalTargets[4].trim() || undefined,
+      };
+      if (editingGoalId) {
+        await api.performance.updateGoal(workspace.id, editingGoalId, payload);
+      } else {
+        await api.performance.createGoal(workspace.id, { ...payload, role_id: userRoleId });
+      }
+      resetGoalForm();
       setShowCreateGoal(false);
       await load();
     } catch {
-      Alert.alert('Error', 'Failed to create goal');
+      Alert.alert('Error', editingGoalId ? 'Failed to update goal' : 'Failed to create goal');
     } finally { setSaving(false); }
+  };
+
+  const handleToggleGoalActive = async (goalId: number) => {
+    if (!workspace) return;
+    try {
+      await api.performance.toggleGoalActive(workspace.id, goalId);
+      await load();
+    } catch {
+      Alert.alert('Error', 'Failed to update goal status');
+    }
   };
 
   const handleSubmitGoal = async (goalId: number) => {
@@ -303,7 +340,7 @@ export default function PerformanceScreen() {
     { key: 'recognitions', label: 'Recognitions' },
   ];
 
-  const latestReview = allReviews.find(r => r.final_rating != null) ?? allReviews[0];
+  const latestReview = allReviews.find(r => r.final_score != null) ?? allReviews[0];
   const approvedGoals = goals.filter(g => g.status === 'approved').length;
   const pendingGoals = goals.filter(g => g.status === 'pending' || g.status === 'submitted').length;
 
@@ -323,6 +360,14 @@ export default function PerformanceScreen() {
             <View style={s.pendingBadge}>
               <Text style={s.pendingBadgeText}>{totalManagerPending} pending</Text>
             </View>
+          )}
+          {isAdmin && (
+            <TouchableOpacity onPress={() => navigation.navigate('CreateAppraisal', { appId: workspace!.id })}>
+              <View style={s.reportsBtn}>
+                <Ionicons name="add" size={15} color={colors.primary} />
+                <Text style={s.reportsBtnText}>Appraisal</Text>
+              </View>
+            </TouchableOpacity>
           )}
           {isAdmin && (
             <TouchableOpacity onPress={() => navigation.navigate('TaskReports')}>
@@ -379,12 +424,12 @@ export default function PerformanceScreen() {
                 <View style={s.ratingRow}>
                   <View>
                     <Text style={s.ratingNum}>
-                      {latestReview.final_rating != null ? latestReview.final_rating
-                        : latestReview.self_rating != null ? latestReview.self_rating : '—'}
+                      {latestReview.final_score != null ? latestReview.final_score
+                        : latestReview.self_score != null ? latestReview.self_score : '—'}
                       <Text style={s.ratingMax}>/5</Text>
                     </Text>
                     <Text style={s.ratingLabel}>
-                      {latestReview.final_rating != null ? 'Final Rating' : 'Self Rating'}
+                      {latestReview.final_score != null ? 'Final Rating' : 'Self Rating'}
                     </Text>
                   </View>
                   <StatusBadge status={latestReview.status} />
@@ -549,13 +594,37 @@ export default function PerformanceScreen() {
                   <Text style={s.cardTitle} numberOfLines={2}>{g.goal_name}</Text>
                   <StatusBadge status={g.status} />
                 </View>
-                {g.cycle_name && <Text style={s.cardMeta}>Cycle: {g.cycle_name}</Text>}
+                {g.description ? <Text style={s.cardMeta}>{g.description}</Text> : null}
                 {g.weightage != null && <Text style={s.cardMeta}>Weightage: {g.weightage}%</Text>}
-                {g.status === 'pending' && (
-                  <TouchableOpacity style={s.submitGoalBtn} onPress={() => handleSubmitGoal(g.id)}>
-                    <Text style={s.submitGoalBtnText}>Submit for Approval</Text>
-                  </TouchableOpacity>
+                {[g.target_l1, g.target_l2, g.target_l3, g.target_l4, g.target_l5].some(Boolean) && (
+                  <Text style={s.cardMeta}>
+                    Targets: {[g.target_l1, g.target_l2, g.target_l3, g.target_l4, g.target_l5].filter(Boolean).join(' · ')}
+                  </Text>
                 )}
+                {g.status === 'approved' && (
+                  <Text style={[s.cardMeta, { color: g.is_active ? colors.success : colors.textMuted, fontWeight: '600' }]}>
+                    {g.is_active ? 'Active' : 'Inactive'}
+                  </Text>
+                )}
+                <View style={s.goalActionsRow}>
+                  {['pending', 'rejected', 'approved'].includes(g.status) && (
+                    <TouchableOpacity style={s.editGoalBtn} onPress={() => openEditGoal(g)}>
+                      <Ionicons name="create-outline" size={13} color={colors.primary} />
+                      <Text style={s.editGoalBtnText}>Edit</Text>
+                    </TouchableOpacity>
+                  )}
+                  {g.status === 'approved' && (
+                    <TouchableOpacity style={s.editGoalBtn} onPress={() => handleToggleGoalActive(g.id)}>
+                      <Ionicons name={g.is_active ? 'pause-outline' : 'play-outline'} size={13} color={colors.primary} />
+                      <Text style={s.editGoalBtnText}>{g.is_active ? 'Deactivate' : 'Activate'}</Text>
+                    </TouchableOpacity>
+                  )}
+                  {g.status === 'pending' && (
+                    <TouchableOpacity style={s.submitGoalBtn} onPress={() => handleSubmitGoal(g.id)}>
+                      <Text style={s.submitGoalBtnText}>Submit for Approval</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
               </View>
             ))}
           </>
@@ -595,9 +664,9 @@ export default function PerformanceScreen() {
                     <Text style={s.cardTitle}>{reviewTitle(r)}</Text>
                     <StatusBadge status={r.status} />
                   </View>
-                  {r.self_rating != null && <Text style={s.cardMeta}>Self Rating: {r.self_rating}/5</Text>}
-                  {r.manager_rating != null && <Text style={s.cardMeta}>Manager Rating: {r.manager_rating}/5</Text>}
-                  {r.final_rating != null && <Text style={s.cardMeta}>Final Rating: {r.final_rating}/5</Text>}
+                  {r.self_score != null && <Text style={s.cardMeta}>Self Rating: {r.self_score}/5</Text>}
+                  {r.manager_score != null && <Text style={s.cardMeta}>Manager Rating: {r.manager_score}/5</Text>}
+                  {r.final_score != null && <Text style={s.cardMeta}>Final Rating: {r.final_score}/5</Text>}
                 </TouchableOpacity>
               ));
             })() : (() => {
@@ -612,16 +681,16 @@ export default function PerformanceScreen() {
                   <View style={s.cardRow}>
                     <View style={{ flex: 1 }}>
                       <Text style={s.cardTitle}>{reviewTitle(r)}</Text>
-                      {r.final_rating != null && (
+                      {r.final_score != null && (
                         <Text style={[s.cardMeta, { color: colors.success, fontWeight: '700' }]}>
-                          Final Rating: {r.final_rating}/5
+                          Final Rating: {r.final_score}/5
                         </Text>
                       )}
                     </View>
                     <StatusBadge status={r.status} />
                   </View>
-                  {r.self_rating != null && <Text style={s.cardMeta}>Self: {r.self_rating}/5</Text>}
-                  {r.manager_rating != null && <Text style={s.cardMeta}>Manager: {r.manager_rating}/5</Text>}
+                  {r.self_score != null && <Text style={s.cardMeta}>Self: {r.self_score}/5</Text>}
+                  {r.manager_score != null && <Text style={s.cardMeta}>Manager: {r.manager_score}/5</Text>}
                   {r.created_at && (
                     <Text style={s.cardMeta}>{new Date(r.created_at).toLocaleDateString()}</Text>
                   )}
@@ -706,9 +775,9 @@ export default function PerformanceScreen() {
                       </View>
                       <StatusBadge status={r.status} />
                     </View>
-                    {r.self_rating != null && <Text style={s.cardMeta}>Self: {r.self_rating}/5</Text>}
-                    {r.manager_rating != null && <Text style={s.cardMeta}>Manager: {r.manager_rating}/5</Text>}
-                    {r.final_rating != null && <Text style={s.cardMeta}>Final: {r.final_rating}/5</Text>}
+                    {r.self_score != null && <Text style={s.cardMeta}>Self: {r.self_score}/5</Text>}
+                    {r.manager_score != null && <Text style={s.cardMeta}>Manager: {r.manager_score}/5</Text>}
+                    {r.final_score != null && <Text style={s.cardMeta}>Final: {r.final_score}/5</Text>}
                   </TouchableOpacity>
                 ))}
               </>
@@ -747,7 +816,7 @@ export default function PerformanceScreen() {
           <View style={s.modalSheetWrapper}>
           <ScrollView style={s.modalSheet} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
             <View style={s.modalHeader}>
-              <Text style={s.modalTitle}>New Goal</Text>
+              <Text style={s.modalTitle}>{editingGoalId ? 'Edit Goal' : 'New Goal'}</Text>
               <TouchableOpacity onPress={() => setShowCreateGoal(false)}>
                 <Ionicons name="close" size={22} color={colors.gray600} />
               </TouchableOpacity>
@@ -757,23 +826,23 @@ export default function PerformanceScreen() {
               <ActivityIndicator color={colors.primary} style={{ marginVertical: 20 }} />
             ) : (
               <>
-                <Text style={s.fieldLabel}>Review Cycle *</Text>
-                {cycles.length === 0 ? (
-                  <Text style={s.hintText}>No review cycles available. Ask your admin to create one.</Text>
-                ) : (
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 4 }}>
-                    {cycles.map((c: any) => (
-                      <TouchableOpacity
-                        key={c.id}
-                        style={[s.cycleChip, selectedCycleId === c.id && s.cycleChipActive]}
-                        onPress={() => setSelectedCycleId(c.id)}
-                      >
-                        <Text style={[s.cycleChipText, selectedCycleId === c.id && s.cycleChipTextActive]}>
-                          {c.cycle_name} ({c.year})
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
+                {!editingGoalId && roles.length > 1 && (
+                  <>
+                    <Text style={s.fieldLabel}>Role *</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 4 }}>
+                      {roles.map((r: any) => (
+                        <TouchableOpacity
+                          key={r.id}
+                          style={[s.cycleChip, userRoleId === r.id && s.cycleChipActive]}
+                          onPress={() => setUserRoleId(r.id)}
+                        >
+                          <Text style={[s.cycleChipText, userRoleId === r.id && s.cycleChipTextActive]}>
+                            {r.title}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  </>
                 )}
 
                 <Text style={s.fieldLabel}>Goal Name *</Text>
@@ -806,6 +875,18 @@ export default function PerformanceScreen() {
                   keyboardType="numeric"
                 />
 
+                <Text style={s.fieldLabel}>Targets (optional)</Text>
+                {goalTargets.map((t, i) => (
+                  <TextInput
+                    key={i}
+                    style={[s.input, { marginBottom: 8 }]}
+                    value={t}
+                    onChangeText={(v) => setGoalTargets((prev) => prev.map((p, pi) => (pi === i ? v : p)))}
+                    placeholder={`Level ${i + 1} target`}
+                    placeholderTextColor={colors.gray400}
+                  />
+                ))}
+
                 <TouchableOpacity
                   style={[s.saveBtn, (!goalTitle.trim() || saving) && s.saveBtnDisabled]}
                   onPress={handleCreateGoal}
@@ -813,7 +894,7 @@ export default function PerformanceScreen() {
                 >
                   {saving
                     ? <ActivityIndicator color="#ffffff" size="small" />
-                    : <Text style={s.saveBtnText}>Create Goal</Text>
+                    : <Text style={s.saveBtnText}>{editingGoalId ? 'Save Changes' : 'Create Goal'}</Text>
                   }
                 </TouchableOpacity>
               </>
@@ -938,10 +1019,17 @@ function makeStyles(c: AppColors) {
     addBtnText: { fontSize: 13, color: '#ffffff', fontWeight: '600' },
 
     submitGoalBtn: {
-      marginTop: 10, paddingVertical: 8, borderRadius: 8,
+      flex: 1, paddingVertical: 8, borderRadius: 8,
       backgroundColor: c.primaryLight, alignItems: 'center',
     },
     submitGoalBtnText: { fontSize: 13, color: c.primary, fontWeight: '600' },
+    goalActionsRow: { flexDirection: 'row', gap: 8, marginTop: 10 },
+    editGoalBtn: {
+      flexDirection: 'row', alignItems: 'center', gap: 4,
+      paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8,
+      backgroundColor: c.gray50, borderWidth: 1, borderColor: c.border,
+    },
+    editGoalBtnText: { fontSize: 12, fontWeight: '600', color: c.primary },
 
     approvalRow: { flexDirection: 'row', gap: 10, marginTop: 12 },
     approveBtn: {

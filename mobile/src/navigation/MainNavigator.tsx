@@ -25,28 +25,31 @@ import PerformanceScreen from '../screens/performance/PerformanceScreen';
 import TaskReportsScreen from '../screens/performance/TaskReportsScreen';
 import PerformanceReviewDetailScreen from '../screens/performance/PerformanceReviewDetailScreen';
 import AppraisalDetailScreen from '../screens/performance/AppraisalDetailScreen';
+import CreateAppraisalScreen from '../screens/performance/CreateAppraisalScreen';
 import ProfileScreen from '../screens/profile/ProfileScreen';
 import AdminHomeScreen from '../screens/admin/AdminHomeScreen';
 import MembersScreen from '../screens/admin/MembersScreen';
 import InviteMemberScreen from '../screens/admin/InviteMemberScreen';
-import OrganisationScreen from '../screens/admin/OrganisationScreen';
-import RolesScreen from '../screens/admin/RolesScreen';
-import PoliciesScreen from '../screens/admin/PoliciesScreen';
-import PolicyDetailScreen from '../screens/admin/PolicyDetailScreen';
+import ClientsListScreen from '../screens/admin/ClientsListScreen';
+import CreateEditClientScreen from '../screens/admin/CreateEditClientScreen';
 import ChatListScreen from '../screens/chat/ChatListScreen';
 import ChatThreadScreen from '../screens/chat/ChatThreadScreen';
 import NewConversationScreen from '../screens/chat/NewConversationScreen';
+import GroupInfoScreen from '../screens/chat/GroupInfoScreen';
 import MoreHomeScreen from '../screens/more/MoreHomeScreen';
 import ProjectsListScreen from '../screens/projects/ProjectsListScreen';
 import ProjectDetailScreen from '../screens/projects/ProjectDetailScreen';
+import CreateEditProjectScreen from '../screens/projects/CreateEditProjectScreen';
 import AgreementsListScreen from '../screens/contracts/AgreementsListScreen';
 import AgreementDetailScreen from '../screens/contracts/AgreementDetailScreen';
+import CreateEditAgreementScreen from '../screens/contracts/CreateEditAgreementScreen';
 import RoutinesScreen from '../screens/routines/RoutinesScreen';
 import BusinessReviewsListScreen from '../screens/businessReviews/BusinessReviewsListScreen';
 import BusinessReviewDetailScreen from '../screens/businessReviews/BusinessReviewDetailScreen';
+import CreateBusinessReviewScreen from '../screens/businessReviews/CreateBusinessReviewScreen';
 import MyOrganisationScreen from '../screens/organisation/MyOrganisationScreen';
-import EmployeeHierarchyScreen from '../screens/organisation/EmployeeHierarchyScreen';
 import ReportsListScreen from '../screens/reports/ReportsListScreen';
+import GenericReportScreen from '../screens/reports/GenericReportScreen';
 
 const Tab = createBottomTabNavigator<MainTabParamList>();
 const TasksStack = createNativeStackNavigator<TasksStackParamList>();
@@ -57,8 +60,9 @@ const ChatStack = createNativeStackNavigator<ChatStackParamList>();
 const MoreStack = createNativeStackNavigator<MoreStackParamList>();
 
 function TasksNavigator() {
+  const { colors } = useTheme();
   return (
-    <TasksStack.Navigator screenOptions={{ headerShown: false }}>
+    <TasksStack.Navigator screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
       <TasksStack.Screen name="TasksList" component={TasksScreen} />
       <TasksStack.Screen name="TaskDetail" component={TaskDetailScreen} />
       <TasksStack.Screen name="CreateTask" component={CreateTaskScreen} />
@@ -67,8 +71,9 @@ function TasksNavigator() {
 }
 
 function FeedNavigator() {
+  const { colors } = useTheme();
   return (
-    <FeedStack.Navigator screenOptions={{ headerShown: false }}>
+    <FeedStack.Navigator screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
       <FeedStack.Screen name="FeedList" component={FeedScreen} />
       <FeedStack.Screen name="PostDetail" component={PostDetailScreen} />
       <FeedStack.Screen name="CreatePost" component={CreatePostScreen} />
@@ -77,55 +82,62 @@ function FeedNavigator() {
 }
 
 function PerformanceNavigator() {
+  const { colors } = useTheme();
   return (
-    <PerformanceStack.Navigator screenOptions={{ headerShown: false }}>
+    <PerformanceStack.Navigator screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
       <PerformanceStack.Screen name="PerformanceHome" component={PerformanceScreen} />
       <PerformanceStack.Screen name="TaskReports" component={TaskReportsScreen} />
       <PerformanceStack.Screen name="ReviewDetail" component={PerformanceReviewDetailScreen} />
       <PerformanceStack.Screen name="AppraisalDetail" component={AppraisalDetailScreen} />
+      <PerformanceStack.Screen name="CreateAppraisal" component={CreateAppraisalScreen} />
     </PerformanceStack.Navigator>
   );
 }
 
 function AdminNavigator() {
+  const { colors } = useTheme();
   return (
-    <AdminStack.Navigator screenOptions={{ headerShown: false }}>
+    <AdminStack.Navigator screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
       <AdminStack.Screen name="AdminHome" component={AdminHomeScreen} />
       <AdminStack.Screen name="Members" component={MembersScreen} />
       <AdminStack.Screen name="InviteMember" component={InviteMemberScreen} />
-      <AdminStack.Screen name="Organisation" component={OrganisationScreen} />
-      <AdminStack.Screen name="Roles" component={RolesScreen} />
-      <AdminStack.Screen name="Policies" component={PoliciesScreen} />
-      <AdminStack.Screen name="PolicyDetail" component={PolicyDetailScreen} />
+      <AdminStack.Screen name="ClientsList" component={ClientsListScreen} />
+      <AdminStack.Screen name="CreateEditClient" component={CreateEditClientScreen} />
     </AdminStack.Navigator>
   );
 }
 
 function ChatNavigator() {
+  const { colors } = useTheme();
   return (
-    <ChatStack.Navigator screenOptions={{ headerShown: false }}>
+    <ChatStack.Navigator screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
       <ChatStack.Screen name="ChatList" component={ChatListScreen} />
       <ChatStack.Screen name="ChatThread" component={ChatThreadScreen} />
       <ChatStack.Screen name="NewConversation" component={NewConversationScreen} options={{ presentation: 'modal' }} />
+      <ChatStack.Screen name="GroupInfo" component={GroupInfoScreen} />
     </ChatStack.Navigator>
   );
 }
 
 function MoreNavigator() {
+  const { colors } = useTheme();
   return (
-    <MoreStack.Navigator screenOptions={{ headerShown: false }}>
+    <MoreStack.Navigator screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
       <MoreStack.Screen name="MoreHome" component={MoreHomeScreen} />
       <MoreStack.Screen name="ProjectsList" component={ProjectsListScreen} />
       <MoreStack.Screen name="ProjectDetail" component={ProjectDetailScreen} />
+      <MoreStack.Screen name="CreateEditProject" component={CreateEditProjectScreen} />
       <MoreStack.Screen name="AgreementsList" component={AgreementsListScreen} />
       <MoreStack.Screen name="AgreementDetail" component={AgreementDetailScreen} />
+      <MoreStack.Screen name="CreateEditAgreement" component={CreateEditAgreementScreen} />
       <MoreStack.Screen name="Routines" component={RoutinesScreen} />
       <MoreStack.Screen name="BusinessReviewsList" component={BusinessReviewsListScreen} />
       <MoreStack.Screen name="BusinessReviewDetail" component={BusinessReviewDetailScreen} />
+      <MoreStack.Screen name="CreateBusinessReview" component={CreateBusinessReviewScreen} />
       <MoreStack.Screen name="MyOrganisation" component={MyOrganisationScreen} />
-      <MoreStack.Screen name="EmployeeHierarchy" component={EmployeeHierarchyScreen} />
       <MoreStack.Screen name="ReportsList" component={ReportsListScreen} />
       <MoreStack.Screen name="TaskReports" component={TaskReportsScreen} />
+      <MoreStack.Screen name="ReportView" component={GenericReportScreen} />
     </MoreStack.Navigator>
   );
 }
@@ -148,6 +160,7 @@ function MainTabs() {
 
   return (
     <Tab.Navigator
+      sceneContainerStyle={{ backgroundColor: colors.background }}
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarActiveTintColor: colors.primary,

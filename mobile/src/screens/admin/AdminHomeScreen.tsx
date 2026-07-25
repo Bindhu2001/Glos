@@ -27,25 +27,11 @@ const MENU_ITEMS = [
     color: '#0891b2',
   },
   {
-    screen: 'Organisation' as const,
+    screen: 'ClientsList' as const,
     icon: 'business-outline' as const,
-    label: 'Organisation',
-    desc: 'View and edit organisation details',
+    label: 'Clients',
+    desc: 'Manage client accounts and contacts',
     color: '#059669',
-  },
-  {
-    screen: 'Roles' as const,
-    icon: 'briefcase-outline' as const,
-    label: 'Roles',
-    desc: 'Browse all job roles in the org',
-    color: '#d97706',
-  },
-  {
-    screen: 'Policies' as const,
-    icon: 'document-text-outline' as const,
-    label: 'HR Policies',
-    desc: 'View and manage HR policy documents',
-    color: '#7c3aed',
   },
 ];
 
@@ -74,23 +60,25 @@ export default function AdminHomeScreen() {
       </View>
 
       <ScrollView contentContainerStyle={s.list} showsVerticalScrollIndicator={false}>
-        {MENU_ITEMS.map((item) => (
-          <TouchableOpacity
-            key={item.screen}
-            style={s.card}
-            onPress={() => navigation.navigate(item.screen)}
-            activeOpacity={0.7}
-          >
-            <View style={[s.iconBox, { backgroundColor: item.color + '18' }]}>
-              <Ionicons name={item.icon} size={22} color={item.color} />
-            </View>
-            <View style={s.cardBody}>
-              <Text style={s.cardLabel}>{item.label}</Text>
-              <Text style={s.cardDesc}>{item.desc}</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={16} color={colors.gray400} />
-          </TouchableOpacity>
-        ))}
+        <View style={s.sectionCard}>
+          {MENU_ITEMS.map((item, i) => (
+            <TouchableOpacity
+              key={item.screen}
+              style={[s.row, i < MENU_ITEMS.length - 1 && s.rowDivider]}
+              onPress={() => navigation.navigate(item.screen)}
+              activeOpacity={0.6}
+            >
+              <View style={[s.iconBox, { backgroundColor: item.color + '18' }]}>
+                <Ionicons name={item.icon} size={20} color={item.color} />
+              </View>
+              <View style={s.cardBody}>
+                <Text style={s.cardLabel}>{item.label}</Text>
+                <Text style={s.cardDesc}>{item.desc}</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={colors.gray400} />
+            </TouchableOpacity>
+          ))}
+        </View>
       </ScrollView>
     </View>
   );
@@ -116,13 +104,18 @@ function makeStyles(c: AppColors) {
     },
     ownerText: { fontSize: 12, fontWeight: '600', color: '#7c3aed' },
 
-    list: { padding: 16, gap: 10 },
-    card: {
-      flexDirection: 'row', alignItems: 'center', gap: 14,
-      backgroundColor: c.surface, borderRadius: 14, padding: 16,
-      borderWidth: 1, borderColor: c.border,
+    list: { padding: 16 },
+    sectionCard: {
+      backgroundColor: c.surface, borderRadius: 16,
+      borderWidth: 1, borderColor: c.border, overflow: 'hidden',
+      shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 4, elevation: 1,
     },
-    iconBox: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+    row: {
+      flexDirection: 'row', alignItems: 'center', gap: 14,
+      paddingHorizontal: 16, paddingVertical: 14,
+    },
+    rowDivider: { borderBottomWidth: 1, borderBottomColor: c.border },
+    iconBox: { width: 42, height: 42, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
     cardBody: { flex: 1 },
     cardLabel: { fontSize: 15, fontWeight: '700', color: c.textPrimary, marginBottom: 2 },
     cardDesc: { fontSize: 12, color: c.textSecondary },

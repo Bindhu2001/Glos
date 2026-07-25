@@ -2,7 +2,7 @@ import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, ActivityIndicator, RefreshControl } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useWorkspace } from '../../contexts/WorkspaceContext';
@@ -50,6 +50,7 @@ export default function AgreementsListScreen() {
   }, [workspace?.id]);
 
   useEffect(() => { load(); }, [load]);
+  useFocusEffect(useCallback(() => { load(); }, [load]));
 
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
@@ -58,7 +59,9 @@ export default function AgreementsListScreen() {
           <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
         </TouchableOpacity>
         <Text style={s.title}>Agreements</Text>
-        <View style={{ width: 36 }} />
+        <TouchableOpacity style={s.backBtn} onPress={() => navigation.navigate('CreateEditAgreement', { appId: workspace!.id })}>
+          <Ionicons name="add" size={24} color={colors.primary} />
+        </TouchableOpacity>
       </View>
 
       {loading ? (

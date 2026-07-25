@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Image } from 'react-native';
 import { getInitials } from '../../utils/format';
 
 const PALETTE = [
@@ -15,10 +15,21 @@ function colorForName(name: string): string {
 interface Props {
   name: string;
   size?: number;
+  photoUrl?: string | null;
 }
 
-export default function Avatar({ name, size = 36 }: Props) {
+export default function Avatar({ name, size = 36, photoUrl }: Props) {
   const safeName = name || '?';
+
+  if (photoUrl) {
+    return (
+      <Image
+        source={{ uri: photoUrl }}
+        style={{ width: size, height: size, borderRadius: size / 2 }}
+      />
+    );
+  }
+
   const bg = colorForName(safeName);
   const initials = getInitials(safeName);
   const fontSize = size * 0.38;

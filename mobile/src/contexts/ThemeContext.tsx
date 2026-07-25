@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react';
+import { Appearance } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LightColors, DarkColors, AppColors } from '../utils/colors';
 
@@ -17,11 +18,21 @@ const ThemeContext = createContext<ThemeContextValue>({
 const THEME_KEY = '@glos_theme';
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [isDark, setIsDark] = useState(false);
+  // Seed from the OS color scheme synchronously (matches the user's system
+  // preference for the very first frame) — AsyncStorage is inherently async,
+  // so without this the app always renders light-mode for a moment on cold
+  // start before flipping to a saved dark preference, which reads as a flash.
+  const [isDark, setIsDark] = useState(() => Appearance.getColorScheme() === 'dark');
 
   useEffect(() => {
     AsyncStorage.getItem(THEME_KEY)
-      .then((val) => { if (val === 'dark') setIsDark(true); })
+      .then((val) => {
+        // Only an explicit saved preference overrides the OS-seeded guess —
+        // no saved value (first launch) means "follow the system", which the
+        // initial state already matches.
+        if (val === 'dark') setIsDark(true);
+        else if (val === 'light') setIsDark(false);
+      })
       .catch(() => {});
   }, []);
 

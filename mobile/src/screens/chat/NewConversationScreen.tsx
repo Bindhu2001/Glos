@@ -70,7 +70,7 @@ export default function NewConversationScreen() {
       });
       const conv = res.data;
       const name = conv.display_name ?? conv.name ?? 'Conversation';
-      navigation.replace('ChatThread', { conversationId: conv.id, appId: params.appId, title: name });
+      navigation.replace('ChatThread', { conversationId: conv.id, appId: params.appId, title: name, type: conv.type ?? (isGroup ? 'group' : 'direct') });
     } catch (err) {
       showAlert('Could not start conversation', apiErrorMessage(err));
     } finally {

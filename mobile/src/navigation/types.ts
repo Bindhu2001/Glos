@@ -25,8 +25,9 @@ export type MainTabParamList = {
 
 export type ChatStackParamList = {
   ChatList: undefined;
-  ChatThread: { conversationId: number; appId: number; title?: string };
+  ChatThread: { conversationId: number; appId: number; title?: string; type?: 'direct' | 'group' | 'note' };
   NewConversation: { appId: number };
+  GroupInfo: { conversationId: number; appId: number };
 };
 
 export type TasksStackParamList = {
@@ -46,6 +47,7 @@ export type PerformanceStackParamList = {
   TaskReports: undefined;
   ReviewDetail: { reviewId: number; appId: number };
   AppraisalDetail: { appraisalId: number; appId: number };
+  CreateAppraisal: { appId: number };
 };
 
 export type PeopleStackParamList = {
@@ -57,23 +59,24 @@ export type AdminStackParamList = {
   AdminHome: undefined;
   Members: undefined;
   InviteMember: undefined;
-  Organisation: undefined;
-  Roles: undefined;
-  Policies: undefined;
-  PolicyDetail: { policyId: number; appId: number };
+  ClientsList: undefined;
+  CreateEditClient: { clientId?: number };
 };
 
 export type MoreStackParamList = {
   MoreHome: undefined;
   ProjectsList: undefined;
   ProjectDetail: { projectId: number; appId: number };
+  CreateEditProject: { appId: number; projectId?: number };
   AgreementsList: undefined;
   AgreementDetail: { agreementId: number; appId: number };
+  CreateEditAgreement: { appId: number; agreementId?: number };
   Routines: undefined;
   BusinessReviewsList: undefined;
   BusinessReviewDetail: { reviewId: number; appId: number };
+  CreateBusinessReview: { appId: number; date?: string };
   MyOrganisation: undefined;
-  EmployeeHierarchy: undefined;
   ReportsList: undefined;
   TaskReports: undefined;
+  ReportView: { reportType: 'projects' | 'financial' | 'goals' | 'performance' | 'appraisals' | 'contracts' };
 };

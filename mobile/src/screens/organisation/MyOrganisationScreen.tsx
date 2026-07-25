@@ -43,7 +43,7 @@ export default function MyOrganisationScreen() {
 
   useEffect(() => { load(); }, [load]);
 
-  if (loading) return <ActivityIndicator style={{ flex: 1 }} color={colors.primary} />;
+  if (loading) return <View style={{ flex: 1, backgroundColor: colors.background }}><ActivityIndicator style={{ flex: 1 }} color={colors.primary} /></View>;
   if (error) return <LoadError message={error} onRetry={load} />;
   if (!org) return null;
 

@@ -1,16 +1,20 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, ActivityIndicator, TextInput, KeyboardAvoidingView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, ActivityIndicator, TextInput, KeyboardAvoidingView, Modal } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { useNavigation, useRoute, RouteProp, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useApi } from '../../hooks/useApi';
+import { useHasTeam } from '../../contexts/HasTeamContext';
 import { AppColors } from '../../utils/colors';
 import { MoreStackParamList } from '../../navigation/types';
 import { apiErrorMessage } from '../../utils/apiError';
 import { showAlert } from '../../components/common/AlertModal';
 import LoadError from '../../components/common/LoadError';
+import Input from '../../components/common/Input';
+import Button from '../../components/common/Button';
+import DatePickerField from '../../components/common/DatePickerField';
 
 type Nav = NativeStackNavigationProp<MoreStackParamList, 'ProjectDetail'>;
 type Rt = RouteProp<MoreStackParamList, 'ProjectDetail'>;
@@ -20,6 +24,7 @@ export default function ProjectDetailScreen() {
   const { params } = useRoute<Rt>();
   const { colors } = useTheme();
   const api = useApi();
+  const { isAdmin } = useHasTeam();
   const insets = useSafeAreaInsets();
   const s = useMemo(() => makeStyles(colors), [colors]);
 
@@ -30,18 +35,26 @@ export default function ProjectDetailScreen() {
   const [error, setError] = useState<string | null>(null);
   const [newComment, setNewComment] = useState('');
   const [posting, setPosting] = useState(false);
+  const [meId, setMeId] = useState<number | null>(null);
+  const [addMsModal, setAddMsModal] = useState(false);
+  const [msTitle, setMsTitle] = useState('');
+  const [msStart, setMsStart] = useState('');
+  const [msEnd, setMsEnd] = useState('');
+  const [savingMs, setSavingMs] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [pRes, mRes, cRes] = await Promise.all([
+      const [pRes, mRes, cRes, meRes] = await Promise.all([
         api.projects.get(params.appId, params.projectId),
         api.projects.listMilestones(params.appId, params.projectId),
         api.projects.listComments(params.appId, params.projectId),
+        api.me.getProfile(),
       ]);
       setProject(pRes.data);
       setMilestones(mRes.data?.items ?? mRes.data ?? []);
       setComments(cRes.data?.items ?? cRes.data ?? []);
+      setMeId(meRes.data?.id ?? meRes.data?.user?.id ?? null);
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, 'Could not load this project.'));
@@ -51,6 +64,54 @@ export default function ProjectDetailScreen() {
   }, [params.appId, params.projectId]);
 
   useEffect(() => { load(); }, [load]);
+  useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  const isOwnerOrAdmin = isAdmin || (meId != null && project?.owner_user_id === meId);
+
+  const toggleMilestone = async (m: any) => {
+    try {
+      await api.projects.updateMilestone(params.appId, params.projectId, m.id, { is_completed: m.is_completed ? 0 : 1 });
+      await load();
+    } catch (err) {
+      showAlert('Could not update milestone', apiErrorMessage(err));
+    }
+  };
+
+  const deleteProject = () => {
+    showAlert(
+      'Delete Project',
+      `Are you sure you want to delete "${project.name}"? This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete', style: 'destructive', onPress: async () => {
+            try {
+              await api.projects.delete(params.appId, params.projectId);
+              navigation.goBack();
+            } catch (err) {
+              showAlert('Could not delete project', apiErrorMessage(err));
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const addMilestone = async () => {
+    if (!msTitle.trim()) return showAlert('Validation', 'Milestone title is required.');
+    setSavingMs(true);
+    try {
+      await api.projects.createMilestone(params.appId, params.projectId, {
+        title: msTitle.trim(), start_date: msStart || undefined, end_date: msEnd || undefined,
+      });
+      setMsTitle(''); setMsStart(''); setMsEnd(''); setAddMsModal(false);
+      await load();
+    } catch (err) {
+      showAlert('Could not add milestone', apiErrorMessage(err));
+    } finally {
+      setSavingMs(false);
+    }
+  };
 
   const postComment = async () => {
     if (!newComment.trim()) return;
@@ -66,7 +127,7 @@ export default function ProjectDetailScreen() {
     }
   };
 
-  if (loading) return <ActivityIndicator style={{ flex: 1 }} color={colors.primary} />;
+  if (loading) return <View style={{ flex: 1, backgroundColor: colors.background }}><ActivityIndicator style={{ flex: 1 }} color={colors.primary} /></View>;
   if (error) return <LoadError message={error} onRetry={load} />;
   if (!project) return null;
 
@@ -77,7 +138,21 @@ export default function ProjectDetailScreen() {
           <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
         </TouchableOpacity>
         <Text style={s.title} numberOfLines={1}>{project.name}</Text>
-        <View style={{ width: 36 }} />
+        {isOwnerOrAdmin ? (
+          <View style={s.headerActions}>
+            <TouchableOpacity
+              style={s.backBtn}
+              onPress={() => navigation.navigate('CreateEditProject', { appId: params.appId, projectId: params.projectId })}
+            >
+              <Ionicons name="create-outline" size={20} color={colors.primary} />
+            </TouchableOpacity>
+            <TouchableOpacity style={s.backBtn} onPress={deleteProject}>
+              <Ionicons name="trash-outline" size={20} color={colors.danger} />
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={{ width: 36 }} />
+        )}
       </View>
 
       <ScrollView contentContainerStyle={s.body} showsVerticalScrollIndicator={false}>
@@ -99,12 +174,19 @@ export default function ProjectDetailScreen() {
           </View>
         </View>
 
-        <Text style={s.sectionHead}>MILESTONES</Text>
+        <View style={s.sectionHeadRow}>
+          <Text style={s.sectionHead}>MILESTONES</Text>
+          {isOwnerOrAdmin && (
+            <TouchableOpacity onPress={() => setAddMsModal(true)}>
+              <Ionicons name="add-circle-outline" size={18} color={colors.primary} />
+            </TouchableOpacity>
+          )}
+        </View>
         {milestones.length === 0 ? (
           <Text style={s.emptyText}>No milestones yet</Text>
         ) : (
           milestones.map((m) => (
-            <View key={m.id} style={s.msRow}>
+            <TouchableOpacity key={m.id} style={s.msRow} onPress={() => toggleMilestone(m)} activeOpacity={0.7}>
               <Ionicons
                 name={m.is_completed ? 'checkmark-circle' : 'ellipse-outline'}
                 size={18}
@@ -114,7 +196,7 @@ export default function ProjectDetailScreen() {
                 <Text style={s.msTitle}>{m.title}</Text>
                 {m.start_date ? <Text style={s.msDate}>{new Date(m.start_date).toLocaleDateString()}</Text> : null}
               </View>
-            </View>
+            </TouchableOpacity>
           ))
         )}
 
@@ -143,6 +225,23 @@ export default function ProjectDetailScreen() {
           <Ionicons name="send" size={16} color="#fff" />
         </TouchableOpacity>
       </View>
+
+      <Modal visible={addMsModal} transparent animationType="fade" onRequestClose={() => setAddMsModal(false)}>
+        <View style={s.modalBackdrop}>
+          <View style={s.modalCard}>
+            <View style={s.modalHead}>
+              <Text style={s.modalTitle}>Add Milestone</Text>
+              <TouchableOpacity onPress={() => setAddMsModal(false)}>
+                <Ionicons name="close" size={22} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <Input label="Title *" value={msTitle} onChangeText={setMsTitle} placeholder="Milestone title" />
+            <DatePickerField label="Start Date" value={msStart} onChange={setMsStart} />
+            <DatePickerField label="End Date" value={msEnd} onChange={setMsEnd} />
+            <Button label="Add Milestone" onPress={addMilestone} loading={savingMs} fullWidth />
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -157,6 +256,7 @@ function makeStyles(c: AppColors) {
       backgroundColor: c.surface, borderBottomWidth: 1, borderBottomColor: c.border,
     },
     backBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+    headerActions: { flexDirection: 'row' },
     title: { flex: 1, fontSize: 18, fontFamily: SERIF, color: c.textPrimary, fontWeight: '700', textAlign: 'center' },
     body: { padding: 16, paddingBottom: 32 },
     client: { fontSize: 13, color: c.primary, fontWeight: '700', marginBottom: 4 },
@@ -169,6 +269,11 @@ function makeStyles(c: AppColors) {
     statVal: { fontSize: 14, fontWeight: '800', color: c.textPrimary, textTransform: 'capitalize' },
     statLbl: { fontSize: 9, fontWeight: '700', color: c.textMuted, marginTop: 4, letterSpacing: 0.5 },
     sectionHead: { fontSize: 11, fontWeight: '700', color: c.textMuted, letterSpacing: 1, marginTop: 8, marginBottom: 10 },
+    sectionHeadRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 },
+    modalCard: { backgroundColor: c.surface, borderRadius: 16, padding: 18 },
+    modalHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
+    modalTitle: { fontSize: 17, fontWeight: '800', color: c.textPrimary },
     emptyText: { fontSize: 13, color: c.textMuted, marginBottom: 12 },
     msRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
     msTitle: { fontSize: 13, fontWeight: '600', color: c.textPrimary },

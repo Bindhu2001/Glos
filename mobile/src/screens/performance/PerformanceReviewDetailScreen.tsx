@@ -34,12 +34,13 @@ interface Review {
   platform_user_id?: number;
   reviewee_name?: string;
   employee_name?: string;
-  self_rating?: number;
-  manager_rating?: number;
-  final_rating?: number;
+  self_score?: number;
+  manager_score?: number;
+  final_score?: number;
+  goals_score?: number;
+  skills_score?: number;
+  values_score?: number;
   feedback_discussion_date?: string;
-  final_approval_status?: string;
-  rejection_reason?: string;
 }
 
 interface DraftEntry { rating: number; comments: string; }
@@ -97,7 +98,12 @@ export default function PerformanceReviewDetailScreen() {
   const [ratingsByRole, setRatingsByRole] = useState<Record<string, Draft>>({});
   const [feedbackDate, setFeedbackDate] = useState('');
   const [feedbackNotes, setFeedbackNotes] = useState('');
-  const [rejectionReason, setRejectionReason] = useState('');
+  const [managerAction, setManagerAction] = useState<'approve' | 'reject'>('approve');
+  const [rejectionComment, setRejectionComment] = useState('');
+  const [finalAction, setFinalAction] = useState<'approve' | 'reject_to_manager' | 'reject_to_employee'>('approve');
+  const [finalComment, setFinalComment] = useState('');
+  const [managerUserIds, setManagerUserIds] = useState<number[]>([]);
+  const [hasManager, setHasManager] = useState(false);
 
   const load = useCallback(async () => {
     const [reviewRes, ratingsRes, analyticsRes, meRes] = await Promise.all([
@@ -117,6 +123,8 @@ export default function PerformanceReviewDetailScreen() {
     setFinalApprover(fa);
     setAnalytics(analyticsRes.data);
     setCurrentUserId(myId);
+    setManagerUserIds(reviewRes.data?.managerUserIds ?? []);
+    setHasManager(reviewRes.data?.has_manager ?? (reviewRes.data?.managerUserIds ?? []).length > 0);
 
     const byRole: Record<string, Draft> = {};
     for (const r of ratings) {
@@ -134,7 +142,6 @@ export default function PerformanceReviewDetailScreen() {
     setDraft(currentRole && byRole[currentRole] ? { ...byRole[currentRole] } : {});
 
     if (rv.feedback_discussion_date) setFeedbackDate(rv.feedback_discussion_date.split('T')[0]);
-    if (rv.rejection_reason) setRejectionReason(rv.rejection_reason);
   }, [appId, reviewId, api]);
 
   useEffect(() => { run(load); }, [load]);
@@ -166,9 +173,10 @@ export default function PerformanceReviewDetailScreen() {
     return result;
   };
 
+  const isAdmin = workspace?.role === 'super_admin' || workspace?.role === 'admin';
   const canSelfRate = review?.status === 'pending_self' && review?.platform_user_id === currentUserId;
-  // Backend doesn't expose manager_user_id; show form to non-reviewees when pending (backend enforces nothing)
-  const canManagerRate = review?.status === 'pending_manager' && review?.platform_user_id !== currentUserId;
+  const canManagerRate = review?.status === 'pending_manager'
+    && (isAdmin || (currentUserId != null && managerUserIds.some((id) => String(id) === String(currentUserId))));
   const isDesignatedApprover = (finalApprover?.user_id != null && finalApprover.user_id === currentUserId) || workspace?.role === 'super_admin';
   const canFinalRate = review?.status === 'pending_approver' && isDesignatedApprover;
   const isViewOnly = !canSelfRate && !canManagerRate && !canFinalRate;
@@ -191,19 +199,30 @@ export default function PerformanceReviewDetailScreen() {
   };
 
   const handleSubmitManager = async () => {
-    const ratings = buildPayload();
-    if (ratings.length === 0) {
-      Alert.alert('Rate', 'Please provide ratings before submitting.');
+    if (managerAction === 'approve') {
+      const ratings = buildPayload();
+      if (ratings.length === 0) {
+        Alert.alert('Rate', 'Please provide ratings before submitting.');
+        return;
+      }
+      if (!feedbackDate.trim()) {
+        Alert.alert('Required', 'Please enter a feedback discussion date.');
+        return;
+      }
+    } else if (!rejectionComment.trim()) {
+      Alert.alert('Required', 'Please enter a reason for sending this back to the employee.');
       return;
     }
     setSubmitting(true);
     try {
       await api.performance.submitManagerRating(appId, reviewId, {
-        ratings,
+        action: managerAction,
+        ratings: buildPayload(),
         feedback_discussion_date: feedbackDate || undefined,
         discussion_notes: feedbackNotes || undefined,
+        rejection_comment: managerAction === 'reject' ? rejectionComment.trim() : undefined,
       });
-      Alert.alert('Submitted', 'Manager rating submitted.', [
+      Alert.alert('Submitted', managerAction === 'approve' ? 'Manager rating submitted.' : 'Sent back to employee.', [
         { text: 'OK', onPress: () => navigation.goBack() },
       ]);
     } catch {
@@ -211,24 +230,22 @@ export default function PerformanceReviewDetailScreen() {
     } finally { setSubmitting(false); }
   };
 
-  const handleSubmitFinal = async (status: 'approved' | 'rejected') => {
-    if (status === 'rejected' && !rejectionReason.trim()) {
-      Alert.alert('Required', 'Please enter a rejection reason.');
+  const handleSubmitFinal = async (action: 'approve' | 'reject_to_manager' | 'reject_to_employee') => {
+    if (action !== 'approve' && !finalComment.trim()) {
+      Alert.alert('Required', 'Please enter a comment.');
       return;
     }
-    const ratings = buildPayload();
     setSubmitting(true);
     try {
       await api.performance.submitFinalRating(appId, reviewId, {
-        ratings,
-        final_approval_status: status,
-        rejection_reason: status === 'rejected' ? rejectionReason.trim() : undefined,
+        final_action: action,
+        final_comment: finalComment.trim() || undefined,
       });
-      Alert.alert('Done', status === 'approved' ? 'Review approved.' : 'Review rejected.', [
+      Alert.alert('Done', action === 'approve' ? 'Review approved.' : 'Review sent back.', [
         { text: 'OK', onPress: () => navigation.goBack() },
       ]);
     } catch {
-      Alert.alert('Error', 'Failed to submit final rating');
+      Alert.alert('Error', 'Failed to submit final decision');
     } finally { setSubmitting(false); }
   };
 
@@ -349,45 +366,45 @@ export default function PerformanceReviewDetailScreen() {
         </View>
 
         <ScrollView contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
-          {analytics && (
-            <View style={s.analyticsRow}>
-              <View style={s.analyticsItem}>
-                <Text style={s.analyticsNum}>{analytics.tasksCompleted ?? 0}</Text>
-                <Text style={s.analyticsLabel}>Tasks Done</Text>
-              </View>
-              <View style={s.analyticsDivider} />
-              <View style={s.analyticsItem}>
-                <Text style={s.analyticsNum}>
-                  {typeof analytics.hoursSpent === 'number' ? analytics.hoursSpent.toFixed(1) : '0'}
-                </Text>
-                <Text style={s.analyticsLabel}>Hours Spent</Text>
-              </View>
-              <View style={s.analyticsDivider} />
-              <View style={s.analyticsItem}>
-                <Text style={[s.analyticsNum, { color: colors.danger }]}>{analytics.overdueTasks ?? 0}</Text>
-                <Text style={s.analyticsLabel}>Overdue</Text>
-              </View>
+          {/* Performance metrics — always shown horizontally regardless of review stage
+              (self / manager / final approver) so reviewers have task context while rating. */}
+          <View style={s.analyticsRow}>
+            <View style={s.analyticsItem}>
+              <Text style={s.analyticsNum}>{analytics?.tasksCompleted ?? 0}</Text>
+              <Text style={s.analyticsLabel}>Tasks Done</Text>
             </View>
-          )}
+            <View style={s.analyticsDivider} />
+            <View style={s.analyticsItem}>
+              <Text style={s.analyticsNum}>
+                {typeof analytics?.hoursSpent === 'number' ? analytics.hoursSpent.toFixed(1) : '0'}
+              </Text>
+              <Text style={s.analyticsLabel}>Hours Spent</Text>
+            </View>
+            <View style={s.analyticsDivider} />
+            <View style={s.analyticsItem}>
+              <Text style={[s.analyticsNum, { color: colors.danger }]}>{analytics?.overdueTasks ?? 0}</Text>
+              <Text style={s.analyticsLabel}>Overdue</Text>
+            </View>
+          </View>
 
-          {(review.self_rating != null || review.manager_rating != null || review.final_rating != null) && (
+          {(review.self_score != null || review.manager_score != null || review.final_score != null) && (
             <View style={s.ratingsSummary}>
-              {review.self_rating != null && (
+              {review.self_score != null && (
                 <View style={s.ratingSumItem}>
                   <Text style={s.ratingSumLabel}>Self</Text>
-                  <Text style={s.ratingSumNum}>{review.self_rating}/5</Text>
+                  <Text style={s.ratingSumNum}>{review.self_score}/5</Text>
                 </View>
               )}
-              {review.manager_rating != null && (
+              {review.manager_score != null && (
                 <View style={s.ratingSumItem}>
                   <Text style={s.ratingSumLabel}>Manager</Text>
-                  <Text style={s.ratingSumNum}>{review.manager_rating}/5</Text>
+                  <Text style={s.ratingSumNum}>{review.manager_score}/5</Text>
                 </View>
               )}
-              {review.final_rating != null && (
+              {review.final_score != null && (
                 <View style={s.ratingSumItem}>
                   <Text style={s.ratingSumLabel}>Final</Text>
-                  <Text style={[s.ratingSumNum, { color: colors.primary }]}>{review.final_rating}/5</Text>
+                  <Text style={[s.ratingSumNum, { color: colors.primary }]}>{review.final_score}/5</Text>
                 </View>
               )}
             </View>
@@ -414,41 +431,99 @@ export default function PerformanceReviewDetailScreen() {
 
           {canManagerRate && (
             <View style={{ marginTop: 16 }}>
-              <Text style={s.sectionLabel}>Feedback Discussion</Text>
-              <Text style={s.fieldLabel}>Discussion Date</Text>
-              <TextInput
-                style={s.input}
-                value={feedbackDate}
-                onChangeText={setFeedbackDate}
-                placeholder="YYYY-MM-DD"
-                placeholderTextColor={colors.gray400}
-              />
-              <Text style={s.fieldLabel}>Discussion Notes</Text>
-              <TextInput
-                style={[s.input, s.inputMulti]}
-                value={feedbackNotes}
-                onChangeText={setFeedbackNotes}
-                placeholder="Optional notes from the discussion..."
-                placeholderTextColor={colors.gray400}
-                multiline
-                numberOfLines={3}
-              />
+              <Text style={s.sectionLabel}>Manager Decision</Text>
+              <View style={s.actionToggleRow}>
+                <TouchableOpacity
+                  style={[s.actionToggleBtn, managerAction === 'approve' && s.actionToggleBtnActive]}
+                  onPress={() => setManagerAction('approve')}
+                >
+                  <Text style={[s.actionToggleTxt, managerAction === 'approve' && s.actionToggleTxtActive]}>Approve &amp; Rate</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[s.actionToggleBtn, managerAction === 'reject' && s.actionToggleBtnActive]}
+                  onPress={() => setManagerAction('reject')}
+                >
+                  <Text style={[s.actionToggleTxt, managerAction === 'reject' && s.actionToggleTxtActive]}>Send Back to Employee</Text>
+                </TouchableOpacity>
+              </View>
+
+              {managerAction === 'approve' ? (
+                <>
+                  <Text style={s.fieldLabel}>Discussion Date *</Text>
+                  <TextInput
+                    style={s.input}
+                    value={feedbackDate}
+                    onChangeText={setFeedbackDate}
+                    placeholder="YYYY-MM-DD"
+                    placeholderTextColor={colors.gray400}
+                  />
+                  <Text style={s.fieldLabel}>Discussion Notes</Text>
+                  <TextInput
+                    style={[s.input, s.inputMulti]}
+                    value={feedbackNotes}
+                    onChangeText={setFeedbackNotes}
+                    placeholder="Optional notes from the discussion..."
+                    placeholderTextColor={colors.gray400}
+                    multiline
+                    numberOfLines={3}
+                  />
+                </>
+              ) : (
+                <>
+                  <Text style={s.fieldLabel}>Reason *</Text>
+                  <TextInput
+                    style={[s.input, s.inputMulti]}
+                    value={rejectionComment}
+                    onChangeText={setRejectionComment}
+                    placeholder="Explain why this is being sent back..."
+                    placeholderTextColor={colors.gray400}
+                    multiline
+                    numberOfLines={3}
+                  />
+                </>
+              )}
             </View>
           )}
 
           {canFinalRate && (
             <View style={{ marginTop: 16 }}>
               <Text style={s.sectionLabel}>Final Decision</Text>
-              <Text style={s.fieldLabel}>Rejection Reason (required if rejecting)</Text>
-              <TextInput
-                style={[s.input, s.inputMulti]}
-                value={rejectionReason}
-                onChangeText={setRejectionReason}
-                placeholder="Enter reason if rejecting..."
-                placeholderTextColor={colors.gray400}
-                multiline
-                numberOfLines={3}
-              />
+              <View style={s.actionToggleRow}>
+                <TouchableOpacity
+                  style={[s.actionToggleBtn, finalAction === 'approve' && s.actionToggleBtnActive]}
+                  onPress={() => setFinalAction('approve')}
+                >
+                  <Text style={[s.actionToggleTxt, finalAction === 'approve' && s.actionToggleTxtActive]}>Approve</Text>
+                </TouchableOpacity>
+                {hasManager && (
+                  <TouchableOpacity
+                    style={[s.actionToggleBtn, finalAction === 'reject_to_manager' && s.actionToggleBtnActive]}
+                    onPress={() => setFinalAction('reject_to_manager')}
+                  >
+                    <Text style={[s.actionToggleTxt, finalAction === 'reject_to_manager' && s.actionToggleTxtActive]}>To Manager</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  style={[s.actionToggleBtn, finalAction === 'reject_to_employee' && s.actionToggleBtnActive]}
+                  onPress={() => setFinalAction('reject_to_employee')}
+                >
+                  <Text style={[s.actionToggleTxt, finalAction === 'reject_to_employee' && s.actionToggleTxtActive]}>To Employee</Text>
+                </TouchableOpacity>
+              </View>
+              {finalAction !== 'approve' && (
+                <>
+                  <Text style={s.fieldLabel}>Comment *</Text>
+                  <TextInput
+                    style={[s.input, s.inputMulti]}
+                    value={finalComment}
+                    onChangeText={setFinalComment}
+                    placeholder="Enter a reason..."
+                    placeholderTextColor={colors.gray400}
+                    multiline
+                    numberOfLines={3}
+                  />
+                </>
+              )}
             </View>
           )}
 
@@ -467,40 +542,28 @@ export default function PerformanceReviewDetailScreen() {
 
           {canManagerRate && (
             <TouchableOpacity
-              style={[s.submitBtn, submitting && s.submitBtnDisabled]}
+              style={[managerAction === 'approve' ? s.submitBtn : s.submitBtnDanger, submitting && s.submitBtnDisabled]}
               onPress={handleSubmitManager}
               disabled={submitting}
             >
               {submitting
                 ? <ActivityIndicator color="#fff" />
-                : <Text style={s.submitBtnText}>Submit Manager Rating</Text>
+                : <Text style={s.submitBtnText}>{managerAction === 'approve' ? 'Submit Manager Rating' : 'Send Back to Employee'}</Text>
               }
             </TouchableOpacity>
           )}
 
           {canFinalRate && (
-            <View style={s.finalBtns}>
-              <TouchableOpacity
-                style={[s.approveBtn, submitting && s.submitBtnDisabled]}
-                onPress={() => handleSubmitFinal('approved')}
-                disabled={submitting}
-              >
-                {submitting
-                  ? <ActivityIndicator color="#fff" />
-                  : <><Ionicons name="checkmark" size={16} color="#fff" /><Text style={s.approveBtnText}>Approve</Text></>
-                }
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[s.rejectBtn, submitting && s.submitBtnDisabled]}
-                onPress={() => handleSubmitFinal('rejected')}
-                disabled={submitting}
-              >
-                {submitting
-                  ? <ActivityIndicator color={colors.danger} />
-                  : <><Ionicons name="close" size={16} color={colors.danger} /><Text style={s.rejectBtnText}>Reject</Text></>
-                }
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity
+              style={[finalAction === 'approve' ? s.submitBtn : s.submitBtnDanger, submitting && s.submitBtnDisabled]}
+              onPress={() => handleSubmitFinal(finalAction)}
+              disabled={submitting}
+            >
+              {submitting
+                ? <ActivityIndicator color="#fff" />
+                : <Text style={s.submitBtnText}>{finalAction === 'approve' ? 'Approve Review' : 'Send Back'}</Text>
+              }
+            </TouchableOpacity>
           )}
 
           {isViewOnly && (
@@ -574,7 +637,19 @@ function makeStyles(c: AppColors) {
       paddingVertical: 14, alignItems: 'center',
     },
     submitBtnDisabled: { opacity: 0.5 },
+    submitBtnDanger: {
+      marginTop: 24, backgroundColor: c.danger, borderRadius: 12,
+      paddingVertical: 14, alignItems: 'center',
+    },
     submitBtnText:   { fontSize: 15, color: '#ffffff', fontWeight: '700' },
+    actionToggleRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
+    actionToggleBtn: {
+      flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center',
+      backgroundColor: c.gray50, borderWidth: 1.5, borderColor: c.border,
+    },
+    actionToggleBtnActive: { backgroundColor: c.primaryLight, borderColor: c.primary },
+    actionToggleTxt: { fontSize: 12, fontWeight: '700', color: c.gray600, textAlign: 'center' },
+    actionToggleTxtActive: { color: c.primary },
     finalBtns:       { flexDirection: 'row', gap: 12, marginTop: 24 },
     approveBtn:      {
       flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',

@@ -21,6 +21,9 @@ import LoadingSpinner from '../../components/common/LoadingSpinner';
 type Route = RouteProp<TasksStackParamList, 'CreateTask'>;
 
 const PRIORITIES = ['low', 'medium', 'high', 'urgent'];
+const PRIORITY_LABELS: Record<string, string> = { low: 'Low', medium: 'Medium', high: 'High', urgent: 'Critical' };
+const TASK_TYPES = ['internal', 'project'] as const;
+const TASK_TYPE_LABELS: Record<string, string> = { internal: 'Internal', project: 'Project' };
 
 export default function CreateTaskScreen() {
   const route = useRoute<Route>();
@@ -41,23 +44,36 @@ export default function CreateTaskScreen() {
   const [assigneeId, setAssigneeId] = useState<number | null>(null);
   const [areaId, setAreaId] = useState<number | null>(null);
   const [estHours, setEstHours] = useState('');
+  const [taskType, setTaskType] = useState<'internal' | 'project'>('internal');
+  const [projectId, setProjectId] = useState<number | null>(null);
+  const [milestoneId, setMilestoneId] = useState<number | null>(null);
+  const [routineId, setRoutineId] = useState<number | null>(null);
 
   // Data
   const [members, setMembers] = useState<any[]>([]);
   const [areas, setAreas] = useState<{ id: number; name: string; roleTitle: string }[]>([]);
+  const [projects, setProjects] = useState<{ id: number; name: string }[]>([]);
+  const [milestones, setMilestones] = useState<any[]>([]);
+  const [routines, setRoutines] = useState<any[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
 
   // Modals
   const [assigneeModal, setAssigneeModal] = useState(false);
   const [areaModal, setAreaModal] = useState(false);
+  const [projectModal, setProjectModal] = useState(false);
+  const [milestoneModal, setMilestoneModal] = useState(false);
+  const [routineModal, setRoutineModal] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const [meRes, membersRes, rolesRes] = await Promise.all([
+      const [meRes, membersRes, rolesRes, projRes] = await Promise.all([
         api.me.getProfile(),
         api.workspace.getMembers(appId),
         api.roles.list(appId),
+        api.projects.listSimple(appId).catch(() => ({ data: [] })),
       ]);
+      const projRows: any[] = projRes.data?.items ?? projRes.data ?? [];
+      setProjects(projRows.map((p: any) => ({ id: p.id, name: p.name })));
       const me = meRes.data;
       const meId = me?.id ?? me?.user?.id ?? null;
       const membersList: any[] = membersRes.data?.members ?? membersRes.data?.items ?? membersRes.data ?? [];
@@ -88,6 +104,23 @@ export default function CreateTaskScreen() {
 
   useEffect(() => { load(); }, [load]);
 
+  useEffect(() => {
+    if (taskType !== 'project' || !projectId) { setMilestones([]); return; }
+    api.projects.listMilestones(appId, projectId)
+      .then((res: any) => {
+        const items: any[] = res.data?.items ?? res.data ?? [];
+        setMilestones(items.filter((m) => !m.is_completed));
+      })
+      .catch(() => setMilestones([]));
+  }, [taskType, projectId, appId]);
+
+  useEffect(() => {
+    if (!assigneeId) { setRoutines([]); return; }
+    api.routines.getAvailable(appId, assigneeId)
+      .then((res: any) => setRoutines(res.data?.routines ?? res.data ?? []))
+      .catch(() => setRoutines([]));
+  }, [assigneeId, appId]);
+
   const getMemberName = (uid: number | null) => {
     if (!uid) return 'Unassigned';
     const m = members.find((mb) => (mb.user_id ?? mb.id) === uid);
@@ -109,6 +142,10 @@ export default function CreateTaskScreen() {
       showAlert('Validation', 'Please select a deadline.');
       return;
     }
+    if (taskType === 'project' && projectId && !milestoneId) {
+      showAlert('Validation', 'Select a milestone for this project task.');
+      return;
+    }
     setSaving(true);
     try {
       const estMinutes = estHours !== '' ? Math.round(parseFloat(estHours) * 60) : 0;
@@ -121,6 +158,9 @@ export default function CreateTaskScreen() {
         assigned_to_user_id: assigneeId ?? null,
         area_id: areaId ?? null,
         estimated_minutes: estMinutes || 0,
+        project_id: taskType === 'project' ? (projectId ?? undefined) : undefined,
+        milestone_id: taskType === 'project' ? (milestoneId ?? undefined) : undefined,
+        routine_id: routineId ?? undefined,
       });
       navigation.goBack();
     } catch {
@@ -156,7 +196,7 @@ export default function CreateTaskScreen() {
                   onPress={() => setPriority(p)}
                 >
                   <Text style={[s.selectorChipText, { color: priority === p ? c.text : colors.gray500 }]}>
-                    {p}
+                    {PRIORITY_LABELS[p]}
                   </Text>
                 </TouchableOpacity>
               );
@@ -189,6 +229,63 @@ export default function CreateTaskScreen() {
             <Ionicons name="chevron-forward" size={16} color={colors.gray400} style={{ marginLeft: 'auto' }} />
           </TouchableOpacity>
           <Text style={s.helpText}>Align to a role's area, or leave as None for general work.</Text>
+
+          {/* Task Type */}
+          <Text style={s.fieldLabel}>Task Type</Text>
+          <View style={s.chipRow}>
+            {TASK_TYPES.map((t) => (
+              <TouchableOpacity
+                key={t}
+                style={[s.selectorChip, { backgroundColor: taskType === t ? colors.primaryLight : colors.surface, borderColor: taskType === t ? colors.primary : colors.border }]}
+                onPress={() => { setTaskType(t); if (t === 'internal') { setProjectId(null); setMilestoneId(null); } }}
+              >
+                <Text style={[s.selectorChipText, { color: taskType === t ? colors.primary : colors.gray500 }]}>
+                  {TASK_TYPE_LABELS[t]}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {taskType === 'project' && (
+            <>
+              <Text style={s.fieldLabel}>Project *</Text>
+              <TouchableOpacity style={s.pickerRow} onPress={() => setProjectModal(true)}>
+                <Ionicons name="folder-open-outline" size={16} color={colors.gray400} />
+                <Text style={projectId ? s.pickerValue : s.pickerPlaceholder}>
+                  {projectId ? (projects.find((p) => p.id === projectId)?.name ?? 'Selected') : 'Tap to select a project'}
+                </Text>
+                <Ionicons name="chevron-forward" size={16} color={colors.gray400} style={{ marginLeft: 'auto' }} />
+              </TouchableOpacity>
+
+              {projectId && (
+                <>
+                  <Text style={s.fieldLabel}>Milestone *</Text>
+                  <TouchableOpacity style={s.pickerRow} onPress={() => setMilestoneModal(true)}>
+                    <Ionicons name="flag-outline" size={16} color={colors.gray400} />
+                    <Text style={milestoneId ? s.pickerValue : s.pickerPlaceholder}>
+                      {milestoneId ? (milestones.find((m) => m.id === milestoneId)?.title ?? 'Selected') : 'Tap to select a milestone'}
+                    </Text>
+                    <Ionicons name="chevron-forward" size={16} color={colors.gray400} style={{ marginLeft: 'auto' }} />
+                  </TouchableOpacity>
+                </>
+              )}
+            </>
+          )}
+
+          {/* Routine Activity */}
+          {routines.length > 0 && (
+            <>
+              <Text style={s.fieldLabel}>Routine Activity</Text>
+              <TouchableOpacity style={s.pickerRow} onPress={() => setRoutineModal(true)}>
+                <Ionicons name="repeat-outline" size={16} color={colors.gray400} />
+                <Text style={routineId ? s.pickerValue : s.pickerPlaceholder}>
+                  {routineId ? (routines.find((r) => r.id === routineId)?.description ?? 'Selected') : 'None'}
+                </Text>
+                <Ionicons name="chevron-forward" size={16} color={colors.gray400} style={{ marginLeft: 'auto' }} />
+              </TouchableOpacity>
+              <Text style={s.helpText}>Optional — link this task to a recurring routine.</Text>
+            </>
+          )}
 
           {/* Estimated Hours */}
           <Text style={s.fieldLabel}>Estimated Hours</Text>
@@ -265,6 +362,93 @@ export default function CreateTaskScreen() {
                       <Text style={[s.modalOptionText, isActive && { color: colors.primary, fontWeight: '700' }]}>{a.name}</Text>
                       <Text style={s.areaRoleText}>{a.roleTitle}</Text>
                     </View>
+                    {isActive && <Ionicons name="checkmark" size={18} color={colors.primary} />}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Project Picker Modal */}
+      <Modal visible={projectModal} transparent animationType="slide" onRequestClose={() => setProjectModal(false)}>
+        <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setProjectModal(false)}>
+          <View style={[s.modalSheet, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={s.modalHandle} />
+            <Text style={s.modalTitle}>Select Project</Text>
+            <ScrollView>
+              {projects.map((p) => {
+                const isActive = projectId === p.id;
+                return (
+                  <TouchableOpacity
+                    key={p.id}
+                    style={[s.modalOption, isActive && s.modalOptionActive]}
+                    onPress={() => { setProjectId(p.id); setMilestoneId(null); setProjectModal(false); }}
+                  >
+                    <Ionicons name="folder-open-outline" size={18} color={colors.gray400} />
+                    <Text style={[s.modalOptionText, isActive && { color: colors.primary, fontWeight: '700' }]}>{p.name}</Text>
+                    {isActive && <Ionicons name="checkmark" size={18} color={colors.primary} style={{ marginLeft: 'auto' }} />}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Milestone Picker Modal */}
+      <Modal visible={milestoneModal} transparent animationType="slide" onRequestClose={() => setMilestoneModal(false)}>
+        <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setMilestoneModal(false)}>
+          <View style={[s.modalSheet, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={s.modalHandle} />
+            <Text style={s.modalTitle}>Select Milestone</Text>
+            <ScrollView>
+              {milestones.length === 0 ? (
+                <Text style={s.helpText}>No incomplete milestones on this project.</Text>
+              ) : (
+                milestones.map((m) => {
+                  const isActive = milestoneId === m.id;
+                  return (
+                    <TouchableOpacity
+                      key={m.id}
+                      style={[s.modalOption, isActive && s.modalOptionActive]}
+                      onPress={() => { setMilestoneId(m.id); setMilestoneModal(false); }}
+                    >
+                      <Ionicons name="flag-outline" size={18} color={colors.gray400} />
+                      <Text style={[s.modalOptionText, isActive && { color: colors.primary, fontWeight: '700' }]}>{m.title}</Text>
+                      {isActive && <Ionicons name="checkmark" size={18} color={colors.primary} style={{ marginLeft: 'auto' }} />}
+                    </TouchableOpacity>
+                  );
+                })
+              )}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Routine Picker Modal */}
+      <Modal visible={routineModal} transparent animationType="slide" onRequestClose={() => setRoutineModal(false)}>
+        <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setRoutineModal(false)}>
+          <View style={[s.modalSheet, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={s.modalHandle} />
+            <Text style={s.modalTitle}>Select Routine Activity</Text>
+            <ScrollView>
+              <TouchableOpacity style={s.modalOption} onPress={() => { setRoutineId(null); setRoutineModal(false); }}>
+                <Ionicons name="close-circle-outline" size={18} color={colors.gray400} />
+                <Text style={[s.modalOptionText, { color: colors.gray500 }]}>None</Text>
+                {!routineId && <Ionicons name="checkmark" size={18} color={colors.primary} style={{ marginLeft: 'auto' }} />}
+              </TouchableOpacity>
+              {routines.map((r) => {
+                const isActive = routineId === r.id;
+                return (
+                  <TouchableOpacity
+                    key={r.id}
+                    style={[s.modalOption, isActive && s.modalOptionActive]}
+                    onPress={() => { setRoutineId(r.id); setRoutineModal(false); }}
+                  >
+                    <Ionicons name="repeat-outline" size={18} color={colors.gray400} />
+                    <Text style={[s.modalOptionText, isActive && { color: colors.primary, fontWeight: '700' }]}>{r.description}</Text>
                     {isActive && <Ionicons name="checkmark" size={18} color={colors.primary} />}
                   </TouchableOpacity>
                 );

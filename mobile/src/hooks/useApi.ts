@@ -185,32 +185,7 @@ export function useApi() {
           return notificationsApi(client).markAllRead();
         },
       },
-      dashboard: {
-        getMyDashboard: async (appId: number) => {
-          const client = await mkClient();
-          return dashboardApi(client).getMyDashboard(appId);
-        },
-        getTeamDashboard: async (appId: number) => {
-          const client = await mkClient();
-          return dashboardApi(client).getTeamDashboard(appId);
-        },
-        getManagerDashboard: async (appId: number, scope?: 'direct' | 'all' | 'admin', month?: string, viewAs?: number) => {
-          const client = await mkClient();
-          return dashboardApi(client).getManagerDashboard(appId, scope, month, viewAs);
-        },
-        getManagerTaskStats: async (appId: number, params?: Record<string, unknown>) => {
-          const client = await mkClient();
-          return dashboardApi(client).getManagerTaskStats(appId, params);
-        },
-        getManagerActivityByMember: async (appId: number, params?: Record<string, unknown>) => {
-          const client = await mkClient();
-          return dashboardApi(client).getManagerActivityByMember(appId, params);
-        },
-        isTopHierarchy: async (appId: number) => {
-          const client = await mkClient();
-          return dashboardApi(client).isTopHierarchy(appId);
-        },
-      },
+      dashboard: bindApiGroup(mkClient, dashboardApi),
       projects: bindApiGroup(mkClient, projectsApi),
       contracts: bindApiGroup(mkClient, contractsApi),
       routines: bindApiGroup(mkClient, routinesApi),
@@ -348,100 +323,7 @@ export function useApi() {
           return feedApi(client).getGivenFeedback(appId);
         },
       },
-      performance: {
-        getCycles: async (appId: number) => {
-          const client = await mkClient();
-          return performanceApi(client).getCycles(appId);
-        },
-        getGoals: async (appId: number, params?: Record<string, unknown>) => {
-          const client = await mkClient();
-          return performanceApi(client).getGoals(appId, params);
-        },
-        createGoal: async (appId: number, data: Record<string, unknown>) => {
-          const client = await mkClient();
-          return performanceApi(client).createGoal(appId, data);
-        },
-        submitGoalForApproval: async (appId: number, goalId: number) => {
-          const client = await mkClient();
-          return performanceApi(client).submitGoalForApproval(appId, goalId);
-        },
-        getAppraisals: async (appId: number, params?: Record<string, unknown>) => {
-          const client = await mkClient();
-          return performanceApi(client).getAppraisals(appId, params);
-        },
-        listMyReviews: async (appId: number) => {
-          const client = await mkClient();
-          return performanceApi(client).listMyReviews(appId);
-        },
-        listPendingForMe: async (appId: number) => {
-          const client = await mkClient();
-          return performanceApi(client).listPendingForMe(appId);
-        },
-        approveGoal: async (appId: number, goalId: number) => {
-          const client = await mkClient();
-          return performanceApi(client).approveGoal(appId, goalId);
-        },
-        rejectGoal: async (appId: number, goalId: number, rejection_reason: string) => {
-          const client = await mkClient();
-          return performanceApi(client).rejectGoal(appId, goalId, rejection_reason);
-        },
-        listTeamGoals: async (appId: number) => {
-          const client = await mkClient();
-          return performanceApi(client).listTeamGoals(appId);
-        },
-        listTeamReviews: async (appId: number) => {
-          const client = await mkClient();
-          return performanceApi(client).listTeamReviews(appId);
-        },
-        listAllReviews: async (appId: number) => {
-          const client = await mkClient();
-          return performanceApi(client).listAllReviews(appId);
-        },
-        submitReview: async (appId: number, reviewId: number, data: Record<string, unknown>) => {
-          const client = await mkClient();
-          return performanceApi(client).submitReview(appId, reviewId, data);
-        },
-        getReview: async (appId: number, reviewId: number) => {
-          const client = await mkClient();
-          return performanceApi(client).getReview(appId, reviewId);
-        },
-        getReviewRatings: async (appId: number, reviewId: number) => {
-          const client = await mkClient();
-          return performanceApi(client).getReviewRatings(appId, reviewId);
-        },
-        getReviewAnalytics: async (appId: number, reviewId: number) => {
-          const client = await mkClient();
-          return performanceApi(client).getReviewAnalytics(appId, reviewId);
-        },
-        submitSelfRating: async (appId: number, reviewId: number, data: Record<string, unknown>) => {
-          const client = await mkClient();
-          return performanceApi(client).submitSelfRating(appId, reviewId, data);
-        },
-        submitManagerRating: async (appId: number, reviewId: number, data: Record<string, unknown>) => {
-          const client = await mkClient();
-          return performanceApi(client).submitManagerRating(appId, reviewId, data);
-        },
-        submitFinalRating: async (appId: number, reviewId: number, data: Record<string, unknown>) => {
-          const client = await mkClient();
-          return performanceApi(client).submitFinalRating(appId, reviewId, data);
-        },
-        getAppraisal: async (appId: number, appraisalId: number) => {
-          const client = await mkClient();
-          return performanceApi(client).getAppraisal(appId, appraisalId);
-        },
-        submitEmployeeResponse: async (appId: number, appraisalId: number, data: Record<string, unknown>) => {
-          const client = await mkClient();
-          return performanceApi(client).submitEmployeeResponse(appId, appraisalId, data);
-        },
-        submitManagerResponse: async (appId: number, appraisalId: number, data: Record<string, unknown>) => {
-          const client = await mkClient();
-          return performanceApi(client).submitManagerResponse(appId, appraisalId, data);
-        },
-        submitFinalDecision: async (appId: number, appraisalId: number, data: Record<string, unknown>) => {
-          const client = await mkClient();
-          return performanceApi(client).submitFinalDecision(appId, appraisalId, data);
-        },
-      },
+      performance: bindApiGroup(mkClient, performanceApi),
       employees: {
         list: async (appId: number) => {
           const client = await mkClient();
@@ -456,24 +338,7 @@ export function useApi() {
           return employeesApi(client).getOrgChart(appId);
         },
       },
-      appreciations: {
-        give: async (appId: number, data: { to_user_id: number; message: string; badge?: string }) => {
-          const client = await mkClient();
-          return appreciationsApi(client).give(appId, data);
-        },
-        listReceived: async (appId: number) => {
-          const client = await mkClient();
-          return appreciationsApi(client).listReceived(appId);
-        },
-        getForUser: async (appId: number, userId: number) => {
-          const client = await mkClient();
-          return appreciationsApi(client).getForUser(appId, userId);
-        },
-        getByCycle: async (appId: number, cycleId: number) => {
-          const client = await mkClient();
-          return appreciationsApi(client).getByCycle(appId, cycleId);
-        },
-      },
+      appreciations: bindApiGroup(mkClient, appreciationsApi),
       timeLogs: {
         getSummary: async (appId: number, params?: { period?: string; start_date?: string; end_date?: string }) => {
           const client = await mkClient();
