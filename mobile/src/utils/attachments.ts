@@ -10,6 +10,7 @@ import { showAlert } from '../components/common/AlertModal';
 // attempt instead of failing at the presign call.
 export const ALLOWED_MIME_TYPES = [
   'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml',
+  'image/tiff', 'image/heic', 'image/heif', 'image/bmp', 'image/x-ms-bmp',
   'application/pdf',
   'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -145,11 +146,17 @@ export async function uploadAttachments(
   return out;
 }
 
-// Excludes SVG deliberately: RN's <Image> can't rasterize SVG XML like a
-// browser's <img> would, so treating it as "an image" here would render as a
-// broken thumbnail — better to fall back to the generic file-pill treatment.
+// Only formats RN's <Image> can actually decode render as an image bubble —
+// everything else (SVG, TIFF, HEIC/HEIF, BMP) falls back to the generic
+// file-pill treatment instead of a broken/blank thumbnail. HEIC in particular
+// matters on iOS: it's the default photo format for the on-device camera, so
+// without this a "recent photo" attached via the file picker (rather than
+// the photo library, which re-encodes on pick) would silently fail to render.
+const NON_RENDERABLE_IMAGE_TYPES = new Set([
+  'image/svg+xml', 'image/tiff', 'image/heic', 'image/heif', 'image/bmp', 'image/x-ms-bmp',
+]);
 export function isImageAttachment(a: { content_type: string }): boolean {
-  return a.content_type.startsWith('image/') && a.content_type !== 'image/svg+xml';
+  return a.content_type.startsWith('image/') && !NON_RENDERABLE_IMAGE_TYPES.has(a.content_type);
 }
 
 export function isVideoAttachment(a: { content_type: string }): boolean {

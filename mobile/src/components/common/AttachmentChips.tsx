@@ -6,7 +6,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../contexts/ThemeContext';
 import { AppColors } from '../../utils/colors';
-import { PickedFile } from '../../utils/attachments';
+import { PickedFile, isImageAttachment } from '../../utils/attachments';
 
 // Pending-attachments row shown above a composer (chat input / comment box /
 // post editor) before send — a chip per picked file with an X to remove it.
@@ -32,10 +32,7 @@ export default function AttachmentChips({
     <>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[s.row, containerStyle]} contentContainerStyle={{ gap: 8 }}>
         {files.map((f, i) => {
-          // Excludes SVG — RN's <Image> can't rasterize SVG XML, so it'd
-          // just render a broken thumbnail; see isImageAttachment in
-          // utils/attachments.ts for the same exclusion on the uploaded side.
-          const isImage = f.mimeType.startsWith('image/') && f.mimeType !== 'image/svg+xml';
+          const isImage = isImageAttachment({ content_type: f.mimeType });
           const isAudio = f.mimeType.startsWith('audio/');
           return (
             <View key={`${f.uri}-${i}`} style={s.chip}>

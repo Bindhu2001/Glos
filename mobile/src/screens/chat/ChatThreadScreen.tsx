@@ -26,6 +26,7 @@ import {
   isForwardedBody, stripForwardMarker, PickedFile,
 } from '../../utils/attachments';
 import { getDraft, setDraft, clearDraft } from '../../utils/chatDrafts';
+import { OutboxItem, loadOutbox, addToOutbox, removeFromOutbox } from '../../utils/chatOutbox';
 import {
   useAudioRecorder, useAudioRecorderState, RecordingPresets,
   requestRecordingPermissionsAsync, setAudioModeAsync,
@@ -91,12 +92,12 @@ function dayLabel(iso?: string) {
 }
 
 function MessageRow({
-  item, isMine, showAvatar, colors, s, onMenuPress, onReactChip, onQuickReact, onSwipeReply, myUserId, isRead, isPinned, isHighlighted, onAvatarPress,
+  item, isMine, showAvatar, colors, s, onMenuPress, onReactChip, onQuickReact, onSwipeReply, myUserId, isRead, isPinned, isHighlighted, onAvatarPress, onRetry,
 }: {
   item: any; isMine: boolean; showAvatar: boolean; colors: AppColors; s: any;
   onMenuPress: () => void; onReactChip: (emoji: string) => void; onQuickReact: (e: any) => void;
   onSwipeReply: () => void; myUserId: number | null; isRead: boolean; isPinned: boolean; isHighlighted: boolean;
-  onAvatarPress: () => void;
+  onAvatarPress: () => void; onRetry: () => void;
 }) {
   const pan = useRef(new Animated.ValueXY()).current;
   const replyOpacity = pan.x.interpolate({ inputRange: [0, 50], outputRange: [0, 1], extrapolate: 'clamp' });
@@ -141,6 +142,7 @@ function MessageRow({
           <TouchableOpacity
             activeOpacity={0.85}
             onLongPress={onMenuPress}
+            onPress={item._failed ? onRetry : undefined}
             style={[s.bubble, isMine ? s.bubbleMine : s.bubbleTheirs]}
           >
             {!isMine && showAvatar && item.sender?.name ? <Text style={s.senderName}>{item.sender.name}</Text> : null}
@@ -183,13 +185,25 @@ function MessageRow({
             )}
             <View style={s.metaRow}>
               {item.edited_at && !item.deleted_at ? <Text style={[s.editedTag, isMine && s.metaTagMine]}>edited</Text> : null}
-              <Text style={[s.timeTag, isMine && s.metaTagMine]}>{fmtTime(item.created_at)}</Text>
-              {isMine && !item.deleted_at && (
-                <Ionicons
-                  name={isRead ? 'checkmark-done' : 'checkmark'}
-                  size={13}
-                  color={isRead ? '#7dd3fc' : 'rgba(255,255,255,0.75)'}
-                />
+              {item._failed ? (
+                <TouchableOpacity onPress={onRetry} style={s.failedRow}>
+                  <Ionicons name="alert-circle" size={13} color="#fca5a5" />
+                  <Text style={s.failedText}>Not sent · Tap to retry</Text>
+                </TouchableOpacity>
+              ) : (
+                <>
+                  <Text style={[s.timeTag, isMine && s.metaTagMine]}>{fmtTime(item.created_at)}</Text>
+                  {isMine && !item.deleted_at && !item._pending && (
+                    <Ionicons
+                      name={isRead ? 'checkmark-done' : 'checkmark'}
+                      size={13}
+                      color={isRead ? '#7dd3fc' : 'rgba(255,255,255,0.75)'}
+                    />
+                  )}
+                  {isMine && item._pending && (
+                    <Ionicons name="time-outline" size={12} color="rgba(255,255,255,0.75)" />
+                  )}
+                </>
               )}
             </View>
             {item.reactions?.length > 0 && (
@@ -209,7 +223,7 @@ function MessageRow({
               </View>
             )}
           </TouchableOpacity>
-          {!item.deleted_at && !item._pending && (
+          {!item.deleted_at && !item._pending && !item._failed && (
             <View style={s.rowActions}>
               <TouchableOpacity style={s.quickReactBtn} onPress={(e) => onQuickReact(e)}>
                 <Ionicons name="happy-outline" size={16} color={colors.gray400} />
@@ -265,6 +279,24 @@ export default function ChatThreadScreen() {
   // Per-optimistic-message failure timer (keyed by its temp id) — see send()
   // and the reconciliation in the socket effect below.
   const pendingTimeoutsRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  // True only after the server has ack'd 'join' (socket 'connect' alone just
+  // means the TCP/websocket handshake finished — the room/tenant-pool join is
+  // a separate async step server-side). Sending over the socket before this
+  // is true would silently race the join, so queueSend below gates on this
+  // ref rather than the `connected` state, which flips true immediately on
+  // 'connect' purely for the "Connecting…" header text.
+  const socketJoinedRef = useRef(false);
+  // Every not-yet-confirmed outgoing message, keyed by tempId — mirrors what's
+  // persisted to the outbox. An entry is removed the moment either the socket
+  // ack or the HTTP POST confirms the server has it; sendViaHttp checks this
+  // before doing any work so a message already confirmed via one path is
+  // never redundantly re-sent via the other.
+  const failedQueueRef = useRef<Record<string, OutboxItem>>({});
+  const inFlightRef = useRef<Record<string, boolean>>({});
+  // Lets the socket effect (which intentionally excludes fast-changing
+  // callbacks from its deps — see the eslint-disable below it) always call
+  // the latest sendViaHttp without re-subscribing on every render.
+  const sendViaHttpRef = useRef<(tempId: string, body: string, replyToId: number | null, attachments: Record<string, unknown>[]) => void>(() => {});
 
   const myUserIdRef = useRef<number | null>(null);
   const [myUserId, setMyUserId] = useState<number | null>(null);
@@ -428,6 +460,50 @@ export default function ChatThreadScreen() {
     return () => { cancelled = true; };
   }, [params.conversationId]);
 
+  // Restore any messages that never got confirmed by the server the last time
+  // this thread was open — e.g. the app was killed mid-send, or the HTTP
+  // fallback was still in flight. Without this, those messages simply vanish
+  // on next launch even though the user watched them "send". Shown as failed
+  // immediately (rather than sending) so the retry affordance is visible right
+  // away instead of the bubble looking like it's silently trying forever.
+  useEffect(() => {
+    let cancelled = false;
+    loadOutbox(params.conversationId).then((pending) => {
+      if (cancelled || pending.length === 0) return;
+      setMessages((prev) => {
+        const existingIds = new Set(prev.map((m) => m.id));
+        const fresh = pending.filter((item) => !existingIds.has(item.tempId));
+        fresh.forEach((item) => { failedQueueRef.current[item.tempId] = item; });
+        if (fresh.length === 0) return prev;
+        return [
+          ...prev,
+          ...fresh.map((item) => ({
+            id: item.tempId,
+            conversation_id: params.conversationId,
+            sender_id: myUserIdRef.current,
+            body: item.body,
+            attachments: item.attachments,
+            reply_to: null,
+            created_at: item.createdAt,
+            message_type: 'text',
+            reactions: [],
+            _pending: false,
+            _failed: true,
+          })),
+        ];
+      });
+      // Give the screen a beat to settle before hammering the network.
+      setTimeout(() => {
+        if (cancelled) return;
+        pending.forEach((item) => {
+          if (!failedQueueRef.current[item.tempId]) return; // already confirmed while we waited
+          sendViaHttpRef.current(item.tempId, item.body, item.replyToId, item.attachments);
+        });
+      }, 1000);
+    });
+    return () => { cancelled = true; };
+  }, [params.conversationId]);
+
   // Persists the compose box as a draft while typing — skipped while editing
   // a past message, since `text` is repurposed for the edit body then, and
   // debounced so it doesn't hit AsyncStorage on every keystroke.
@@ -443,6 +519,68 @@ export default function ChatThreadScreen() {
     mutedRef.current = next;
     AsyncStorage.setItem(`chat_mute_${params.conversationId}`, next ? '1' : '0').catch(() => {});
   };
+
+  // HTTP fallback / primary-when-offline send path. Guaranteed-delivery
+  // counterpart to the socket emit in queueSend below — a dropped socket emit
+  // just silently vanishes, but a failed axios POST is a real rejected
+  // promise that lands in the catch below and gets marked failed (retried on
+  // next reconnect, app relaunch, or a manual tap) instead of disappearing.
+  const sendViaHttp = useCallback(async (tempId: string, body: string, replyToId: number | null, attachments: Record<string, unknown>[]) => {
+    if (inFlightRef.current[tempId]) return;
+    if (!failedQueueRef.current[tempId]) return; // already confirmed via the socket path
+    inFlightRef.current[tempId] = true;
+    try {
+      const res = await api.chat.sendMessage(params.appId, params.conversationId, {
+        body, reply_to_id: replyToId, attachments, _tempId: tempId,
+      });
+      delete failedQueueRef.current[tempId];
+      removeFromOutbox(params.conversationId, tempId);
+      if (pendingTimeoutsRef.current[tempId]) {
+        clearTimeout(pendingTimeoutsRef.current[tempId]);
+        delete pendingTimeoutsRef.current[tempId];
+      }
+      const saved = res.data?.message;
+      setMessages((prev) => prev.map((m) => {
+        // If the socket echo already reconciled this bubble to the real
+        // message (see onNewMsg), its id is no longer the tempId — leave it
+        // alone rather than reintroducing a second copy.
+        if (m.id !== tempId) return m;
+        return saved ? { ...saved, _pending: false, _failed: false } : { ...m, _pending: false, _failed: false };
+      }));
+    } catch (err) {
+      setMessages((prev) => prev.map((m) => (m.id === tempId ? { ...m, _pending: false, _failed: true } : m)));
+    } finally {
+      delete inFlightRef.current[tempId];
+    }
+  }, [params.appId, params.conversationId]);
+  useEffect(() => { sendViaHttpRef.current = sendViaHttp; }, [sendViaHttp]);
+
+  // Sends over the socket when it's actually joined (fast path, with a
+  // server ack), otherwise goes straight to HTTP — this is what makes a
+  // message sent while offline or mid-reconnect go out immediately via HTTP
+  // instead of silently queuing forever behind a socket that may never come
+  // back. An 8s safety net covers the case where the socket ack itself never
+  // arrives (dropped ack, not just a dropped connection).
+  const queueSend = useCallback((tempId: string, body: string, replyToId: number | null, attachments: Record<string, unknown>[]) => {
+    const socket = getSocket();
+    if (socket?.connected && socketJoinedRef.current) {
+      socket.emit('send_message', { conversation_id: params.conversationId, body, reply_to_id: replyToId, attachments, _tempId: tempId }, (ack: any) => {
+        if (!ack?.ok) {
+          sendViaHttpRef.current(tempId, body, replyToId, attachments);
+        } else {
+          // onNewMsg's echo reconciles the bubble itself; just stop treating
+          // this as unconfirmed so nothing double-sends it via HTTP later.
+          delete failedQueueRef.current[tempId];
+          removeFromOutbox(params.conversationId, tempId);
+        }
+      });
+    } else {
+      sendViaHttpRef.current(tempId, body, replyToId, attachments);
+    }
+    setTimeout(() => {
+      if (failedQueueRef.current[tempId]) sendViaHttpRef.current(tempId, body, replyToId, attachments);
+    }, 8000);
+  }, [params.conversationId]);
 
   useEffect(() => {
     const socket = getSocket(async () => (await getTokenRef.current()) ?? '');
@@ -523,6 +661,7 @@ export default function ChatThreadScreen() {
 
     const doJoin = () => {
       setConnected(true);
+      socketJoinedRef.current = false; // server hasn't ack'd this join yet
       socket.emit('join', { appId: params.appId });
       socket.emit('mark_read', { conversation_id: convId });
       socket.emit('get_presence');
@@ -536,11 +675,44 @@ export default function ChatThreadScreen() {
     // anymore, so `connected` never flipped back to true.
     socket.on('connect', doJoin);
 
-    const onDisconnect = () => setConnected(false);
+    // Server-ack'd join (tenant pool ready, room actually joined) — distinct
+    // from the raw 'connect' above, which only means the socket handshake
+    // finished. On every join (including reconnects), catch up on whatever
+    // was missed while disconnected and flush anything still waiting to send.
+    const onJoined = () => {
+      socketJoinedRef.current = true;
+      setMessages((prev) => {
+        const lastReal = [...prev].reverse().find((m) => typeof m.id === 'number');
+        if (lastReal) {
+          api.chat.getMessages(params.appId, convId, { after: lastReal.id })
+            .then((res) => {
+              const missed: any[] = res.data ?? [];
+              if (missed.length === 0) return;
+              setMessages((cur) => {
+                const existingIds = new Set(cur.map((m) => m.id));
+                const fresh = missed.filter((m) => !existingIds.has(m.id));
+                return fresh.length ? [...cur, ...fresh] : cur;
+              });
+            })
+            .catch(() => {});
+        }
+        return prev;
+      });
+      Object.values(failedQueueRef.current).forEach((item) => {
+        sendViaHttpRef.current(item.tempId, item.body, item.replyToId, item.attachments);
+      });
+    };
+    socket.on('joined', onJoined);
+
+    const onDisconnect = () => {
+      setConnected(false);
+      socketJoinedRef.current = false;
+    };
     socket.on('disconnect', onDisconnect);
 
     return () => {
       socket.off('connect', doJoin);
+      socket.off('joined', onJoined);
       socket.off('new_message', onNewMsg);
       socket.off('message_edited', onEdited);
       socket.off('message_deleted', onDeleted);
@@ -692,11 +864,6 @@ export default function ChatThreadScreen() {
       setText(preEditTextRef.current);
       return;
     }
-    const socket = getSocket();
-    if (!socket || !connected) {
-      showAlert('Not connected', 'Chat connection is not ready yet. Please wait a moment and try again.');
-      return;
-    }
     sendingRef.current = true;
     try {
       let attachments: Record<string, unknown>[] = [];
@@ -716,6 +883,7 @@ export default function ChatThreadScreen() {
       // this exactly like a real message), it just quietly becomes the real
       // message in place once that echo arrives via onNewMsg above.
       const replyToSnapshot = replyTo ? { id: replyTo.id, sender: replyTo.sender, body: replyTo.body, deleted_at: replyTo.deleted_at } : null;
+      const replyToId = replyTo?.id ?? null;
       const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       setMessages((prev) => [...prev, {
         id: tempId,
@@ -729,23 +897,29 @@ export default function ChatThreadScreen() {
         reactions: [],
         _pending: true,
       }]);
-      socket.emit('send_message', { conversation_id: params.conversationId, body: trimmed, reply_to_id: replyTo?.id ?? null, attachments });
-      // If the echo never comes back (dropped connection right as it was
-      // sent, server hiccup), don't leave it showing as sent forever — pull
-      // it back out and let the user know, rather than silently lying about
-      // whether it actually went through.
-      pendingTimeoutsRef.current[tempId] = setTimeout(() => {
-        setMessages((prev) => prev.filter((m) => m.id !== tempId));
-        delete pendingTimeoutsRef.current[tempId];
-        showAlert('Message Not Sent', 'This message could not be sent. Please try again.');
-      }, 15000);
       setText('');
       clearDraft(params.conversationId);
       setReplyTo(null);
       if (!overrideFile) setPendingFiles([]);
+
+      // Persisted before any send attempt — this is what survives an app
+      // kill mid-send. Sent regardless of current connection state: queueSend
+      // below falls back to HTTP immediately when the socket isn't joined,
+      // instead of the old behavior of just erroring out while offline.
+      const outboxItem: OutboxItem = { tempId, body: trimmed, replyToId, attachments, createdAt: new Date().toISOString() };
+      failedQueueRef.current[tempId] = outboxItem;
+      addToOutbox(params.conversationId, outboxItem);
+      queueSend(tempId, trimmed, replyToId, attachments);
     } finally {
       sendingRef.current = false;
     }
+  };
+
+  const retryFailedMessage = (m: any) => {
+    if (!m._failed) return;
+    setMessages((prev) => prev.map((x) => (x.id === m.id ? { ...x, _failed: false, _pending: true } : x)));
+    failedQueueRef.current[m.id] = { tempId: m.id, body: m.body, replyToId: m.reply_to?.id ?? null, attachments: m.attachments ?? [], createdAt: m.created_at };
+    queueSend(m.id, m.body, m.reply_to?.id ?? null, m.attachments ?? []);
   };
 
   // Only one reaction per user at a time — switching emoji removes the previous one first.
@@ -1178,6 +1352,7 @@ export default function ChatThreadScreen() {
                   photoUrl: item.sender?.photo_url,
                   email: item.sender?.email,
                 })}
+                onRetry={() => retryFailedMessage(item)}
               />
             </View>
           );
@@ -1357,6 +1532,8 @@ function makeStyles(c: AppColors) {
     metaRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3, alignSelf: 'flex-end' },
     editedTag: { fontSize: 9, color: c.textMuted, fontStyle: 'italic' },
     timeTag: { fontSize: 10, color: c.textMuted },
+    failedRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+    failedText: { fontSize: 10, color: '#fca5a5', fontWeight: '600' },
     metaTagMine: { color: 'rgba(255,255,255,0.75)' },
     reactionsRow: { flexDirection: 'row', gap: 4, marginTop: 6, flexWrap: 'wrap' },
     reactionChip: { backgroundColor: c.background, borderRadius: 10, paddingHorizontal: 6, paddingVertical: 2, borderWidth: 1, borderColor: c.border },

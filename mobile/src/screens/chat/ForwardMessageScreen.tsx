@@ -34,18 +34,57 @@ export default function ForwardMessageScreen() {
   const insets = useSafeAreaInsets();
   const s = useMemo(() => makeStyles(colors), [colors]);
 
-  const [conversations, setConversations] = useState<any[]>([]);
+  // Unified forward targets: every existing conversation (direct/group/note)
+  // PLUS every workspace member who doesn't already have a direct
+  // conversation listed above — previously only existing conversations were
+  // shown, so you couldn't forward to someone you'd never messaged yet.
+  type Target =
+    | { key: string; kind: 'conversation'; conversationId: number; name: string; photoUrl: string | null }
+    | { key: string; kind: 'member'; userId: number; name: string; photoUrl: string | null };
+
+  const [targets, setTargets] = useState<Target[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [sending, setSending] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.chat.listConversations(params.appId);
-      setConversations(res.data ?? []);
+      const [convRes, membersRes, meRes] = await Promise.all([
+        api.chat.listConversations(params.appId),
+        api.members.list(params.appId),
+        api.me.getProfile(),
+      ]);
+      const conversations: any[] = convRes.data ?? [];
+      const myId = meRes.data?.id ?? meRes.data?.user_id;
+      const allMembers: any[] = membersRes.data?.items ?? membersRes.data ?? [];
+
+      const convTargets: Target[] = conversations.map((c) => ({
+        key: `conv-${c.id}`,
+        kind: 'conversation',
+        conversationId: c.id,
+        name: c.display_name ?? c.name ?? (c.type === 'note' ? 'My Notes' : 'Conversation'),
+        photoUrl: c.type === 'direct'
+          ? c.members?.find((m: any) => String(m.id) === String(c.other_user_id))?.photo_url ?? null
+          : null,
+      }));
+
+      const directUserIds = new Set(
+        conversations.filter((c) => c.type === 'direct').map((c: any) => String(c.other_user_id))
+      );
+      const memberTargets: Target[] = allMembers
+        .filter((m: any) => String(m.user_id) !== String(myId) && !directUserIds.has(String(m.user_id)))
+        .map((m: any) => ({
+          key: `member-${m.user_id}`,
+          kind: 'member',
+          userId: m.user_id,
+          name: [m.first_name, m.last_name].filter(Boolean).join(' ') || m.email || `User ${m.user_id}`,
+          photoUrl: m.photo_url ?? null,
+        }));
+
+      setTargets([...convTargets, ...memberTargets]);
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, 'Could not load conversations.'));
@@ -57,21 +96,17 @@ export default function ForwardMessageScreen() {
 
   useEffect(() => { load(); }, [load]);
 
-  const filtered = conversations.filter((c) => {
-    if (!search.trim()) return true;
-    const name = (c.display_name ?? c.name ?? (c.type === 'note' ? 'My Notes' : 'Conversation')).toLowerCase();
-    return name.includes(search.trim().toLowerCase());
-  });
+  const filtered = targets.filter((t) => !search.trim() || t.name.toLowerCase().includes(search.trim().toLowerCase()));
 
-  const toggle = (id: number) => {
+  const toggle = (key: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(key)) next.delete(key); else next.add(key);
       return next;
     });
   };
 
-  const doForward = () => {
+  const doForward = async () => {
     if (selected.size === 0 || sending) return;
     const socket = getSocket(async () => (await getTokenRef.current()) ?? '');
     if (!socket?.connected) {
@@ -79,20 +114,34 @@ export default function ForwardMessageScreen() {
       return;
     }
     setSending(true);
-    const targets = Array.from(selected);
     const forwardedBody = withForwardMarker(params.body ?? '');
-    targets.forEach((conversationId) => {
-      socket.emit('send_message', {
-        conversation_id: conversationId,
-        body: forwardedBody,
-        reply_to_id: null,
-        attachments: params.attachments ?? [],
+    const selectedTargets = targets.filter((t) => selected.has(t.key));
+    try {
+      // Members without an existing conversation need one created first —
+      // createConversation is idempotent for type:'direct' (returns the
+      // existing one if it's somehow already there), so this is safe to call
+      // even in a race with another forward/new-chat action.
+      const conversationIds = await Promise.all(selectedTargets.map(async (t) => {
+        if (t.kind === 'conversation') return t.conversationId;
+        const res = await api.chat.createConversation(params.appId, { type: 'direct', member_ids: [t.userId] });
+        return res.data.id;
+      }));
+      conversationIds.forEach((conversationId) => {
+        socket.emit('send_message', {
+          conversation_id: conversationId,
+          body: forwardedBody,
+          reply_to_id: null,
+          attachments: params.attachments ?? [],
+        });
       });
-    });
-    setSending(false);
-    const count = targets.length;
-    navigation.goBack();
-    setTimeout(() => showAlert('Forwarded', `Message forwarded to ${count} conversation${count === 1 ? '' : 's'}.`), 300);
+      const count = conversationIds.length;
+      navigation.goBack();
+      setTimeout(() => showAlert('Forwarded', `Message forwarded to ${count} conversation${count === 1 ? '' : 's'}.`), 300);
+    } catch (err) {
+      showAlert('Could Not Forward', apiErrorMessage(err));
+    } finally {
+      setSending(false);
+    }
   };
 
   const previewText = params.body?.trim()
@@ -125,7 +174,7 @@ export default function ForwardMessageScreen() {
         <Ionicons name="search" size={15} color={colors.gray400} />
         <TextInput
           style={s.searchInput}
-          placeholder="Search conversations..."
+          placeholder="Search people or conversations..."
           placeholderTextColor={colors.gray400}
           value={search}
           onChangeText={setSearch}
@@ -141,24 +190,20 @@ export default function ForwardMessageScreen() {
           {filtered.length === 0 ? (
             <View style={s.empty}>
               <Ionicons name="chatbubbles-outline" size={40} color={colors.gray400} />
-              <Text style={s.emptyText}>No conversations found</Text>
+              <Text style={s.emptyText}>No people or conversations found</Text>
             </View>
           ) : (
-            filtered.map((c) => {
-              const name = c.display_name ?? c.name ?? (c.type === 'note' ? 'My Notes' : 'Conversation');
-              const isSelected = selected.has(c.id);
-              const otherPhotoUrl = c.type === 'direct'
-                ? c.members?.find((m: any) => String(m.id) === String(c.other_user_id))?.photo_url ?? null
-                : null;
+            filtered.map((t) => {
+              const isSelected = selected.has(t.key);
               return (
                 <TouchableOpacity
-                  key={c.id}
+                  key={t.key}
                   style={[s.row, isSelected && s.rowSelected]}
                   activeOpacity={0.7}
-                  onPress={() => toggle(c.id)}
+                  onPress={() => toggle(t.key)}
                 >
-                  <Avatar name={name} photoUrl={otherPhotoUrl} size={40} />
-                  <Text style={s.rowName} numberOfLines={1}>{name}</Text>
+                  <Avatar name={t.name} photoUrl={t.photoUrl} size={40} />
+                  <Text style={s.rowName} numberOfLines={1}>{t.name}</Text>
                   <Ionicons
                     name={isSelected ? 'checkmark-circle' : 'ellipse-outline'}
                     size={22}

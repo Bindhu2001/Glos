@@ -178,8 +178,15 @@ export const chatApi = (client: AxiosInstance) => ({
   deleteGroup: (appId: number, convId: number) => client.delete(`/apps/${appId}/chat/${convId}`),
   pinMessage: (appId: number, convId: number, messageId: number) =>
     client.post(`/apps/${appId}/chat/${convId}/pin`, { message_id: messageId }),
-  getMessages: (appId: number, convId: number, params?: { limit?: number; before?: number }) =>
+  getMessages: (appId: number, convId: number, params?: { limit?: number; before?: number; after?: number }) =>
     client.get(`/apps/${appId}/chat/${convId}/messages`, { params }),
+  // HTTP-first send path — the primary way messages leave the device now (see
+  // ChatThreadScreen's send()). The socket emit is a best-effort speed
+  // optimization on top of this, not a requirement for delivery: unlike a
+  // dropped socket emit, a failed HTTP POST is visible to axios and can be
+  // retried from the outbox.
+  sendMessage: (appId: number, convId: number, data: { body: string; reply_to_id: number | null; attachments: Record<string, unknown>[]; _tempId: string }) =>
+    client.post(`/apps/${appId}/chat/${convId}/messages`, data),
   deleteMessage: (appId: number, msgId: number) => client.delete(`/apps/${appId}/chat/messages/${msgId}`),
   editMessage: (appId: number, msgId: number, body: string) =>
     client.patch(`/apps/${appId}/chat/messages/${msgId}`, { body }),
