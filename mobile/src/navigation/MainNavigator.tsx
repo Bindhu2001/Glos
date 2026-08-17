@@ -47,6 +47,7 @@ import CreateEditAgreementScreen from '../screens/contracts/CreateEditAgreementS
 import ServicesListScreen from '../screens/contracts/ServicesListScreen';
 import CreateEditServiceScreen from '../screens/contracts/CreateEditServiceScreen';
 import ComplianceBoardScreen from '../screens/contracts/ComplianceBoardScreen';
+import OtherReportsScreen from '../screens/reports/OtherReportsScreen';
 import RoutinesScreen from '../screens/routines/RoutinesScreen';
 import BusinessReviewsListScreen from '../screens/businessReviews/BusinessReviewsListScreen';
 import BusinessReviewDetailScreen from '../screens/businessReviews/BusinessReviewDetailScreen';
@@ -148,6 +149,7 @@ function MoreNavigator() {
       <MoreStack.Screen name="MyOrganisation" component={MyOrganisationScreen} />
       <MoreStack.Screen name="ReportsList" component={ReportsListScreen} />
       <MoreStack.Screen name="TaskReports" component={TaskReportsScreen} />
+      <MoreStack.Screen name="OtherReports" component={OtherReportsScreen} />
       <MoreStack.Screen name="ReportView" component={GenericReportScreen} />
       <MoreStack.Screen name="PoliciesList" component={PoliciesListScreen} />
       <MoreStack.Screen name="PolicyDetail" component={PolicyDetailScreen} />

@@ -20,6 +20,7 @@ export default function ReportsListScreen() {
 
   const items = [
     { key: 'task', icon: 'checkmark-done-outline' as const, color: '#0891b2', label: 'Task Report', desc: 'Hours logged and task details', onPress: () => navigation.navigate('TaskReports'), show: true },
+    { key: 'other', icon: 'grid-outline' as const, color: '#0369a1', label: 'Areas & Routines', desc: 'Time by area and routine completion', onPress: () => navigation.navigate('OtherReports'), show: true },
     { key: 'projects', icon: 'folder-open-outline' as const, color: '#4f46e5', label: 'Project Report', desc: 'Progress, milestones and status', onPress: () => navigation.navigate('ReportView', { reportType: 'projects' }), show: true },
     { key: 'contracts', icon: 'document-text-outline' as const, color: '#0d9488', label: 'Contract Report', desc: 'Overdue, SLA, workload, revenue', onPress: () => navigation.navigate('ReportView', { reportType: 'contracts' }), show: true },
     { key: 'goals', icon: 'flag-outline' as const, color: '#d97706', label: 'Goals Report', desc: 'Goal approval status by employee', onPress: () => navigation.navigate('ReportView', { reportType: 'goals' }), show: true },

@@ -176,6 +176,14 @@ export const routinesApi = (client: AxiosInstance) => ({
     client.get(`/apps/${appId}/hr/routines/team-dashboard`, { params }),
 });
 
+// ── Other Reports (Areas & Routines) ──────────────────────────
+export const otherReportsApi = (client: AxiosInstance) => ({
+  getAreaReport: (appId: number, params: { month: string; user_id?: number; area_ids?: string }) =>
+    client.get(`/apps/${appId}/hr/other-reports/areas`, { params }),
+  getRoutineReport: (appId: number, params: { month: string; user_id?: number; routine_ids?: string }) =>
+    client.get(`/apps/${appId}/hr/other-reports/routines`, { params }),
+});
+
 // ── Chat ─────────────────────────────────────────────────────
 export const chatApi = (client: AxiosInstance) => ({
   listConversations: (appId: number) => client.get(`/apps/${appId}/chat`),

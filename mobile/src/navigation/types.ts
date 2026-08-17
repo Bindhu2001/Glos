@@ -84,6 +84,7 @@ export type MoreStackParamList = {
   MyOrganisation: undefined;
   ReportsList: undefined;
   TaskReports: undefined;
+  OtherReports: undefined;
   ReportView: { reportType: 'projects' | 'financial' | 'goals' | 'performance' | 'appraisals' | 'contracts' };
   PoliciesList: undefined;
   PolicyDetail: { policyId: number; appId: number };
