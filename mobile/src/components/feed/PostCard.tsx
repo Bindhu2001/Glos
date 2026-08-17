@@ -48,6 +48,13 @@ interface Post {
     badge?: string;
     message?: string;
   };
+  poll?: {
+    question: string;
+    allow_multiple?: boolean;
+    total_votes?: number;
+    my_votes?: number[];
+    options: { id: number; option_text: string; votes: number }[];
+  };
 }
 
 interface NamedOption { id: number; name: string }
@@ -59,6 +66,7 @@ interface Props {
   onDelete?: () => void;
   onEdit?: () => void;
   onPin?: () => void;
+  onVote?: (optionIds: number[]) => void;
   liked?: boolean;
   members?: NamedOption[];
   departments?: NamedOption[];
@@ -98,7 +106,7 @@ function resolveAudienceNames(post: Post, members: NamedOption[], departments: N
   return ids.map((id) => list.find((x) => x.id === id)?.name ?? `#${id}`);
 }
 
-export default function PostCard({ post, onPress, onReact, onDelete, onEdit, onPin, liked = false, members = [], departments = [], roles = [] }: Props) {
+export default function PostCard({ post, onPress, onReact, onDelete, onEdit, onPin, onVote, liked = false, members = [], departments = [], roles = [] }: Props) {
   const { colors } = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -126,12 +134,25 @@ export default function PostCard({ post, onPress, onReact, onDelete, onEdit, onP
   const typeLabel = postType === 'appreciation' ? '⭐ Appreciation'
     : postType === 'feedback' ? '💬 Feedback'
     : postType === 'announcement' ? '📢 Announcement'
+    : postType === 'poll' ? '📊 Poll'
     : 'Post';
 
   const typeLabelColor = postType === 'appreciation' ? '#c27803'
     : postType === 'feedback' ? colors.primary
     : postType === 'announcement' ? colors.info
+    : postType === 'poll' ? '#7c3aed'
     : colors.gray500;
+
+  const myVotes = post.poll?.my_votes ?? [];
+  const totalVotes = post.poll?.total_votes ?? 0;
+  const handleVote = (optionId: number) => {
+    if (!onVote || !post.poll) return;
+    const allowMultiple = !!post.poll.allow_multiple;
+    const next = allowMultiple
+      ? (myVotes.includes(optionId) ? myVotes.filter((id) => id !== optionId) : [...myVotes, optionId])
+      : (myVotes.includes(optionId) ? [] : [optionId]);
+    onVote(next);
+  };
 
   return (
     <TouchableOpacity style={s.card} onPress={onPress} activeOpacity={0.9}>
@@ -235,6 +256,29 @@ export default function PostCard({ post, onPress, onReact, onDelete, onEdit, onP
               </>
             );
           })()}
+        </View>
+      ) : postType === 'poll' && post.poll ? (
+        <View style={s.pollBlock}>
+          <Text style={s.pollQuestion}>{post.poll.question}</Text>
+          {post.poll.options.map((opt) => {
+            const pct = totalVotes > 0 ? Math.round((opt.votes / totalVotes) * 100) : 0;
+            const mine = myVotes.includes(opt.id);
+            return (
+              <TouchableOpacity
+                key={opt.id}
+                style={[s.pollOption, mine && s.pollOptionMine]}
+                onPress={(e) => { e.stopPropagation(); handleVote(opt.id); }}
+                activeOpacity={0.8}
+              >
+                <View style={[s.pollOptionFill, { width: `${pct}%` }]} />
+                <Text style={s.pollOptionText} numberOfLines={2}>{mine ? '✓ ' : ''}{opt.option_text}</Text>
+                <Text style={s.pollOptionPct}>{opt.votes} · {pct}%</Text>
+              </TouchableOpacity>
+            );
+          })}
+          <Text style={s.pollMeta}>
+            {totalVotes} {totalVotes === 1 ? 'vote' : 'votes'}{post.poll.allow_multiple ? ' · Multiple choice' : ''}
+          </Text>
         </View>
       ) : (
         <>
@@ -396,5 +440,20 @@ function makeStyles(c: AppColors) {
     },
     apprChipText: { fontSize: 10, fontWeight: '700', color: '#fff' },
     apprMsg: { fontSize: 13, color: c.textPrimary, fontStyle: 'italic', lineHeight: 18 },
+    // Poll block
+    pollBlock: { marginBottom: 12, gap: 8 },
+    pollQuestion: { fontSize: 15, fontWeight: '700', color: c.textPrimary, marginBottom: 2 },
+    pollOption: {
+      borderWidth: 1, borderColor: c.border, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10,
+      overflow: 'hidden', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+      backgroundColor: c.gray50,
+    },
+    pollOptionMine: { borderColor: c.primary },
+    pollOptionFill: {
+      position: 'absolute', left: 0, top: 0, bottom: 0, backgroundColor: c.primaryLight,
+    },
+    pollOptionText: { flex: 1, fontSize: 13, fontWeight: '600', color: c.textPrimary, marginRight: 8 },
+    pollOptionPct: { fontSize: 12, fontWeight: '700', color: c.textSecondary },
+    pollMeta: { fontSize: 11, color: c.textMuted, marginTop: 2 },
   });
 }

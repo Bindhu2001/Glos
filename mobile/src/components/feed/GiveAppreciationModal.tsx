@@ -10,6 +10,7 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { AppColors } from '../../utils/colors';
 import Avatar from '../common/Avatar';
 import { showAlert } from '../common/AlertModal';
+import { guardedTextChange, CONTENT_MAX_LEN } from '../../utils/postContent';
 
 const BADGES = [
   { key: 'teamwork', label: 'Teamwork', emoji: '🤝' },
@@ -225,7 +226,15 @@ export default function GiveAppreciationModal({ visible, onClose, onSuccess, app
               placeholder="Write something kind..."
               placeholderTextColor={colors.gray400}
               value={message}
-              onChangeText={setMessage}
+              onChangeText={(v) => {
+                const { text, blocked } = guardedTextChange(message, v);
+                if (blocked) {
+                  showAlert('Too Long to Paste', `That paste would exceed the ${CONTENT_MAX_LEN.toLocaleString()}-character limit, so it was not inserted.`);
+                  return;
+                }
+                setMessage(text);
+              }}
+              maxLength={CONTENT_MAX_LEN}
               multiline
               numberOfLines={4}
               textAlignVertical="top"

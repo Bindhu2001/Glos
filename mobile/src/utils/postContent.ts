@@ -8,6 +8,21 @@ export interface TextBlock { type: 'text'; text: string }
 export interface TableBlock { type: 'table'; rows: string[][] }
 export type ContentBlock = TextBlock | TableBlock;
 
+// Matches web's cap on Post/Appreciation/Feedback content (Feed.jsx). A
+// paste that would push the text past this is rejected outright rather than
+// silently truncated — losing the tail of a long paste with no feedback is
+// more surprising than just blocking it and telling the user why.
+export const CONTENT_MAX_LEN = 100000;
+
+export function guardedTextChange(oldText: string, newText: string, maxLen = CONTENT_MAX_LEN): { text: string; blocked: boolean } {
+  if (newText.length <= maxLen) return { text: newText, blocked: false };
+  // A single keystroke can't add more than a handful of characters — a
+  // bigger jump landing in one onChangeText call is a paste, not typing.
+  const grew = newText.length - oldText.length;
+  if (grew > 20) return { text: oldText, blocked: true };
+  return { text: newText.slice(0, maxLen), blocked: false };
+}
+
 function decodeEntities(str: string) {
   return str
     .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')

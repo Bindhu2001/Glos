@@ -22,6 +22,7 @@ import { FeedStackParamList } from '../../navigation/types';
 import { formatRelative } from '../../utils/format';
 import { renderMentionText } from '../../utils/mentions';
 import { showAlert } from '../../components/common/AlertModal';
+import { guardedTextChange, CONTENT_MAX_LEN } from '../../utils/postContent';
 
 type Nav = NativeStackNavigationProp<FeedStackParamList, 'FeedList'>;
 type Route = RouteProp<FeedStackParamList, 'FeedList'>;
@@ -243,6 +244,27 @@ export default function FeedScreen() {
     }
   };
 
+  const handleVote = async (postId: number, optionIds: number[]) => {
+    if (!workspace) return;
+    const originalPosts = posts;
+    setPosts((prev) => prev.map((p) => {
+      if (p.id !== postId || !p.poll) return p;
+      const options = p.poll.options.map((opt: any) => {
+        const wasMine = (p.poll.my_votes ?? []).includes(opt.id);
+        const isMine = optionIds.includes(opt.id);
+        const delta = isMine && !wasMine ? 1 : !isMine && wasMine ? -1 : 0;
+        return { ...opt, votes: Math.max(0, opt.votes + delta) };
+      });
+      const total = options.reduce((sum: number, o: any) => sum + o.votes, 0);
+      return { ...p, poll: { ...p.poll, options, my_votes: optionIds, total_votes: total } };
+    }));
+    try {
+      await api.feed.votePoll(workspace.id, postId, optionIds);
+    } catch {
+      setPosts(originalPosts);
+    }
+  };
+
   const handleDelete = async (postId: number) => {
     if (!workspace) return;
     try {
@@ -457,6 +479,7 @@ export default function FeedScreen() {
                 liked={item.my_reactions?.includes('❤️') ?? false}
                 onPress={() => navigation.navigate('PostDetail', { postId: item.id, appId: workspace!.id })}
                 onReact={(emoji) => handleReact(item.id, emoji)}
+                onVote={(optionIds) => handleVote(item.id, optionIds)}
                 onDelete={(isAdmin || item.author_user_id === meId) ? () => handleDelete(item.id) : undefined}
                 onEdit={canEditPost(item) ? () => navigation.navigate('CreatePost', { appId: workspace!.id, postId: item.id, initialContent: item.content }) : undefined}
                 onPin={isAdmin ? () => handlePin(item.id) : undefined}
@@ -711,7 +734,15 @@ export default function FeedScreen() {
                 placeholder="Write your feedback..."
                 placeholderTextColor={colors.gray400}
                 value={fbFeedbackText}
-                onChangeText={setFbFeedbackText}
+                onChangeText={(v) => {
+                  const { text, blocked } = guardedTextChange(fbFeedbackText, v);
+                  if (blocked) {
+                    showAlert('Too Long to Paste', `That paste would exceed the ${CONTENT_MAX_LEN.toLocaleString()}-character limit, so it was not inserted.`);
+                    return;
+                  }
+                  setFbFeedbackText(text);
+                }}
+                maxLength={CONTENT_MAX_LEN}
                 multiline
                 numberOfLines={4}
                 textAlignVertical="top"

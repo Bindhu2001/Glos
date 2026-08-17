@@ -316,6 +316,8 @@ export const feedApi = (client: AxiosInstance) => ({
     client.patch(`/apps/${appId}/hr/feed/${postId}/pin`),
   addReaction: (appId: number, postId: number, emoji: string) =>
     client.post(`/apps/${appId}/hr/feed/${postId}/react`, { emoji }),
+  votePoll: (appId: number, postId: number, optionIds: number[]) =>
+    client.post(`/apps/${appId}/hr/feed/${postId}/vote`, { option_ids: optionIds }),
   getComments: (appId: number, postId: number) =>
     client.get(`/apps/${appId}/hr/feed/${postId}/comments`),
   addComment: (appId: number, postId: number, content: string) =>

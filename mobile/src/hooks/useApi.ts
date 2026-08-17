@@ -348,6 +348,10 @@ export function useApi() {
           const client = await mkClient();
           return feedApi(client).addReaction(appId, postId, emoji);
         },
+        votePoll: async (appId: number, postId: number, optionIds: number[]) => {
+          const client = await mkClient();
+          return feedApi(client).votePoll(appId, postId, optionIds);
+        },
         getComments: async (appId: number, postId: number) => {
           const client = await mkClient();
           return feedApi(client).getComments(appId, postId);

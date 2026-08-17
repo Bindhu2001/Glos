@@ -18,7 +18,7 @@ import Button from '../../components/common/Button';
 import Avatar from '../../components/common/Avatar';
 import TableBuilderModal from '../../components/feed/TableBuilderModal';
 import AttachmentChips from '../../components/common/AttachmentChips';
-import { tableToHtml, detectPastedTable } from '../../utils/postContent';
+import { tableToHtml, detectPastedTable, guardedTextChange, CONTENT_MAX_LEN } from '../../utils/postContent';
 import { pickAttachmentFiles, uploadAttachments, PickedFile } from '../../utils/attachments';
 
 type Route = RouteProp<FeedStackParamList, 'CreatePost'>;
@@ -57,9 +57,22 @@ export default function CreatePostScreen() {
       setShowTableBuilder(true);
       return;
     }
-    setContent(newText);
+    const { text, blocked } = guardedTextChange(content, newText);
+    if (blocked) {
+      showAlert('Too Long to Paste', `That paste would exceed the ${CONTENT_MAX_LEN.toLocaleString()}-character limit, so it was not inserted.`);
+      return;
+    }
+    setContent(text);
   };
-  const [postType, setPostType] = useState<'post' | 'announcement'>('post');
+  const [postType, setPostType] = useState<'post' | 'announcement' | 'poll'>('post');
+
+  // Poll composer
+  const [pollQuestion, setPollQuestion] = useState('');
+  const [pollOptions, setPollOptions] = useState(['', '']);
+  const [pollMulti, setPollMulti] = useState(false);
+  const updatePollOption = (i: number, v: string) => setPollOptions((prev) => prev.map((o, idx) => (idx === i ? v : o)));
+  const addPollOption = () => setPollOptions((prev) => (prev.length < 10 ? [...prev, ''] : prev));
+  const removePollOption = (i: number) => setPollOptions((prev) => (prev.length > 2 ? prev.filter((_, idx) => idx !== i) : prev));
   const [audienceType, setAudienceType] = useState<AudienceType>('all');
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [saving, setSaving] = useState(false);
@@ -140,8 +153,14 @@ export default function CreatePostScreen() {
 
   const removePendingFile = (i: number) => setPendingFiles((prev) => prev.filter((_, idx) => idx !== i));
 
+  const isPoll = !isEditMode && postType === 'poll';
+  const trimmedPollOptions = pollOptions.map((o) => o.trim()).filter(Boolean);
+
   const handleCreate = async () => {
-    if (!content.trim() && tables.length === 0 && pendingFiles.length === 0) {
+    if (isPoll) {
+      if (!pollQuestion.trim()) { showAlert('Validation', 'Add a poll question.'); return; }
+      if (trimmedPollOptions.length < 2) { showAlert('Validation', 'Add at least 2 options.'); return; }
+    } else if (!content.trim() && tables.length === 0 && pendingFiles.length === 0) {
       showAlert('Validation', 'Post content is required.');
       return;
     }
@@ -169,12 +188,17 @@ export default function CreatePostScreen() {
           audience_type: audienceType,
           audience_ids: audienceType === 'all' ? [] : selectedIds,
           attachments,
+          ...(isPoll ? {
+            poll_question: pollQuestion.trim(),
+            poll_options: trimmedPollOptions,
+            poll_multi: pollMulti,
+          } : {}),
         });
       }
       navigation.goBack();
     } catch (err: any) {
       setUploadingFiles(false);
-      showAlert('Error', isEditMode ? (err?.response?.data?.error ?? 'Could not update post.') : 'Could not create post.');
+      showAlert('Error', isEditMode ? (err?.response?.data?.error ?? 'Could not update post.') : (err?.response?.data?.error ?? 'Could not create post.'));
     } finally {
       setSaving(false);
     }
@@ -193,7 +217,7 @@ export default function CreatePostScreen() {
             <Text style={s.editHint}>Editing only updates the text — audience, type, and attachments can't be changed here.</Text>
           )}
 
-          {!isEditMode && isAdmin && (
+          {!isEditMode && (
             <>
               <Text style={s.sectionLabel}>POST TYPE</Text>
               <View style={s.chipRow}>
@@ -204,11 +228,19 @@ export default function CreatePostScreen() {
                   <Text style={[s.chipText, postType === 'post' && s.chipTextActive]}>Post</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[s.chip, postType === 'announcement' && s.chipActive]}
-                  onPress={() => setPostType('announcement')}
+                  style={[s.chip, postType === 'poll' && s.chipActive]}
+                  onPress={() => setPostType('poll')}
                 >
-                  <Text style={[s.chipText, postType === 'announcement' && s.chipTextActive]}>📢 Announcement</Text>
+                  <Text style={[s.chipText, postType === 'poll' && s.chipTextActive]}>📊 Poll</Text>
                 </TouchableOpacity>
+                {isAdmin && (
+                  <TouchableOpacity
+                    style={[s.chip, postType === 'announcement' && s.chipActive]}
+                    onPress={() => setPostType('announcement')}
+                  >
+                    <Text style={[s.chipText, postType === 'announcement' && s.chipTextActive]}>📢 Announcement</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             </>
           )}
@@ -304,18 +336,61 @@ export default function CreatePostScreen() {
           </>
           )}
 
-          <Input
-            label="What's on your mind?"
-            value={content}
-            onChangeText={handleContentChange}
-            placeholder={postType === 'announcement' ? 'Write an announcement for your team...' : 'Share an update with your team...'}
-            multiline
-            numberOfLines={6}
-            maxLength={2000}
-          />
-          <Text style={s.charCount}>{content.length}/2000</Text>
+          {isPoll ? (
+            <>
+              <Input
+                label="Question"
+                value={pollQuestion}
+                onChangeText={setPollQuestion}
+                placeholder="Ask your team something..."
+                maxLength={300}
+              />
+              <Text style={s.sectionLabel}>OPTIONS</Text>
+              {pollOptions.map((opt, i) => (
+                <View key={i} style={s.pollOptionRow}>
+                  <View style={{ flex: 1 }}>
+                    <Input
+                      value={opt}
+                      onChangeText={(v) => updatePollOption(i, v)}
+                      placeholder={`Option ${i + 1}`}
+                      maxLength={200}
+                      containerStyle={{ marginBottom: 0 }}
+                    />
+                  </View>
+                  {pollOptions.length > 2 && (
+                    <TouchableOpacity onPress={() => removePollOption(i)} style={s.pollRemoveBtn} hitSlop={8}>
+                      <Ionicons name="close-circle" size={20} color={colors.danger} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ))}
+              {pollOptions.length < 10 && (
+                <TouchableOpacity style={s.addTableBtn} onPress={addPollOption}>
+                  <Ionicons name="add" size={16} color={colors.primary} />
+                  <Text style={s.addTableBtnText}>Add option</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity style={s.pollMultiRow} onPress={() => setPollMulti((v) => !v)}>
+                <Ionicons name={pollMulti ? 'checkbox' : 'square-outline'} size={20} color={pollMulti ? colors.primary : colors.gray400} />
+                <Text style={s.pollMultiLabel}>Allow selecting multiple options</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <Input
+                label="What's on your mind?"
+                value={content}
+                onChangeText={handleContentChange}
+                placeholder={postType === 'announcement' ? 'Write an announcement for your team...' : 'Share an update with your team...'}
+                multiline
+                numberOfLines={6}
+                maxLength={CONTENT_MAX_LEN}
+              />
+              <Text style={s.charCount}>{content.length.toLocaleString()}/{CONTENT_MAX_LEN.toLocaleString()}</Text>
+            </>
+          )}
 
-          {!isEditMode && (
+          {!isEditMode && !isPoll && (
           <>
           <View style={{ flexDirection: 'row', gap: 8 }}>
             <TouchableOpacity style={s.addTableBtn} onPress={() => { setPastedRows(null); setShowTableBuilder(true); }}>
@@ -331,7 +406,7 @@ export default function CreatePostScreen() {
           </>
           )}
 
-          {tables.map((t, ti) => (
+          {!isPoll && tables.map((t, ti) => (
             <View key={ti} style={s.tablePreview}>
               <View style={s.tablePreviewHead}>
                 <Text style={s.tablePreviewLabel}>Table {ti + 1} · {t.rows.length}×{t.rows[0]?.length ?? 0}</Text>
@@ -388,6 +463,10 @@ function makeStyles(c: AppColors) {
       borderRadius: 8, backgroundColor: c.primaryLight,
     },
     addTableBtnText: { fontSize: 13, fontWeight: '700', color: c.primary },
+    pollOptionRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    pollRemoveBtn: { paddingTop: 22 },
+    pollMultiRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 16 },
+    pollMultiLabel: { fontSize: 13, color: c.textPrimary },
     tablePreview: {
       marginTop: 12, borderWidth: 1, borderColor: c.border, borderRadius: 10, padding: 10,
     },
