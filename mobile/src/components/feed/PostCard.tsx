@@ -55,6 +55,14 @@ interface Post {
     my_votes?: number[];
     options: { id: number; option_text: string; votes: number }[];
   };
+  feedback?: {
+    from_user?: { first_name?: string; last_name?: string; email?: string } | null;
+    to_user?: { first_name?: string; last_name?: string; email?: string };
+    to_users?: { first_name?: string; last_name?: string; email?: string }[];
+    feedback_text?: string;
+    is_anonymous?: boolean | number;
+    attachments?: Attachment[];
+  };
 }
 
 interface NamedOption { id: number; name: string }
@@ -143,6 +151,26 @@ export default function PostCard({ post, onPress, onReact, onDelete, onEdit, onP
     : postType === 'poll' ? '#7c3aed'
     : colors.gray500;
 
+  // feed_posts.content for a feedback row is just a short summary line
+  // ("Alice gave feedback to Bob") — the actual message lives in
+  // post.feedback.feedback_text, same as how appreciation's real message is
+  // in post.appreciation.message rather than post.content.
+  const fbText = post.feedback?.feedback_text ?? '';
+  const fbHasTable = hasTable(fbText);
+  const fbPreviewSource = fbHasTable ? fbText.replace(/<table[\s\S]*?<\/table>/gi, '') : fbText;
+  const fbPreview = stripMentionTokens(stripTags(stripNonContentElements(fbPreviewSource))).substring(0, 180);
+  const fbFromName = post.feedback?.is_anonymous ? null : uname(post.feedback?.from_user);
+  const fbToName = namesWithMore(post.feedback?.to_users, post.feedback?.to_user);
+
+  // Appreciation/feedback letter cards show their own from/to identity line —
+  // the generic avatar+name header is not just redundant for these, it's a
+  // real privacy leak for anonymous feedback: the backend nulls the resolved
+  // `author` object when anonymous, but not the raw `author_user_id` on the
+  // post itself, so a tappable avatar wired to that id would still open the
+  // real sender's profile. Hiding the header entirely (matching web's
+  // `isLetter` treatment) avoids ever surfacing that id in the UI.
+  const isLetter = postType === 'appreciation' || postType === 'feedback';
+
   const myVotes = post.poll?.my_votes ?? [];
   const totalVotes = post.poll?.total_votes ?? 0;
   const handleVote = (optionId: number) => {
@@ -157,20 +185,22 @@ export default function PostCard({ post, onPress, onReact, onDelete, onEdit, onP
   return (
     <TouchableOpacity style={s.card} onPress={onPress} activeOpacity={0.9}>
       <View style={s.header}>
-        <Avatar
-          name={authorName}
-          photoUrl={post.author?.photo_url}
-          size={38}
-          onPress={() => setProfileUser({
-            id: post.author_user_id,
-            name: authorName,
-            photoUrl: post.author?.photo_url,
-            email: post.author?.email,
-          })}
-        />
+        {!isLetter && (
+          <Avatar
+            name={authorName}
+            photoUrl={post.author?.photo_url}
+            size={38}
+            onPress={() => setProfileUser({
+              id: post.author_user_id,
+              name: authorName,
+              photoUrl: post.author?.photo_url,
+              email: post.author?.email,
+            })}
+          />
+        )}
         <View style={s.info}>
           <View style={s.authorRow}>
-            <Text style={s.author}>{authorName}</Text>
+            {!isLetter && <Text style={s.author}>{authorName}</Text>}
             {post.is_pinned && (
               <Text style={{ fontSize: 13, marginLeft: 4 }}>📌</Text>
             )}
@@ -198,7 +228,7 @@ export default function PostCard({ post, onPress, onReact, onDelete, onEdit, onP
           onPress={(e) => {
             e.stopPropagation();
             showAlert('Post Options', undefined, [
-              ...(onPin ? [{
+              ...(onPin && postType !== 'feedback' ? [{
                 text: post.is_pinned ? 'Unpin Post' : 'Pin Post',
                 icon: (post.is_pinned ? 'pin-outline' : 'pin') as any,
                 onPress: onPin,
@@ -257,6 +287,18 @@ export default function PostCard({ post, onPress, onReact, onDelete, onEdit, onP
             );
           })()}
         </View>
+      ) : postType === 'feedback' && post.feedback ? (
+        <View style={s.fbBlock}>
+          <Text style={s.fbFromLine}>
+            {fbFromName ? <Text style={s.apprBold}>{fbFromName}</Text> : <Text style={s.fbAnon}>Anonymous feedback</Text>}
+            {' gave feedback to '}
+            <Text style={s.apprBold}>{fbToName}</Text>
+          </Text>
+          {!!fbPreview && <Text style={s.content}>{fbPreview}</Text>}
+          {!!post.feedback.attachments?.length && (
+            <AttachmentList attachments={post.feedback.attachments} imageMaxWidth={220} imageMaxHeight={170} />
+          )}
+        </View>
       ) : postType === 'poll' && post.poll ? (
         <View style={s.pollBlock}>
           <Text style={s.pollQuestion}>{post.poll.question}</Text>
@@ -295,6 +337,9 @@ export default function PostCard({ post, onPress, onReact, onDelete, onEdit, onP
         </>
       )}
 
+      {/* Reactions/comments aren't applicable to feedback — private, no engagement, matching web. */}
+      {postType !== 'feedback' && (
+      <>
       {/* Emoji picker row */}
       {showEmojiPicker && (
         <View style={s.emojiPicker}>
@@ -335,6 +380,8 @@ export default function PostCard({ post, onPress, onReact, onDelete, onEdit, onP
           <Text style={s.actionText}>{post.comment_count ?? 0}</Text>
         </TouchableOpacity>
       </View>
+      </>
+      )}
       <UserProfileModal user={profileUser} onClose={() => setProfileUser(null)} />
       <Modal visible={audienceModalOpen} transparent animationType="fade" onRequestClose={() => setAudienceModalOpen(false)}>
         {/* Pressable, not TouchableOpacity, for both layers: legacy Touchable
@@ -440,6 +487,10 @@ function makeStyles(c: AppColors) {
     },
     apprChipText: { fontSize: 10, fontWeight: '700', color: '#fff' },
     apprMsg: { fontSize: 13, color: c.textPrimary, fontStyle: 'italic', lineHeight: 18 },
+    // Feedback block (private — no reactions/comments)
+    fbBlock: { marginBottom: 12, gap: 6 },
+    fbFromLine: { fontSize: 13, color: c.textSecondary, lineHeight: 19 },
+    fbAnon: { fontStyle: 'italic', color: c.textMuted },
     // Poll block
     pollBlock: { marginBottom: 12, gap: 8 },
     pollQuestion: { fontSize: 15, fontWeight: '700', color: c.textPrimary, marginBottom: 2 },

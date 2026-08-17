@@ -279,8 +279,17 @@ export default function FeedScreen() {
   // posting) so the edit option simply isn't offered once it'd be rejected
   // server-side, instead of surfacing a confusing 403 after the fact.
   const EDIT_WINDOW_MS = 15 * 60 * 1000;
-  const canEditPost = (post: { author_user_id?: number; created_at: string }) =>
-    meId !== null && post.author_user_id === meId && (Date.now() - new Date(post.created_at).getTime()) <= EDIT_WINDOW_MS;
+  // Appreciation/feedback are excluded: their real content lives in
+  // post.appreciation.message / post.feedback.feedback_text, not post.content
+  // (which is just an auto-generated summary line like "Alice gave feedback
+  // to Bob") — the generic text editor below only ever touches post.content,
+  // so offering it here would silently overwrite the summary line while
+  // leaving the actual message untouched. Mobile has no dedicated edit flow
+  // for these two types yet, so editing them isn't offered at all for now.
+  const canEditPost = (post: { author_user_id?: number; created_at: string; post_type?: string }) =>
+    meId !== null && post.author_user_id === meId
+    && post.post_type !== 'appreciation' && post.post_type !== 'feedback'
+    && (Date.now() - new Date(post.created_at).getTime()) <= EDIT_WINDOW_MS;
 
   const handlePin = async (postId: number) => {
     if (!workspace) return;
