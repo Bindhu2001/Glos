@@ -69,6 +69,7 @@ export default function AppraisalDetailScreen() {
 
   const { loading, loadError, run } = useLoadWithTimeout();
   const [submitting, setSubmitting] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
   const [appraisal, setAppraisal] = useState<any>(null);
   const [employeeResponse, setEmployeeResponse] = useState<any>(null);
   const [managerResponse, setManagerResponse] = useState<any>(null);
@@ -77,6 +78,10 @@ export default function AppraisalDetailScreen() {
   const [isEmployee, setIsEmployee] = useState(false);
   const [isManager, setIsManager] = useState(false);
   const [isFinalApprover, setIsFinalApprover] = useState(false);
+  // Who's driving this appraisal — shown so it's clear who's being waited on,
+  // matching web's Overview tab (previously mobile only showed the employee).
+  const [manager, setManager] = useState<any>(null);
+  const [finalApprovers, setFinalApprovers] = useState<any[]>([]);
 
   // Employee form
   const [thingsWentWell, setThingsWentWell] = useState('');
@@ -92,8 +97,12 @@ export default function AppraisalDetailScreen() {
   const [recommendation, setRecommendation] = useState('');
   const [recommendationNotes, setRecommendationNotes] = useState('');
 
-  // Final decision
+  // Final decision — reject_target is required by the backend whenever
+  // decision is 'rejected' (determines whether it bounces back to the
+  // manager or the employee); previously mobile never sent it at all, so
+  // rejecting from mobile always failed with a 400.
   const [decisionNotes, setDecisionNotes] = useState('');
+  const [rejectTarget, setRejectTarget] = useState<'manager' | 'employee' | null>(null);
 
   const load = useCallback(async () => {
     const res = await api.performance.getAppraisal(appId, appraisalId);
@@ -107,6 +116,8 @@ export default function AppraisalDetailScreen() {
     setIsEmployee(!!data.is_employee);
     setIsManager(!!data.is_manager);
     setIsFinalApprover(!!data.is_final_approver);
+    setManager(data.manager ?? null);
+    setFinalApprovers(data.final_approvers ?? []);
 
     if (data.employee_response) {
       setThingsWentWell(data.employee_response.things_went_well ?? '');
@@ -124,6 +135,10 @@ export default function AppraisalDetailScreen() {
     }
     if (data.final_decision) {
       setDecisionNotes(data.final_decision.decision_notes ?? '');
+    } else if (appr.draft_decision_notes || appr.draft_reject_target) {
+      // Restore an in-progress (never submitted) final-decision draft.
+      setDecisionNotes(appr.draft_decision_notes ?? '');
+      setRejectTarget(appr.draft_reject_target ?? null);
     }
   }, [appId, appraisalId, api]);
 
@@ -134,8 +149,13 @@ export default function AppraisalDetailScreen() {
   const canManagerRespond = isManager && appraisalObj.status === 'pending_manager';
   const canFinalDecide = isFinalApprover && appraisalObj.status === 'pending_approver';
 
+  // Matches the backend's own validation exactly (performance.js POST
+  // /appraisals/:id/employee-response) — all four fields required, not just
+  // "what went well". Submitting with the others blank used to succeed
+  // client-side and only fail once it hit the server.
+  const employeeFieldsComplete = !!(thingsWentWell.trim() && couldBeBetter.trim() && nextTermAspirations.trim() && supportRequired.trim());
   const handleEmployeeSubmit = async () => {
-    if (!thingsWentWell.trim()) { Alert.alert('Required', 'Please fill in what went well.'); return; }
+    if (!employeeFieldsComplete) { Alert.alert('Required', 'Please fill in all fields before submitting.'); return; }
     setSubmitting(true);
     try {
       await api.performance.submitEmployeeResponse(appId, appraisalId, {
@@ -152,8 +172,30 @@ export default function AppraisalDetailScreen() {
     } finally { setSubmitting(false); }
   };
 
+  const handleEmployeeSaveDraft = async () => {
+    setSavingDraft(true);
+    try {
+      await api.performance.saveEmployeeResponseDraft(appId, appraisalId, {
+        things_went_well: thingsWentWell.trim(),
+        could_be_better: couldBeBetter.trim(),
+        next_term_aspirations: nextTermAspirations.trim(),
+        support_required: supportRequired.trim(),
+      });
+      Alert.alert('Draft Saved', 'Your progress has been saved. You can finish this later.');
+    } catch {
+      Alert.alert('Error', 'Failed to save draft');
+    } finally { setSavingDraft(false); }
+  };
+
+  // Matches the backend exactly (POST /appraisals/:id/manager-response) —
+  // recommendation plus all five feedback/assessment fields are required,
+  // not just the recommendation choice.
+  const managerFieldsComplete = !!(
+    recommendation && goalsFeedback.trim() && skillsFeedback.trim() &&
+    valuesFeedback.trim() && potentialAssessment.trim() && recommendationNotes.trim()
+  );
   const handleManagerSubmit = async () => {
-    if (!recommendation) { Alert.alert('Required', 'Please select a recommendation.'); return; }
+    if (!managerFieldsComplete) { Alert.alert('Required', 'Please select a recommendation and fill in all feedback fields.'); return; }
     setSubmitting(true);
     try {
       await api.performance.submitManagerResponse(appId, appraisalId, {
@@ -172,12 +214,32 @@ export default function AppraisalDetailScreen() {
     } finally { setSubmitting(false); }
   };
 
+  const handleManagerSaveDraft = async () => {
+    setSavingDraft(true);
+    try {
+      await api.performance.saveManagerResponseDraft(appId, appraisalId, {
+        goals_feedback: goalsFeedback.trim(),
+        skills_feedback: skillsFeedback.trim(),
+        values_feedback: valuesFeedback.trim(),
+        potential_assessment: potentialAssessment.trim(),
+        recommendation: recommendation || undefined,
+        recommendation_notes: recommendationNotes.trim(),
+      });
+      Alert.alert('Draft Saved', 'Your progress has been saved. You can finish this later.');
+    } catch {
+      Alert.alert('Error', 'Failed to save draft');
+    } finally { setSavingDraft(false); }
+  };
+
   const handleFinalDecision = async (d: 'approved' | 'rejected') => {
+    if (!decisionNotes.trim()) { Alert.alert('Required', 'Please add decision notes.'); return; }
+    if (d === 'rejected' && !rejectTarget) { Alert.alert('Required', 'Choose whether to send this back to the manager or the employee.'); return; }
     setSubmitting(true);
     try {
       await api.performance.submitFinalDecision(appId, appraisalId, {
         decision: d,
         decision_notes: decisionNotes.trim(),
+        ...(d === 'rejected' ? { reject_target: rejectTarget } : {}),
       });
       Alert.alert('Done', d === 'approved' ? 'Appraisal approved.' : 'Appraisal rejected.', [
         { text: 'OK', onPress: () => navigation.goBack() },
@@ -185,6 +247,19 @@ export default function AppraisalDetailScreen() {
     } catch {
       Alert.alert('Error', 'Failed to submit decision');
     } finally { setSubmitting(false); }
+  };
+
+  const handleFinalSaveDraft = async () => {
+    setSavingDraft(true);
+    try {
+      await api.performance.saveFinalDecisionDraft(appId, appraisalId, {
+        decision_notes: decisionNotes.trim(),
+        reject_target: rejectTarget ?? undefined,
+      });
+      Alert.alert('Draft Saved', 'Your progress has been saved. You can finish this later.');
+    } catch {
+      Alert.alert('Error', 'Failed to save draft');
+    } finally { setSavingDraft(false); }
   };
 
   if (loading) return <LoadingSpinner />;
@@ -211,6 +286,25 @@ export default function AppraisalDetailScreen() {
         </View>
 
         <ScrollView contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
+
+          {(manager || finalApprovers.length > 0) && (
+            <View style={s.peopleRow}>
+              {manager && (
+                <View style={s.peopleChip}>
+                  <Text style={s.peopleChipLabel}>Manager</Text>
+                  <Text style={s.peopleChipName}>{[manager.first_name, manager.last_name].filter(Boolean).join(' ') || manager.email}</Text>
+                </View>
+              )}
+              {finalApprovers.length > 0 && (
+                <View style={s.peopleChip}>
+                  <Text style={s.peopleChipLabel}>Final Approver{finalApprovers.length > 1 ? 's' : ''}</Text>
+                  <Text style={s.peopleChipName}>
+                    {finalApprovers.map((u) => [u.first_name, u.last_name].filter(Boolean).join(' ') || u.email).join(', ')}
+                  </Text>
+                </View>
+              )}
+            </View>
+          )}
 
           {/* Linked performance reviews for this appraisal's included cycles */}
           {reviewSummaries.length > 0 && (
@@ -257,9 +351,14 @@ export default function AppraisalDetailScreen() {
               <Text style={s.fieldLabel}>Support required</Text>
               <TextInput style={[s.input, s.inputMulti]} value={supportRequired} onChangeText={setSupportRequired}
                 placeholder="What support do you need?" placeholderTextColor={colors.gray400} multiline numberOfLines={3} />
-              <TouchableOpacity style={[s.submitBtn, submitting && s.submitBtnDisabled]} onPress={handleEmployeeSubmit} disabled={submitting}>
-                {submitting ? <ActivityIndicator color="#fff" /> : <Text style={s.submitBtnText}>Submit Self-Reflection</Text>}
-              </TouchableOpacity>
+              <View style={s.actionRow}>
+                <TouchableOpacity style={[s.draftBtn, savingDraft && s.submitBtnDisabled]} onPress={handleEmployeeSaveDraft} disabled={savingDraft || submitting}>
+                  {savingDraft ? <ActivityIndicator color={colors.primary} /> : <Text style={s.draftBtnText}>Save Draft</Text>}
+                </TouchableOpacity>
+                <TouchableOpacity style={[s.submitBtn, s.submitBtnFlex, (submitting || !employeeFieldsComplete) && s.submitBtnDisabled]} onPress={handleEmployeeSubmit} disabled={submitting || savingDraft}>
+                  {submitting ? <ActivityIndicator color="#fff" /> : <Text style={s.submitBtnText}>Submit Self-Reflection</Text>}
+                </TouchableOpacity>
+              </View>
             </>
           )}
 
@@ -325,9 +424,14 @@ export default function AppraisalDetailScreen() {
               <Text style={s.fieldLabel}>Recommendation Notes</Text>
               <TextInput style={[s.input, s.inputMulti]} value={recommendationNotes} onChangeText={setRecommendationNotes}
                 placeholder="Additional notes on recommendation..." placeholderTextColor={colors.gray400} multiline numberOfLines={3} />
-              <TouchableOpacity style={[s.submitBtn, submitting && s.submitBtnDisabled]} onPress={handleManagerSubmit} disabled={submitting}>
-                {submitting ? <ActivityIndicator color="#fff" /> : <Text style={s.submitBtnText}>Submit Manager Review</Text>}
-              </TouchableOpacity>
+              <View style={s.actionRow}>
+                <TouchableOpacity style={[s.draftBtn, savingDraft && s.submitBtnDisabled]} onPress={handleManagerSaveDraft} disabled={savingDraft || submitting}>
+                  {savingDraft ? <ActivityIndicator color={colors.primary} /> : <Text style={s.draftBtnText}>Save Draft</Text>}
+                </TouchableOpacity>
+                <TouchableOpacity style={[s.submitBtn, s.submitBtnFlex, (submitting || !managerFieldsComplete) && s.submitBtnDisabled]} onPress={handleManagerSubmit} disabled={submitting || savingDraft}>
+                  {submitting ? <ActivityIndicator color="#fff" /> : <Text style={s.submitBtnText}>Submit Manager Review</Text>}
+                </TouchableOpacity>
+              </View>
             </>
           )}
 
@@ -370,17 +474,34 @@ export default function AppraisalDetailScreen() {
           {canFinalDecide && (
             <>
               <Text style={s.sectionTitle}>Final Decision</Text>
-              <Text style={s.fieldLabel}>Decision Notes</Text>
+              <Text style={s.fieldLabel}>Decision Notes *</Text>
               <TextInput style={[s.input, s.inputMulti]} value={decisionNotes} onChangeText={setDecisionNotes}
                 placeholder="Notes on your decision..." placeholderTextColor={colors.gray400} multiline numberOfLines={4} />
+              <Text style={s.fieldLabel}>If rejecting, send back to *</Text>
+              <View style={s.chipRow}>
+                {(['manager', 'employee'] as const).map((target) => (
+                  <TouchableOpacity
+                    key={target}
+                    style={[s.chip, rejectTarget === target && s.chipActive]}
+                    onPress={() => setRejectTarget(target)}
+                  >
+                    <Text style={[s.chipText, rejectTarget === target && s.chipTextActive]}>
+                      {target === 'manager' ? 'Manager' : 'Employee'}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <TouchableOpacity style={[s.draftBtn, { marginTop: 16 }, savingDraft && s.submitBtnDisabled]} onPress={handleFinalSaveDraft} disabled={savingDraft || submitting}>
+                {savingDraft ? <ActivityIndicator color={colors.primary} /> : <Text style={s.draftBtnText}>Save Draft</Text>}
+              </TouchableOpacity>
               <View style={s.finalBtns}>
-                <TouchableOpacity style={[s.approveBtn, submitting && s.submitBtnDisabled]} onPress={() => handleFinalDecision('approved')} disabled={submitting}>
+                <TouchableOpacity style={[s.approveBtn, (submitting || !decisionNotes.trim()) && s.submitBtnDisabled]} onPress={() => handleFinalDecision('approved')} disabled={submitting || savingDraft}>
                   {submitting
                     ? <ActivityIndicator color="#fff" />
                     : <><Ionicons name="checkmark" size={16} color="#fff" /><Text style={s.approveBtnText}>Approve</Text></>
                   }
                 </TouchableOpacity>
-                <TouchableOpacity style={[s.rejectBtn, submitting && s.submitBtnDisabled]} onPress={() => handleFinalDecision('rejected')} disabled={submitting}>
+                <TouchableOpacity style={[s.rejectBtn, (submitting || !decisionNotes.trim() || !rejectTarget) && s.submitBtnDisabled]} onPress={() => handleFinalDecision('rejected')} disabled={submitting || savingDraft}>
                   {submitting
                     ? <ActivityIndicator color={colors.danger} />
                     : <><Ionicons name="close" size={16} color={colors.danger} /><Text style={s.rejectBtnText}>Reject</Text></>
@@ -431,6 +552,20 @@ function makeStyles(c: AppColors) {
     headerTitle:        { fontSize: 17, fontWeight: '700', color: c.textPrimary, fontFamily: SERIF },
     headerSub:          { fontSize: 12, color: c.textSecondary, marginTop: 2 },
     content:            { padding: 16, paddingBottom: 48 },
+    peopleRow:          { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
+    peopleChip:         {
+      backgroundColor: c.gray50, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8,
+      borderWidth: 1, borderColor: c.border, flexGrow: 1,
+    },
+    peopleChipLabel:    { fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, color: c.textMuted },
+    peopleChipName:     { fontSize: 13, fontWeight: '600', color: c.textPrimary, marginTop: 2 },
+    actionRow:          { flexDirection: 'row', gap: 10, marginTop: 20 },
+    draftBtn:           {
+      paddingHorizontal: 16, paddingVertical: 14, borderRadius: 12,
+      borderWidth: 1.5, borderColor: c.primary, alignItems: 'center', justifyContent: 'center',
+    },
+    draftBtnText:       { fontSize: 14, fontWeight: '700', color: c.primary },
+    submitBtnFlex:      { flex: 1, marginTop: 0 },
     sectionTitle:       { fontSize: 16, fontWeight: '700', color: c.textPrimary, marginTop: 8, marginBottom: 12 },
     fieldLabel:         { fontSize: 13, fontWeight: '600', color: c.textSecondary, marginBottom: 6, marginTop: 12 },
     input:              {

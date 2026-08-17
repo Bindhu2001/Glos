@@ -69,6 +69,7 @@ interface Appraisal {
   id: number;
   status: string;
   reason?: string;
+  created_at?: string;
   employee?: { first_name?: string; last_name?: string; email?: string };
 }
 
@@ -376,7 +377,12 @@ export default function PerformanceScreen() {
 
   const q = search.toLowerCase();
   const filteredPendingReviews = q ? pendingReviews.filter(r => (r.cycle_name ?? '').toLowerCase().includes(q)) : pendingReviews;
-  const filteredAppraisals = q ? pendingAppraisals.filter(a => appraisalTitle(a).toLowerCase().includes(q)) : pendingAppraisals;
+  // Newest-first, matching the Completed/Rejected tabs elsewhere in My Work —
+  // previously this rendered in raw API order instead of being sorted at all.
+  const sortedPendingAppraisals = [...pendingAppraisals].sort(
+    (a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime()
+  );
+  const filteredAppraisals = q ? sortedPendingAppraisals.filter(a => appraisalTitle(a).toLowerCase().includes(q)) : sortedPendingAppraisals;
   const filteredGoals = q ? goals.filter(g => g.goal_name.toLowerCase().includes(q)) : goals;
   const isGoalEditLocked = (g: Goal) =>
     allReviews.some(r => r.role_id === g.role_id && ACTIVE_REVIEW_STATUSES.includes(r.status));

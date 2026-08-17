@@ -379,10 +379,16 @@ export const performanceApi = (client: AxiosInstance) => ({
     client.get(`/apps/${appId}/hr/appraisals/${appraisalId}`),
   submitEmployeeResponse: (appId: number, appraisalId: number, data: Record<string, unknown>) =>
     client.post(`/apps/${appId}/hr/appraisals/${appraisalId}/employee-response`, data),
+  saveEmployeeResponseDraft: (appId: number, appraisalId: number, data: Record<string, unknown>) =>
+    client.post(`/apps/${appId}/hr/appraisals/${appraisalId}/employee-response/save-draft`, data),
   submitManagerResponse: (appId: number, appraisalId: number, data: Record<string, unknown>) =>
     client.post(`/apps/${appId}/hr/appraisals/${appraisalId}/manager-response`, data),
+  saveManagerResponseDraft: (appId: number, appraisalId: number, data: Record<string, unknown>) =>
+    client.post(`/apps/${appId}/hr/appraisals/${appraisalId}/manager-response/save-draft`, data),
   submitFinalDecision: (appId: number, appraisalId: number, data: Record<string, unknown>) =>
     client.post(`/apps/${appId}/hr/appraisals/${appraisalId}/final-decision`, data),
+  saveFinalDecisionDraft: (appId: number, appraisalId: number, data: Record<string, unknown>) =>
+    client.post(`/apps/${appId}/hr/appraisals/${appraisalId}/final-decision/save-draft`, data),
 });
 
 // ── Employees ────────────────────────────────────────────────
