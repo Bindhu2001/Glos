@@ -156,6 +156,14 @@ export const contractsApi = (client: AxiosInstance) => ({
     client.delete(`/apps/${appId}/hr/contracts/clients/${id}`),
   getReports: (appId: number, params?: Record<string, unknown>) =>
     client.get(`/apps/${appId}/hr/contracts/reports`, { params }),
+  getComplianceBoard: (appId: number, params: { month: number; year: number; client_id?: number }) =>
+    client.get(`/apps/${appId}/hr/contracts/compliance`, { params }),
+  getComplianceLogs: (appId: number, agreementId: number, params?: Record<string, unknown>) =>
+    client.get(`/apps/${appId}/hr/contracts/compliance/logs/${agreementId}`, { params }),
+  submitComplianceTask: (appId: number, data: Record<string, unknown>) =>
+    client.post(`/apps/${appId}/hr/contracts/compliance/task`, data),
+  checkContractTask: (appId: number, taskId: number, data: { check_status: 'approved' | 'rejected'; check_remarks?: string | null }) =>
+    client.post(`/apps/${appId}/hr/contracts/tasks/${taskId}/check`, data),
 });
 
 // ── Routines ─────────────────────────────────────────────────

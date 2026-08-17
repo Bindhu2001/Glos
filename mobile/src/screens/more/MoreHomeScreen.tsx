@@ -36,6 +36,7 @@ export default function MoreHomeScreen() {
         { screen: 'ProjectsList', icon: 'folder-open-outline', label: 'Projects', desc: 'Track project milestones and progress', color: '#0891b2', show: true },
         { screen: 'AgreementsList', icon: 'document-text-outline', label: 'Agreements', desc: 'Client contracts and compliance', color: '#4f46e5', show: true },
         { screen: 'ServicesList', icon: 'construct-outline', label: 'Services', desc: 'Contract services and deliverables', color: '#0d9488', show: true },
+        { screen: 'ComplianceBoard', icon: 'shield-checkmark-outline', label: 'Compliance Board', desc: 'Monthly service status and reviews', color: '#7c3aed', show: true },
         { screen: 'Routines', icon: 'calendar-outline', label: 'Routines', desc: 'Recurring team routines', color: '#059669', show: canSeeTeamContent },
         { screen: 'BusinessReviewsList', icon: 'bar-chart-outline', label: 'Business Reviews', desc: 'Periodic team performance reviews', color: '#d97706', show: canSeeTeamContent },
       ],

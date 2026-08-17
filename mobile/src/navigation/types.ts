@@ -76,6 +76,7 @@ export type MoreStackParamList = {
   CreateEditAgreement: { appId: number; agreementId?: number };
   ServicesList: undefined;
   CreateEditService: { serviceId?: number };
+  ComplianceBoard: undefined;
   Routines: undefined;
   BusinessReviewsList: undefined;
   BusinessReviewDetail: { reviewId: number; appId: number };
