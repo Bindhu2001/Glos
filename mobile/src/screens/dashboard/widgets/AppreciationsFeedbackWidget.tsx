@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { AppColors } from '../../../utils/colors';
 
 interface Member {
@@ -39,13 +39,17 @@ export default function AppreciationsFeedbackWidget({
         <Text style={s.thCol}>Appr R/G</Text>
         <Text style={s.thCol}>Fdbk R/G</Text>
       </View>
-      {members.map((m) => (
-        <View key={m.user_id} style={s.row}>
-          <Text style={s.rowName} numberOfLines={1}>{m.name}</Text>
-          <Text style={s.rowCol}>{m.appr_received}/{m.appr_given}</Text>
-          <Text style={s.rowCol}>{m.fb_received}/{m.fb_given}</Text>
-        </View>
-      ))}
+      {/* Fixed maxHeight so this scrolls within its own box (~10 rows) once
+          the team is large, instead of growing the whole page. */}
+      <ScrollView style={s.tableScroll} nestedScrollEnabled showsVerticalScrollIndicator={false}>
+        {members.map((m) => (
+          <View key={m.user_id} style={s.row}>
+            <Text style={s.rowName} numberOfLines={1}>{m.name}</Text>
+            <Text style={s.rowCol} numberOfLines={1}>{m.appr_received}/{m.appr_given}</Text>
+            <Text style={s.rowCol} numberOfLines={1}>{m.fb_received}/{m.fb_given}</Text>
+          </View>
+        ))}
+      </ScrollView>
     </View>
   );
 }
@@ -59,6 +63,7 @@ function makeStyles(c: AppColors) {
     kpiVal: { fontSize: 16, fontWeight: '800', color: c.textPrimary },
     kpiLbl: { fontSize: 8.5, color: c.textMuted, marginTop: 2, textAlign: 'center' },
     tableHead: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: c.border, paddingBottom: 6, marginBottom: 4 },
+    tableScroll: { maxHeight: 290 },
     thName: { flex: 1, fontSize: 10, fontWeight: '700', color: c.textMuted },
     thCol: { width: 64, fontSize: 10, fontWeight: '700', color: c.textMuted, textAlign: 'right' },
     row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: c.border },

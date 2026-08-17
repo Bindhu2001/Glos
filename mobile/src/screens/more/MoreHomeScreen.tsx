@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useHasTeam } from '../../contexts/HasTeamContext';
 import { useTheme } from '../../contexts/ThemeContext';
+import { useWorkspace } from '../../contexts/WorkspaceContext';
 import { AppColors } from '../../utils/colors';
 import { MoreStackParamList } from '../../navigation/types';
 
@@ -23,6 +24,7 @@ interface MenuItem {
 export default function MoreHomeScreen() {
   const navigation = useNavigation<Nav>();
   const { colors } = useTheme();
+  const { workspace } = useWorkspace();
   const { isAdmin, canSeeTeamContent } = useHasTeam();
   const s = useMemo(() => makeStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
@@ -33,6 +35,7 @@ export default function MoreHomeScreen() {
       items: [
         { screen: 'ProjectsList', icon: 'folder-open-outline', label: 'Projects', desc: 'Track project milestones and progress', color: '#0891b2', show: true },
         { screen: 'AgreementsList', icon: 'document-text-outline', label: 'Agreements', desc: 'Client contracts and compliance', color: '#4f46e5', show: true },
+        { screen: 'ServicesList', icon: 'construct-outline', label: 'Services', desc: 'Contract services and deliverables', color: '#0d9488', show: true },
         { screen: 'Routines', icon: 'calendar-outline', label: 'Routines', desc: 'Recurring team routines', color: '#059669', show: canSeeTeamContent },
         { screen: 'BusinessReviewsList', icon: 'bar-chart-outline', label: 'Business Reviews', desc: 'Periodic team performance reviews', color: '#d97706', show: canSeeTeamContent },
       ],
@@ -47,6 +50,7 @@ export default function MoreHomeScreen() {
       label: 'INSIGHTS',
       items: [
         { screen: 'ReportsList', icon: 'stats-chart-outline', label: 'Reports', desc: 'Task, project, performance and other reports', color: '#dc2626', show: true },
+        { screen: 'PoliciesList', icon: 'shield-checkmark-outline', label: 'HR Policies', desc: 'Company policies and guidelines', color: '#0d9488', show: true },
       ],
     },
   ];
@@ -57,6 +61,7 @@ export default function MoreHomeScreen() {
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
       <View style={s.header}>
+        <Text style={s.breadcrumb}>{workspace?.name?.toUpperCase() ?? 'WORKSPACE'} · MORE</Text>
         <Text style={s.title}>More</Text>
         <Text style={s.subtitle}>Projects, agreements and more</Text>
       </View>
@@ -98,7 +103,8 @@ function makeStyles(c: AppColors) {
       backgroundColor: c.surface, paddingHorizontal: 20, paddingTop: 16, paddingBottom: 14,
       borderBottomWidth: 1, borderBottomColor: c.border,
     },
-    title: { fontSize: 28, fontFamily: SERIF, color: c.textPrimary },
+    breadcrumb: { fontSize: 10, fontWeight: '700', color: c.textMuted, letterSpacing: 1, marginBottom: 6 },
+    title: { fontSize: 30, fontFamily: SERIF, color: c.textPrimary },
     subtitle: { fontSize: 12, color: c.textSecondary, marginTop: 4 },
     list: { padding: 16, paddingTop: 12, paddingBottom: 32 },
     section: { marginBottom: 20 },

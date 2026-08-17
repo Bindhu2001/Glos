@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, Modal, TouchableOpacity, FlatList, StyleSheet, TextInput } from 'react-native';
+import { View, Text, Modal, TouchableOpacity, Pressable, FlatList, StyleSheet, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -38,50 +38,64 @@ export default function MemberPickerModal({ visible, title, options, multi = fal
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <TouchableOpacity style={s.overlay} activeOpacity={1} onPress={onClose}>
-        <View style={[s.sheet, { paddingBottom: insets.bottom + 16 }]} onStartShouldSetResponder={() => true}>
-          <View style={s.handle} />
-          <View style={s.headRow}>
-            <Text style={s.title}>{title}</Text>
-            {multi && (
-              <TouchableOpacity onPress={onClose}>
-                <Text style={s.doneTxt}>Done</Text>
+      {/* Pressable, not TouchableOpacity, and no onStartShouldSetResponder on
+          the sheet either — both claim the touch responder as soon as it
+          starts (for press feedback / to stop the tap bubbling to the
+          backdrop) and don't reliably hand off to the FlatList below when the
+          touch turns into a scroll, so the list intermittently won't scroll.
+          Pressable's onPress + stopPropagation gets the same "tap inside
+          doesn't dismiss" behavior without claiming the responder up front.
+          See PostCard's "Shared with" modal for the full write-up. */}
+      <Pressable style={s.overlay} onPress={onClose}>
+        {/* The search input below needs the sheet lifted above the keyboard —
+            Modal content sits outside any screen-level KeyboardAvoidingView
+            (separate native root), so it needs its own here. */}
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ width: '100%' }}>
+          <Pressable style={[s.sheet, { paddingBottom: insets.bottom + 16 }]} onPress={(e) => e.stopPropagation()}>
+            <View style={s.handle} />
+            <View style={s.headRow}>
+              <Text style={s.title}>{title}</Text>
+              {multi && (
+                <TouchableOpacity onPress={onClose}>
+                  <Text style={s.doneTxt}>Done</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            <TextInput
+              style={s.search}
+              placeholder="Search..."
+              placeholderTextColor={colors.gray400}
+              value={search}
+              onChangeText={setSearch}
+            />
+            {allowClear && !multi && (
+              <TouchableOpacity style={s.option} onPress={() => { onChange([]); onClose(); }}>
+                <Ionicons name="close-circle-outline" size={18} color={colors.gray400} />
+                <Text style={[s.optionText, { color: colors.gray500 }]}>None</Text>
               </TouchableOpacity>
             )}
-          </View>
-          <TextInput
-            style={s.search}
-            placeholder="Search..."
-            placeholderTextColor={colors.gray400}
-            value={search}
-            onChangeText={setSearch}
-          />
-          {allowClear && !multi && (
-            <TouchableOpacity style={s.option} onPress={() => { onChange([]); onClose(); }}>
-              <Ionicons name="close-circle-outline" size={18} color={colors.gray400} />
-              <Text style={[s.optionText, { color: colors.gray500 }]}>None</Text>
-            </TouchableOpacity>
-          )}
-          <FlatList
-            data={filtered}
-            keyExtractor={(o) => String(o.id)}
-            style={{ maxHeight: 360 }}
-            renderItem={({ item }) => {
-              const isActive = selected.includes(item.id);
-              return (
-                <TouchableOpacity style={[s.option, isActive && s.optionActive]} onPress={() => toggle(item.id)}>
-                  <Avatar name={item.name} photoUrl={item.photoUrl} size={28} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={[s.optionText, isActive && { color: colors.primary, fontWeight: '700' }]}>{item.name}</Text>
-                    {item.sub ? <Text style={s.optionSub}>{item.sub}</Text> : null}
-                  </View>
-                  {isActive && <Ionicons name="checkmark" size={18} color={colors.primary} />}
-                </TouchableOpacity>
-              );
-            }}
-          />
-        </View>
-      </TouchableOpacity>
+            <FlatList
+              data={filtered}
+              keyExtractor={(o) => String(o.id)}
+              style={{ maxHeight: 360 }}
+              keyboardShouldPersistTaps="handled"
+              renderItem={({ item }) => {
+                const isActive = selected.includes(item.id);
+                return (
+                  <TouchableOpacity style={[s.option, isActive && s.optionActive]} onPress={() => toggle(item.id)}>
+                    <Avatar name={item.name} photoUrl={item.photoUrl} size={28} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={[s.optionText, isActive && { color: colors.primary, fontWeight: '700' }]}>{item.name}</Text>
+                      {item.sub ? <Text style={s.optionSub}>{item.sub}</Text> : null}
+                    </View>
+                    {isActive && <Ionicons name="checkmark" size={18} color={colors.primary} />}
+                  </TouchableOpacity>
+                );
+              }}
+            />
+          </Pressable>
+        </KeyboardAvoidingView>
+      </Pressable>
     </Modal>
   );
 }

@@ -10,6 +10,7 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { useWorkspace } from '../../contexts/WorkspaceContext';
 import { useApi } from '../../hooks/useApi';
 import { AppColors } from '../../utils/colors';
+import LoadError from '../../components/common/LoadError';
 
 type Member = {
   membership_id: number;
@@ -51,10 +52,18 @@ const INV_STATUS_COLORS: Record<string, string> = {
   revoked: '#6b7280',
 };
 
+const INV_STATUS_LABELS: Record<string, string> = {
+  pending: 'Pending',
+  accepted: 'Accepted',
+  declined: 'Declined',
+  revoked: 'Revoked',
+};
+
 export default function MembersScreen() {
   const navigation = useNavigation();
   const { colors } = useTheme();
   const { workspace } = useWorkspace();
+  const canManage = workspace?.role === 'super_admin';
   const api = useApi();
   const insets = useSafeAreaInsets();
   const s = useMemo(() => makeStyles(colors), [colors]);
@@ -63,6 +72,7 @@ export default function MembersScreen() {
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState(false);
 
   const load = useCallback(async (isRefresh = false) => {
     if (!workspace?.id) return;
@@ -74,8 +84,9 @@ export default function MembersScreen() {
       ]);
       setMembers(mRes.data?.items ?? mRes.data ?? []);
       setInvitations(iRes.data?.items ?? iRes.data ?? []);
+      setError(false);
     } catch {
-      Alert.alert('Error', 'Failed to load members.');
+      setError(true);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -98,7 +109,7 @@ export default function MembersScreen() {
           onPress: async () => {
             try {
               await api.members.updateRole(workspace!.id, member.user_id, newRole);
-              await load();
+              await load(true);
             } catch {
               Alert.alert('Error', 'Failed to update role.');
             }
@@ -122,7 +133,7 @@ export default function MembersScreen() {
           onPress: async () => {
             try {
               await api.members.remove(workspace!.id, member.user_id);
-              await load();
+              await load(true);
             } catch {
               Alert.alert('Error', 'Failed to remove member.');
             }
@@ -144,7 +155,7 @@ export default function MembersScreen() {
           onPress: async () => {
             try {
               await api.appInvitations.revoke(workspace!.id, inv.id);
-              await load();
+              await load(true);
             } catch {
               Alert.alert('Error', 'Failed to revoke invitation.');
             }
@@ -176,6 +187,8 @@ export default function MembersScreen() {
 
       {loading ? (
         <ActivityIndicator style={{ flex: 1 }} color={colors.primary} />
+      ) : error ? (
+        <LoadError onRetry={() => load()} />
       ) : (
         <ScrollView
           contentContainerStyle={s.list}
@@ -203,7 +216,7 @@ export default function MembersScreen() {
                     <Text style={[s.roleText, { color }]}>{ROLE_LABELS[m.role] ?? m.role}</Text>
                   </View>
                 </View>
-                {!isOwner && (
+                {!isOwner && canManage && (
                   <View style={s.actions}>
                     <TouchableOpacity style={s.actionBtn} onPress={() => changeRole(m)}>
                       <Ionicons name="swap-horizontal-outline" size={18} color={colors.primary} />
@@ -264,7 +277,7 @@ export default function MembersScreen() {
                     <View style={s.info}>
                       <Text style={s.name}>{inv.invited_email}</Text>
                       <View style={[s.roleBadge, { backgroundColor: statusColor + '14', borderColor: statusColor + '33' }]}>
-                        <Text style={[s.roleText, { color: statusColor }]}>{inv.status}</Text>
+                        <Text style={[s.roleText, { color: statusColor }]}>{INV_STATUS_LABELS[inv.status] ?? inv.status}</Text>
                       </View>
                     </View>
                   </View>

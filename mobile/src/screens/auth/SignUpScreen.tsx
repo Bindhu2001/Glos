@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  KeyboardAvoidingView,
+  KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useSignUp, useClerk } from '@clerk/clerk-expo';
 import { useNavigation } from '@react-navigation/native';
@@ -87,7 +87,7 @@ export default function SignUpScreen() {
   };
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <ScrollView
         style={s.container}
         contentContainerStyle={[s.content, { paddingTop: insets.top + 40, paddingBottom: insets.bottom + 24 }]}
@@ -163,6 +163,9 @@ function makeStyles(c: AppColors) {
     },
     heading: { fontSize: 22, fontWeight: '700', color: c.textPrimary },
     subheading: { fontSize: 14, color: c.textSecondary, marginTop: 4, marginBottom: 20 },
+    divider: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 18 },
+    dividerLine: { flex: 1, height: 1, backgroundColor: c.border },
+    dividerText: { fontSize: 12, color: c.textMuted, fontWeight: '600' },
     nameRow: { flexDirection: 'row', gap: 12 },
     backLink: { marginTop: 16, alignItems: 'center' },
     backLinkText: { fontSize: 14, color: c.textSecondary },

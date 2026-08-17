@@ -16,6 +16,10 @@ import ScreenHeader from '../../components/common/ScreenHeader';
 import Input from '../../components/common/Input';
 import Button from '../../components/common/Button';
 import Avatar from '../../components/common/Avatar';
+import TableBuilderModal from '../../components/feed/TableBuilderModal';
+import AttachmentChips from '../../components/common/AttachmentChips';
+import { tableToHtml, detectPastedTable } from '../../utils/postContent';
+import { pickAttachmentFiles, uploadAttachments, PickedFile } from '../../utils/attachments';
 
 type Route = RouteProp<FeedStackParamList, 'CreatePost'>;
 type AudienceType = 'all' | 'users' | 'departments' | 'roles';
@@ -29,7 +33,8 @@ const AUDIENCE_OPTIONS: { value: AudienceType; label: string; icon: string }[] =
 
 export default function CreatePostScreen() {
   const route = useRoute<Route>();
-  const { appId } = route.params;
+  const { appId, postId, initialContent } = route.params;
+  const isEditMode = !!postId;
   const navigation = useNavigation();
   const api = useApi();
   const { workspace } = useWorkspace();
@@ -39,14 +44,30 @@ export default function CreatePostScreen() {
 
   const isAdmin = workspace?.role === 'super_admin' || workspace?.role === 'admin';
 
-  const [content, setContent] = useState('');
+  const [content, setContent] = useState(initialContent ?? '');
+  const [tables, setTables] = useState<{ rows: string[][]; hasHeaderRow: boolean }[]>([]);
+  const [showTableBuilder, setShowTableBuilder] = useState(false);
+  const [pastedRows, setPastedRows] = useState<string[][] | null>(null);
+
+  const handleContentChange = (newText: string) => {
+    const detected = detectPastedTable(content, newText);
+    if (detected) {
+      setContent(detected.textWithoutPaste);
+      setPastedRows(detected.rows);
+      setShowTableBuilder(true);
+      return;
+    }
+    setContent(newText);
+  };
   const [postType, setPostType] = useState<'post' | 'announcement'>('post');
   const [audienceType, setAudienceType] = useState<AudienceType>('all');
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [saving, setSaving] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<PickedFile[]>([]);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
 
   // Lists for multi-select
-  const [members, setMembers] = useState<{ id: number; name: string }[]>([]);
+  const [members, setMembers] = useState<{ id: number; name: string; photoUrl?: string | null }[]>([]);
   const [departments, setDepartments] = useState<{ id: number; name: string }[]>([]);
   const [roles, setRoles] = useState<{ id: number; name: string }[]>([]);
   const [listsLoading, setListsLoading] = useState(false);
@@ -69,6 +90,7 @@ export default function CreatePostScreen() {
         setMembers(items.map((m: any) => ({
           id: m.user_id,
           name: `${m.first_name ?? ''} ${m.last_name ?? ''}`.trim() || m.email,
+          photoUrl: m.photo_url,
         })));
       } else if (type === 'departments' && departments.length === 0) {
         const r = await api.departments.list(workspace.id);
@@ -97,41 +119,81 @@ export default function CreatePostScreen() {
     return raw.filter(item => item.name.toLowerCase().includes(searchQuery.toLowerCase()));
   };
 
+  const toggleSelectAll = () => {
+    const activeIds = getActiveList().map(i => i.id);
+    const allSelected = activeIds.length > 0 && activeIds.every(id => selectedIds.includes(id));
+    if (allSelected) {
+      setSelectedIds(prev => prev.filter(id => !activeIds.includes(id)));
+    } else {
+      setSelectedIds(prev => [...new Set([...prev, ...activeIds])]);
+    }
+  };
+
+  const pickFiles = async () => {
+    try {
+      const files = await pickAttachmentFiles();
+      if (files.length) setPendingFiles((prev) => [...prev, ...files]);
+    } catch {
+      showAlert('Error', 'Could not pick file.');
+    }
+  };
+
+  const removePendingFile = (i: number) => setPendingFiles((prev) => prev.filter((_, idx) => idx !== i));
+
   const handleCreate = async () => {
-    if (!content.trim()) {
+    if (!content.trim() && tables.length === 0 && pendingFiles.length === 0) {
       showAlert('Validation', 'Post content is required.');
       return;
     }
-    if (audienceType !== 'all' && selectedIds.length === 0) {
+    if (!isEditMode && audienceType !== 'all' && selectedIds.length === 0) {
       showAlert('Validation', 'Please select at least one audience member.');
       return;
     }
     setSaving(true);
     try {
-      await api.feed.create(appId, {
-        post_type: postType,
-        content: content.trim(),
-        audience_type: audienceType,
-        audience_ids: audienceType === 'all' ? [] : selectedIds,
-      });
+      if (isEditMode && postId) {
+        // The edit endpoint only accepts content — no audience/type/attachments,
+        // matching qa-production web's edit scope exactly.
+        await api.feed.update(appId, postId, content.trim());
+      } else {
+        let attachments: Record<string, unknown>[] = [];
+        if (pendingFiles.length > 0) {
+          setUploadingFiles(true);
+          attachments = await uploadAttachments(api, appId, 'feed', pendingFiles);
+          setUploadingFiles(false);
+        }
+        const tablesHtml = tables.map((t) => tableToHtml(t.rows, t.hasHeaderRow)).join('');
+        await api.feed.create(appId, {
+          post_type: postType,
+          content: content.trim() + tablesHtml,
+          audience_type: audienceType,
+          audience_ids: audienceType === 'all' ? [] : selectedIds,
+          attachments,
+        });
+      }
       navigation.goBack();
-    } catch {
-      showAlert('Error', 'Could not create post.');
+    } catch (err: any) {
+      setUploadingFiles(false);
+      showAlert('Error', isEditMode ? (err?.response?.data?.error ?? 'Could not update post.') : 'Could not create post.');
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <View style={[s.container, { paddingTop: insets.top }]}>
         <ScreenHeader
-          title="New Post"
+          title={isEditMode ? 'Edit Post' : 'New Post'}
           showBack
-          right={<Button label="Post" onPress={handleCreate} loading={saving} style={s.postBtn} />}
+          right={<Button label={isEditMode ? 'Save' : 'Post'} onPress={handleCreate} loading={saving} style={s.postBtn} />}
         />
         <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
-          {isAdmin && (
+          {isEditMode && (
+            <Text style={s.editHint}>Editing only updates the text — audience, type, and attachments can't be changed here.</Text>
+          )}
+
+          {!isEditMode && isAdmin && (
             <>
               <Text style={s.sectionLabel}>POST TYPE</Text>
               <View style={s.chipRow}>
@@ -151,6 +213,8 @@ export default function CreatePostScreen() {
             </>
           )}
 
+          {!isEditMode && (
+          <>
           <Text style={s.sectionLabel}>AUDIENCE</Text>
           <View style={s.chipRow}>
             {AUDIENCE_OPTIONS.map(opt => (
@@ -181,31 +245,53 @@ export default function CreatePostScreen() {
               {listsLoading ? (
                 <ActivityIndicator style={{ marginVertical: 16 }} color={colors.primary} />
               ) : (
-                getActiveList().map(item => {
-                  const checked = selectedIds.includes(item.id);
+                <>
+                {getActiveList().length > 0 && (() => {
+                  const activeIds = getActiveList().map(i => i.id);
+                  const allSelected = activeIds.every(id => selectedIds.includes(id));
                   return (
-                    <TouchableOpacity
-                      key={item.id}
-                      style={s.selectRow}
-                      onPress={() => toggleId(item.id)}
-                    >
-                      {audienceType === 'users'
-                        ? <Avatar name={item.name} size={30} />
-                        : <View style={[s.iconCircle, checked && s.iconCircleActive]}>
-                            <Ionicons
-                              name={audienceType === 'departments' ? 'business-outline' : 'briefcase-outline'}
-                              size={14}
-                              color={checked ? '#fff' : colors.textSecondary}
-                            />
-                          </View>
-                      }
-                      <Text style={s.selectName}>{item.name}</Text>
-                      <View style={[s.checkbox, checked && s.checkboxActive]}>
-                        {checked && <Ionicons name="checkmark" size={13} color="#fff" />}
+                    <TouchableOpacity style={s.selectRow} onPress={toggleSelectAll}>
+                      <View style={[s.iconCircle, allSelected && s.iconCircleActive]}>
+                        <Ionicons name="checkmark-done-outline" size={14} color={allSelected ? '#fff' : colors.textSecondary} />
+                      </View>
+                      <Text style={[s.selectName, { fontWeight: '700' }]}>{allSelected ? 'Deselect All' : 'Select All'}</Text>
+                      <View style={[s.checkbox, allSelected && s.checkboxActive]}>
+                        {allSelected && <Ionicons name="checkmark" size={13} color="#fff" />}
                       </View>
                     </TouchableOpacity>
                   );
-                })
+                })()}
+                {/* Select All stays fixed above; only the picked-type list
+                    scrolls, bounded to ~3 rows tall so a long list doesn't
+                    push the post content/submit button far down the page. */}
+                <ScrollView style={s.selectListScroll} nestedScrollEnabled showsVerticalScrollIndicator={false}>
+                  {getActiveList().map(item => {
+                    const checked = selectedIds.includes(item.id);
+                    return (
+                      <TouchableOpacity
+                        key={item.id}
+                        style={s.selectRow}
+                        onPress={() => toggleId(item.id)}
+                      >
+                        {audienceType === 'users'
+                          ? <Avatar name={item.name} photoUrl={(item as any).photoUrl} size={30} />
+                          : <View style={[s.iconCircle, checked && s.iconCircleActive]}>
+                              <Ionicons
+                                name={audienceType === 'departments' ? 'business-outline' : 'briefcase-outline'}
+                                size={14}
+                                color={checked ? '#fff' : colors.textSecondary}
+                              />
+                            </View>
+                        }
+                        <Text style={s.selectName}>{item.name}</Text>
+                        <View style={[s.checkbox, checked && s.checkboxActive]}>
+                          {checked && <Ionicons name="checkmark" size={13} color="#fff" />}
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+                </>
               )}
               {!listsLoading && getActiveList().length === 0 && (
                 <Text style={s.emptyHint}>No results found</Text>
@@ -215,19 +301,73 @@ export default function CreatePostScreen() {
               )}
             </View>
           )}
+          </>
+          )}
 
           <Input
             label="What's on your mind?"
             value={content}
-            onChangeText={setContent}
+            onChangeText={handleContentChange}
             placeholder={postType === 'announcement' ? 'Write an announcement for your team...' : 'Share an update with your team...'}
             multiline
             numberOfLines={6}
             maxLength={2000}
           />
           <Text style={s.charCount}>{content.length}/2000</Text>
+
+          {!isEditMode && (
+          <>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity style={s.addTableBtn} onPress={() => { setPastedRows(null); setShowTableBuilder(true); }}>
+              <Ionicons name="grid-outline" size={16} color={colors.primary} />
+              <Text style={s.addTableBtnText}>Add Table</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.addTableBtn} onPress={pickFiles} disabled={uploadingFiles}>
+              <Ionicons name="attach" size={16} color={colors.primary} />
+              <Text style={s.addTableBtnText}>Attach File</Text>
+            </TouchableOpacity>
+          </View>
+          <AttachmentChips files={pendingFiles} onRemove={removePendingFile} uploading={uploadingFiles} containerStyle={{ paddingBottom: 8 }} />
+          </>
+          )}
+
+          {tables.map((t, ti) => (
+            <View key={ti} style={s.tablePreview}>
+              <View style={s.tablePreviewHead}>
+                <Text style={s.tablePreviewLabel}>Table {ti + 1} · {t.rows.length}×{t.rows[0]?.length ?? 0}</Text>
+                <TouchableOpacity onPress={() => setTables((prev) => prev.filter((_, i) => i !== ti))} hitSlop={8}>
+                  <Ionicons name="trash-outline" size={16} color={colors.danger} />
+                </TouchableOpacity>
+              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                <View>
+                  {t.rows.map((row, ri) => (
+                    <View key={ri} style={{ flexDirection: 'row' }}>
+                      {row.map((cell, ci) => (
+                        <View key={ci} style={[s.previewCell, ri === 0 && t.hasHeaderRow && s.previewCellHeader]}>
+                          <Text style={[s.previewCellText, ri === 0 && t.hasHeaderRow && s.previewCellTextHeader]} numberOfLines={1}>
+                            {cell || ' '}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  ))}
+                </View>
+              </ScrollView>
+            </View>
+          ))}
         </ScrollView>
       </View>
+
+      <TableBuilderModal
+        visible={showTableBuilder}
+        initialRows={pastedRows ?? undefined}
+        onClose={() => { setShowTableBuilder(false); setPastedRows(null); }}
+        onInsert={(rows, hasHeaderRow) => {
+          setTables((prev) => [...prev, { rows, hasHeaderRow }]);
+          setPastedRows(null);
+        }}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -238,6 +378,28 @@ function makeStyles(c: AppColors) {
     content: { padding: 16, paddingBottom: 40 },
     postBtn: { paddingVertical: 8, paddingHorizontal: 16 },
     charCount: { fontSize: 12, color: c.gray400, textAlign: 'right', marginTop: 4 },
+    editHint: {
+      fontSize: 12, color: c.textMuted, backgroundColor: c.gray50, borderRadius: 8,
+      padding: 10, marginBottom: 12,
+    },
+    addTableBtn: {
+      flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start',
+      marginTop: 12, paddingHorizontal: 12, paddingVertical: 8,
+      borderRadius: 8, backgroundColor: c.primaryLight,
+    },
+    addTableBtnText: { fontSize: 13, fontWeight: '700', color: c.primary },
+    tablePreview: {
+      marginTop: 12, borderWidth: 1, borderColor: c.border, borderRadius: 10, padding: 10,
+    },
+    tablePreviewHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+    tablePreviewLabel: { fontSize: 11, fontWeight: '700', color: c.textMuted },
+    previewCell: {
+      minWidth: 80, paddingHorizontal: 8, paddingVertical: 6,
+      borderWidth: 1, borderColor: c.border,
+    },
+    previewCellHeader: { backgroundColor: c.primaryLight },
+    previewCellText: { fontSize: 11, color: c.textSecondary },
+    previewCellTextHeader: { fontWeight: '700', color: c.textPrimary },
     sectionLabel: {
       fontSize: 10, fontWeight: '700', color: c.textMuted,
       letterSpacing: 1, marginBottom: 8, marginTop: 16,
@@ -261,6 +423,7 @@ function makeStyles(c: AppColors) {
       borderBottomWidth: 1, borderBottomColor: c.border,
     },
     searchInput: { flex: 1, fontSize: 14, color: c.textPrimary },
+    selectListScroll: { maxHeight: 155 },
     selectRow: {
       flexDirection: 'row', alignItems: 'center', gap: 10,
       paddingHorizontal: 12, paddingVertical: 10,

@@ -1,11 +1,16 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, Pressable, StyleSheet, Modal, FlatList } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Avatar from '../common/Avatar';
 import { showAlert } from '../common/AlertModal';
+import UserProfileModal, { ProfileUser } from '../common/UserProfileModal';
 import { useTheme } from '../../contexts/ThemeContext';
 import { AppColors } from '../../utils/colors';
 import { formatRelative } from '../../utils/format';
+import { hasTable, stripNonContentElements, stripTags } from '../../utils/postContent';
+import { stripMentionTokens } from '../../utils/mentions';
+import AttachmentList from '../common/AttachmentList';
+import { Attachment } from '../../utils/attachments';
 
 const EMOJIS = ['👍', '❤️', '🎉', '👏', '🔥'];
 
@@ -25,48 +30,97 @@ interface Post {
   post_type?: string;
   type?: string;
   author_name?: string;
-  author?: { first_name?: string; last_name?: string; email?: string };
+  author_user_id?: number;
+  author?: { first_name?: string; last_name?: string; email?: string; photo_url?: string | null };
   created_at: string;
   reactions?: { emoji: string; count: number }[];
   reaction_count?: number;
   comment_count?: number;
   is_pinned?: boolean;
   my_reactions?: string[];
+  audience_type?: 'all' | 'users' | 'departments' | 'roles' | null;
+  audience_ids?: number[] | string | null;
+  attachments?: Attachment[];
   appreciation?: {
     from_user?: { first_name?: string; last_name?: string; email?: string };
     to_user?: { first_name?: string; last_name?: string; email?: string };
+    to_users?: { first_name?: string; last_name?: string; email?: string }[];
     badge?: string;
     message?: string;
   };
 }
+
+interface NamedOption { id: number; name: string }
 
 interface Props {
   post: Post;
   onPress: () => void;
   onReact: (emoji?: string) => void;
   onDelete?: () => void;
+  onEdit?: () => void;
   onPin?: () => void;
   liked?: boolean;
+  members?: NamedOption[];
+  departments?: NamedOption[];
+  roles?: NamedOption[];
 }
 
-function decodeHtml(str: string) {
-  return str
-    .replace(/<[^>]*>/g, '')
-    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ')
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
+function uname(u: any): string {
+  if (!u) return 'Someone';
+  return [u.first_name, u.last_name].filter(Boolean).join(' ') || u.email || 'Someone';
 }
 
-export default function PostCard({ post, onPress, onReact, onDelete, onPin, liked = false }: Props) {
+// Mirrors web's NamesWithMore: "Alice, Bob & +3 more" for multi-recipient
+// appreciations, falling back to the single to_user for older records.
+function namesWithMore(toUsers: any[] | undefined, singleUser: any): string {
+  const list = (toUsers && toUsers.length ? toUsers : [singleUser]).filter(Boolean);
+  if (list.length === 0) return 'Someone';
+  if (list.length === 1) return uname(list[0]);
+  if (list.length === 2) return `${uname(list[0])} & ${uname(list[1])}`;
+  return `${uname(list[0])}, ${uname(list[1])} & +${list.length - 2} more`;
+}
+
+const AUDIENCE_ICON: Record<string, string> = { users: '👤', departments: '🏢', roles: '💼' };
+
+// audience_ids comes back as a JSON string on some responses and an already-parsed
+// array on others (same inconsistency as core_values) — normalize defensively.
+function parseAudienceIds(raw: number[] | string | null | undefined): number[] {
+  if (Array.isArray(raw)) return raw;
+  if (!raw) return [];
+  try { const a = JSON.parse(raw); return Array.isArray(a) ? a : []; } catch { return []; }
+}
+
+function resolveAudienceNames(post: Post, members: NamedOption[], departments: NamedOption[], roles: NamedOption[]): string[] {
+  if (!post.audience_type || post.audience_type === 'all') return [];
+  const ids = parseAudienceIds(post.audience_ids);
+  if (ids.length === 0) return [];
+  const list = post.audience_type === 'users' ? members : post.audience_type === 'departments' ? departments : roles;
+  return ids.map((id) => list.find((x) => x.id === id)?.name ?? `#${id}`);
+}
+
+export default function PostCard({ post, onPress, onReact, onDelete, onEdit, onPin, liked = false, members = [], departments = [], roles = [] }: Props) {
   const { colors } = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [profileUser, setProfileUser] = useState<ProfileUser | null>(null);
+  const [audienceModalOpen, setAudienceModalOpen] = useState(false);
+
+  const audienceNames = resolveAudienceNames(post, members, departments, roles);
 
   const postType = post.post_type ?? post.type ?? 'post';
   const authorName = post.author_name
     ?? ([post.author?.first_name, post.author?.last_name].filter(Boolean).join(' ') || post.author?.email || 'Unknown');
 
-  const preview = decodeHtml(post.content ?? '').substring(0, 180);
+  const contentHasTable = hasTable(post.content);
+  // stripTags turns paragraph/list/br boundaries into real line breaks instead of
+  // jamming adjacent blocks together — but a <table>'s cells would still come out
+  // jumbled as a run of text, so it's cut from the preview entirely and shown as a
+  // "Table" note instead; full content (with an actual rendered grid) is shown on
+  // PostDetailScreen.
+  const previewSource = contentHasTable
+    ? (post.content ?? '').replace(/<table[\s\S]*?<\/table>/gi, '')
+    : (post.content ?? '');
+  const preview = stripMentionTokens(stripTags(stripNonContentElements(previewSource))).substring(0, 180);
   const reactionCount = post.reaction_count ?? post.reactions?.reduce((sum, r) => sum + r.count, 0) ?? 0;
 
   const typeLabel = postType === 'appreciation' ? '⭐ Appreciation'
@@ -82,7 +136,17 @@ export default function PostCard({ post, onPress, onReact, onDelete, onPin, like
   return (
     <TouchableOpacity style={s.card} onPress={onPress} activeOpacity={0.9}>
       <View style={s.header}>
-        <Avatar name={authorName} size={38} />
+        <Avatar
+          name={authorName}
+          photoUrl={post.author?.photo_url}
+          size={38}
+          onPress={() => setProfileUser({
+            id: post.author_user_id,
+            name: authorName,
+            photoUrl: post.author?.photo_url,
+            email: post.author?.email,
+          })}
+        />
         <View style={s.info}>
           <View style={s.authorRow}>
             <Text style={s.author}>{authorName}</Text>
@@ -95,6 +159,17 @@ export default function PostCard({ post, onPress, onReact, onDelete, onPin, like
             <Text style={s.dot}>·</Text>
             <Text style={s.time}>{formatRelative(post.created_at)}</Text>
           </View>
+          {audienceNames.length > 0 && (
+            <TouchableOpacity
+              style={s.audienceBadge}
+              onPress={(e) => { e.stopPropagation(); setAudienceModalOpen(true); }}
+            >
+              <Text style={s.audienceBadgeText} numberOfLines={1}>
+                {AUDIENCE_ICON[post.audience_type as string] ?? '👤'} {audienceNames[0]}
+                {audienceNames.length > 1 ? ` +${audienceNames.length - 1}` : ''}
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
         <TouchableOpacity
           hitSlop={12}
@@ -106,6 +181,11 @@ export default function PostCard({ post, onPress, onReact, onDelete, onPin, like
                 text: post.is_pinned ? 'Unpin Post' : 'Pin Post',
                 icon: (post.is_pinned ? 'pin-outline' : 'pin') as any,
                 onPress: onPin,
+              }] : []),
+              ...(onEdit ? [{
+                text: 'Edit Post',
+                icon: 'create-outline' as any,
+                onPress: onEdit,
               }] : []),
               ...(onDelete ? [{
                 text: 'Delete Post',
@@ -131,7 +211,7 @@ export default function PostCard({ post, onPress, onReact, onDelete, onPin, like
           {(() => {
             const meta = BADGE_META[post.appreciation.badge ?? ''];
             const fromName = [post.appreciation.from_user?.first_name, post.appreciation.from_user?.last_name].filter(Boolean).join(' ') || post.appreciation.from_user?.email || 'Someone';
-            const toName = [post.appreciation.to_user?.first_name, post.appreciation.to_user?.last_name].filter(Boolean).join(' ') || post.appreciation.to_user?.email || 'Someone';
+            const toName = namesWithMore(post.appreciation.to_users, post.appreciation.to_user);
             return (
               <>
                 {meta && <Text style={s.apprEmoji}>{meta.emoji}</Text>}
@@ -157,7 +237,18 @@ export default function PostCard({ post, onPress, onReact, onDelete, onPin, like
           })()}
         </View>
       ) : (
-        <Text style={s.content} numberOfLines={4}>{preview}</Text>
+        <>
+          {!!preview && <Text style={s.content} numberOfLines={4}>{preview}</Text>}
+          {contentHasTable && (
+            <View style={s.tableNote}>
+              <Ionicons name="grid-outline" size={13} color={colors.primary} />
+              <Text style={s.tableNoteText}>Contains a table · tap to view</Text>
+            </View>
+          )}
+          {!!post.attachments?.length && (
+            <AttachmentList attachments={post.attachments} imageMaxWidth={220} imageMaxHeight={170} />
+          )}
+        </>
       )}
 
       {/* Emoji picker row */}
@@ -200,6 +291,38 @@ export default function PostCard({ post, onPress, onReact, onDelete, onPin, like
           <Text style={s.actionText}>{post.comment_count ?? 0}</Text>
         </TouchableOpacity>
       </View>
+      <UserProfileModal user={profileUser} onClose={() => setProfileUser(null)} />
+      <Modal visible={audienceModalOpen} transparent animationType="fade" onRequestClose={() => setAudienceModalOpen(false)}>
+        {/* Pressable, not TouchableOpacity, for both layers: legacy Touchable
+            claims the responder as soon as a touch starts (it needs to for its
+            own press/opacity feedback), and once claimed it doesn't reliably
+            hand off to the FlatList below when the touch turns into a scroll —
+            the exact "opens fine but won't scroll" symptom, and flaky rather
+            than constant because it depends on gesture timing. Pressable's
+            default responder negotiation is more cooperative with a nested
+            scrollable's own gesture claim. */}
+        <Pressable style={s.audienceOverlay} onPress={() => setAudienceModalOpen(false)}>
+          <Pressable style={s.audienceModalCard} onPress={(e) => e.stopPropagation()}>
+            <View style={s.audienceModalHead}>
+              <Text style={s.audienceModalTitle}>Shared with</Text>
+              <TouchableOpacity onPress={() => setAudienceModalOpen(false)} hitSlop={8}>
+                <Ionicons name="close" size={20} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={audienceNames}
+              keyExtractor={(name, i) => `${name}-${i}`}
+              style={{ maxHeight: 320 }}
+              renderItem={({ item }) => (
+                <View style={s.audienceModalRow}>
+                  <Avatar name={item} size={30} />
+                  <Text style={s.audienceModalRowText}>{item}</Text>
+                </View>
+              )}
+            />
+          </Pressable>
+        </Pressable>
+      </Modal>
     </TouchableOpacity>
   );
 }
@@ -227,8 +350,28 @@ function makeStyles(c: AppColors) {
     typeLabel: { fontSize: 12, fontWeight: '500' },
     dot: { color: c.gray400, fontSize: 12 },
     time: { fontSize: 12, color: c.gray400 },
+    audienceBadge: {
+      alignSelf: 'flex-start', marginTop: 5, paddingHorizontal: 8, paddingVertical: 3,
+      borderRadius: 8, backgroundColor: c.primaryLight,
+    },
+    audienceBadgeText: { fontSize: 11, fontWeight: '600', color: c.primary },
+    audienceOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center', padding: 24 },
+    audienceModalCard: {
+      width: '100%', maxWidth: 360, backgroundColor: c.surface, borderRadius: 16,
+      padding: 18, borderWidth: 1, borderColor: c.border,
+    },
+    audienceModalHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
+    audienceModalTitle: { fontSize: 15, fontWeight: '800', color: c.textPrimary },
+    audienceModalRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 },
+    audienceModalRowText: { fontSize: 13, fontWeight: '600', color: c.textPrimary },
     moreBtn: { paddingTop: 2 },
     content: { fontSize: 14, color: c.gray700, lineHeight: 21, marginBottom: 12 },
+    tableNote: {
+      flexDirection: 'row', alignItems: 'center', gap: 6,
+      backgroundColor: c.primaryLight, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7,
+      marginBottom: 12, alignSelf: 'flex-start',
+    },
+    tableNoteText: { fontSize: 12, fontWeight: '600', color: c.primary },
     emojiPicker: {
       flexDirection: 'row', gap: 6, backgroundColor: c.gray100,
       borderRadius: 30, padding: 8, alignSelf: 'flex-start', marginBottom: 8,

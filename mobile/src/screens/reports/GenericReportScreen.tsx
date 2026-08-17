@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -32,6 +32,35 @@ const TITLES: Record<string, string> = {
   contracts: 'Contract Report',
 };
 
+const REPORT_COLORS: Record<string, string> = {
+  projects: '#4f46e5',
+  financial: '#059669',
+  goals: '#d97706',
+  performance: '#7c3aed',
+  appraisals: '#be185d',
+  contracts: '#0d9488',
+};
+
+const REPORT_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
+  projects: 'folder-open-outline',
+  financial: 'cash-outline',
+  goals: 'flag-outline',
+  performance: 'trending-up-outline',
+  appraisals: 'ribbon-outline',
+  contracts: 'document-text-outline',
+};
+
+// Each card's title (shown next to the icon) and status badge (top-right)
+// come from these two columns rather than the generic scrollable strip below —
+// 'contracts' is excluded since its columns are fully dynamic per sub-type
+// (overdue/sla/workload/...), with no reliable "name" or "status" field.
+const CARD_TITLE_KEY: Record<string, string> = {
+  projects: 'name', financial: 'name', goals: 'employee', performance: 'employee', appraisals: 'employee',
+};
+const CARD_BADGE_KEY: Record<string, string> = {
+  projects: 'computed_status', goals: 'goal_status', performance: 'status', appraisals: 'status',
+};
+
 function personName(u: any) {
   if (!u) return '—';
   return [u.first_name, u.last_name].filter(Boolean).join(' ') || u.email || '—';
@@ -42,6 +71,32 @@ function fmtDate(s?: string) {
 }
 function titleCase(key: string) {
   return key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// Best-effort icon per column, based on its key — covers every column across
+// all 6 report types without hand-mapping each one individually.
+function columnIcon(col: Col): keyof typeof Ionicons.glyphMap {
+  const k = col.key.toLowerCase();
+  if (k.includes('date') || k.endsWith('_at')) return 'calendar-outline';
+  if (k.includes('cycle')) return 'repeat-outline';
+  if (k.includes('pct') || k.includes('progress') || k.includes('score')) return 'stats-chart-outline';
+  if (k.includes('cost') || k.includes('billing') || k.includes('profit') || k.includes('invoice')) return 'cash-outline';
+  if (k.includes('client') || k === 'employee' || k.includes('name')) return 'person-outline';
+  if (k.includes('task')) return 'list-outline';
+  if (k.includes('role')) return 'briefcase-outline';
+  if (k.includes('reason')) return 'document-text-outline';
+  return 'ellipse-outline';
+}
+
+// Loose keyword match so one heuristic covers every status-ish value across
+// all report types (computed_status, goal_status, review status, ...)
+// instead of enumerating every possible value per type.
+function statusTint(value: string, c: AppColors): string {
+  const v = (value || '').toLowerCase();
+  if (/(active|approved|completed|done|on.?time)/.test(v)) return c.success;
+  if (/(pending|submitted|draft|awaiting|in.?progress|near.?end)/.test(v)) return c.warning;
+  if (/(overdue|rejected|inactive|blocked|cancelled|deleted)/.test(v)) return c.danger;
+  return c.textSecondary;
 }
 
 export default function GenericReportScreen() {
@@ -59,9 +114,11 @@ export default function GenericReportScreen() {
   const [rows, setRows] = useState<any[]>([]);
   const [contractType, setContractType] = useState('overdue');
 
+  const hasLoadedRef = useRef(false);
+
   const load = useCallback(async () => {
     if (!workspace?.id) return;
-    setLoading(true);
+    if (!hasLoadedRef.current) setLoading(true);
     try {
       if (reportType === 'projects') {
         const res = await api.projects.list(workspace.id, {});
@@ -72,18 +129,78 @@ export default function GenericReportScreen() {
       } else if (reportType === 'goals') {
         const cyclesRes = await api.performance.getCycles(workspace.id);
         const cycles = cyclesRes.data?.items ?? cyclesRes.data ?? [];
-        const latestCycle = cycles[0];
-        if (!latestCycle) { setRows([]); return; }
-        const res = await api.performance.getWorkflowStatus(workspace.id, { cycle_id: latestCycle.id });
+        // Matches web's GoalsReport.jsx: prefer the cycle whose date range spans
+        // today over just taking the newest by year — falls back to the oldest
+        // cycle (last in the list) if none is currently active.
+        const today = new Date().toISOString().slice(0, 10);
+        const activeCycle = cycles.find((c: any) => c.start_date <= today && c.end_date >= today) ?? cycles[cycles.length - 1];
+        if (!activeCycle) { setRows([]); return; }
+        const res = await api.performance.getWorkflowStatus(workspace.id, { cycle_id: activeCycle.id });
         setRows(res.data?.goals ?? []);
       } else if (reportType === 'performance') {
-        const res = await api.performance.listAllReviews(workspace.id).catch(() =>
-          api.performance.listTeamReviews(workspace.id));
-        setRows(res.data?.items ?? res.data ?? []);
+        // An admin sees all. Non-admins (managers and plain members alike) need
+        // their team's reviews AND their own self review merged — matching web's
+        // PerformanceReport.jsx (isMultiUser = isAdmin || isManager fetches team
+        // + self together). A `.catch()` fallback chain doesn't work here because
+        // the team endpoint resolves with an empty list (not an error) for a
+        // plain member with no reportees, which would silently swallow their
+        // own review.
+        let items: any[];
+        try {
+          const res = await api.performance.listAllReviews(workspace.id);
+          items = res.data?.items ?? res.data ?? [];
+        } catch {
+          // listAllReviews failing here is expected for non-admins (403) — but
+          // if BOTH fallbacks below also fail, that's not "no reportees", it's
+          // a real outage, and must not silently resolve to an empty report.
+          let teamFailed = false;
+          let selfFailed = false;
+          const [teamRes, selfRes] = await Promise.all([
+            api.performance.listTeamReviews(workspace.id).catch(() => { teamFailed = true; return { data: { items: [] as any[] } }; }),
+            api.performance.listMyReviews(workspace.id).catch(() => { selfFailed = true; return { data: { items: [] as any[] } }; }),
+          ]);
+          if (teamFailed && selfFailed) throw new Error('Could not load performance report');
+          const teamItems = teamRes.data?.items ?? teamRes.data ?? [];
+          const selfItems = selfRes.data?.items ?? selfRes.data ?? [];
+          const seen = new Set<any>();
+          items = [];
+          for (const it of [...teamItems, ...selfItems]) {
+            if (seen.has(it.id)) continue;
+            seen.add(it.id);
+            items.push(it);
+          }
+        }
+        setRows(items);
       } else if (reportType === 'appraisals') {
-        const res = await api.performance.getAppraisals(workspace.id, { view: 'all' }).catch(() =>
-          api.performance.getAppraisals(workspace.id, {}));
-        setRows(res.data?.items ?? res.data ?? []);
+        // Matches web's AppraisalReport.jsx: merge every view the current role can
+        // see (org-wide, own, reportees awaiting this manager, and pending final
+        // approval) rather than stopping at the first one that resolves — a
+        // manager who is also a final approver needs all four, not just their own.
+        const results = await Promise.allSettled([
+          api.performance.getAppraisals(workspace.id, { view: 'all' }),
+          api.performance.getAppraisals(workspace.id, {}),
+          api.performance.getAppraisals(workspace.id, { view: 'manage' }),
+          api.performance.getAppraisals(workspace.id, { view: 'pending_approver' }),
+        ]);
+        // Each view can legitimately 403 depending on role — but if every
+        // single one failed, that's a real outage, not "no permissions for
+        // any of these 4 different views," and must surface as an error
+        // rather than silently rendering an empty report.
+        if (results.every((r) => r.status === 'rejected')) {
+          throw new Error('Could not load appraisal report');
+        }
+        const seen = new Set<any>();
+        const merged: any[] = [];
+        for (const r of results) {
+          if (r.status !== 'fulfilled') continue;
+          const items = r.value.data?.items ?? r.value.data ?? [];
+          for (const a of items) {
+            if (seen.has(a.id)) continue;
+            seen.add(a.id);
+            merged.push(a);
+          }
+        }
+        setRows(merged);
       } else if (reportType === 'contracts') {
         const res = await api.contracts.getReports(workspace.id, { type: contractType });
         setRows(res.data?.items ?? res.data ?? []);
@@ -93,6 +210,7 @@ export default function GenericReportScreen() {
       setError(apiErrorMessage(err, 'Could not load this report.'));
     } finally {
       setLoading(false);
+      hasLoadedRef.current = true;
     }
   }, [workspace?.id, reportType, contractType]);
 
@@ -136,7 +254,8 @@ export default function GenericReportScreen() {
     }
     if (reportType === 'performance') {
       return [
-        { key: 'employee', label: 'Employee', format: (r) => r.reviewee_name ?? r.employee_name ?? personName(r.employee) },
+        { key: 'employee', label: 'Employee', format: (r) => r.reviewee_name ?? r.employee_name ?? (r.employee ? personName(r.employee) : 'You') },
+        { key: 'cycle_name', label: 'Cycle', format: (r) => r.cycle_name ?? (r.cycle_id ? `Cycle #${r.cycle_id}` : '—') },
         { key: 'role_title', label: 'Role' },
         { key: 'status', label: 'Status' },
         { key: 'goals_score', label: 'Goals' },
@@ -171,9 +290,71 @@ export default function GenericReportScreen() {
     return String(v);
   };
 
+  const accent = REPORT_COLORS[reportType] ?? colors.primary;
+
+  // Up to 4 icon tiles across the top of every report — always starts with
+  // the row count, then up to 3 report-specific aggregates computed from
+  // whatever fields that report actually has. 'contracts' just gets the row
+  // count since its columns vary completely by sub-type.
+  const headlineStats = useMemo(() => {
+    type Tile = { icon: keyof typeof Ionicons.glyphMap; value: string; label: string; color: string };
+    if (rows.length === 0) return [] as Tile[];
+    const rowWord = rows.length === 1 ? 'Row' : 'Rows';
+    const tiles: Tile[] = [];
+
+    if (reportType === 'projects') {
+      const totalTasks = rows.reduce((s, r) => s + (Number(r.total_tasks) || 0), 0);
+      const completed = rows.filter((r) => r.computed_status === 'completed').length;
+      const avgPct = Math.round(rows.reduce((s, r) => s + (Number(r.completion_pct) || 0), 0) / rows.length);
+      tiles.push({ icon: REPORT_ICONS.projects, value: String(rows.length), label: 'Projects', color: accent });
+      tiles.push({ icon: 'clipboard-outline', value: String(totalTasks), label: 'Total Tasks', color: colors.info });
+      tiles.push({ icon: 'checkmark-done-outline', value: String(completed), label: 'Completed', color: colors.success });
+      tiles.push({ icon: 'trending-up-outline', value: `${avgPct}%`, label: 'Avg Progress', color: colors.primary });
+    } else if (reportType === 'financial') {
+      const totalBilling = rows.reduce((s, r) => s + (Number(r.total_billing) || 0), 0);
+      const totalProfit = rows.reduce((s, r) => s + (Number(r.profit) || 0), 0);
+      const margins = rows.filter((r) => r.margin_pct != null).map((r) => Number(r.margin_pct));
+      const avgMargin = margins.length ? Math.round(margins.reduce((a, b) => a + b, 0) / margins.length) : null;
+      tiles.push({ icon: REPORT_ICONS.financial, value: String(rows.length), label: 'Projects', color: accent });
+      tiles.push({ icon: 'cash-outline', value: `₹${totalBilling.toLocaleString()}`, label: 'Total Billing', color: colors.info });
+      tiles.push({ icon: 'trending-up-outline', value: `₹${totalProfit.toLocaleString()}`, label: 'Total Profit', color: colors.success });
+      if (avgMargin != null) tiles.push({ icon: 'stats-chart-outline', value: `${avgMargin}%`, label: 'Avg Margin', color: colors.primary });
+    } else if (reportType === 'goals') {
+      const total = rows.reduce((s, r) => s + (Number(r.goals_total) || 0), 0);
+      const approved = rows.reduce((s, r) => s + (Number(r.goals_approved) || 0), 0);
+      const pending = rows.reduce((s, r) => s + (Number(r.goals_pending) || 0), 0);
+      tiles.push({ icon: REPORT_ICONS.goals, value: String(rows.length), label: 'Employees', color: accent });
+      tiles.push({ icon: 'list-outline', value: String(total), label: 'Total Goals', color: colors.info });
+      tiles.push({ icon: 'checkmark-done-outline', value: String(approved), label: 'Approved', color: colors.success });
+      tiles.push({ icon: 'time-outline', value: String(pending), label: 'Draft', color: colors.warning });
+    } else if (reportType === 'performance') {
+      const approved = rows.filter((r) => r.status === 'approved').length;
+      const scored = rows.filter((r) => r.final_score != null);
+      const avg = scored.length ? (scored.reduce((s, r) => s + Number(r.final_score), 0) / scored.length).toFixed(2) : null;
+      tiles.push({ icon: REPORT_ICONS.performance, value: String(rows.length), label: 'Reviews', color: accent });
+      tiles.push({ icon: 'checkmark-done-outline', value: String(approved), label: 'Approved', color: colors.success });
+      if (avg != null) tiles.push({ icon: 'trophy-outline', value: `${avg}/5`, label: 'Avg Score', color: colors.warning });
+    } else if (reportType === 'appraisals') {
+      const approved = rows.filter((r) => r.status === 'approved').length;
+      const pending = rows.filter((r) => (r.status || '').includes('pending')).length;
+      const rejected = rows.filter((r) => r.status === 'rejected').length;
+      tiles.push({ icon: REPORT_ICONS.appraisals, value: String(rows.length), label: 'Appraisals', color: accent });
+      tiles.push({ icon: 'checkmark-done-outline', value: String(approved), label: 'Approved', color: colors.success });
+      tiles.push({ icon: 'time-outline', value: String(pending), label: 'Pending', color: colors.warning });
+      tiles.push({ icon: 'close-circle-outline', value: String(rejected), label: 'Rejected', color: colors.danger });
+    } else {
+      tiles.push({ icon: REPORT_ICONS.contracts, value: String(rows.length), label: rowWord, color: accent });
+    }
+    return tiles;
+  }, [rows, reportType, colors, accent]);
+
+  const titleKey = CARD_TITLE_KEY[reportType];
+  const badgeKey = CARD_BADGE_KEY[reportType];
+  const dataColumns = columns.filter((c) => c.key !== titleKey && c.key !== badgeKey);
+
   return (
-    <View style={[s.container, { paddingTop: insets.top }]}>
-      <View style={s.header}>
+    <View style={s.container}>
+      <View style={[s.header, { paddingTop: insets.top + 12 }]}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn}>
           <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
         </TouchableOpacity>
@@ -182,7 +363,7 @@ export default function GenericReportScreen() {
       </View>
 
       {reportType === 'contracts' && (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.subtypeRow}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.subtypeScroll} contentContainerStyle={s.subtypeRow}>
           {CONTRACT_TYPES.map((t) => (
             <TouchableOpacity
               key={t.value}
@@ -206,17 +387,61 @@ export default function GenericReportScreen() {
         </View>
       ) : (
         <ScrollView contentContainerStyle={s.list} showsVerticalScrollIndicator={false}>
-          <Text style={s.countText}>{rows.length} row{rows.length === 1 ? '' : 's'}</Text>
-          {rows.map((row, idx) => (
-            <View key={row.id ?? idx} style={s.card}>
-              {columns.map((col) => (
-                <View key={col.key} style={s.cardRow}>
-                  <Text style={s.cardKey}>{col.label}</Text>
-                  <Text style={s.cardVal} numberOfLines={2}>{cellValue(row, col)}</Text>
+          <View style={s.statsRow}>
+            {headlineStats.map((tile) => (
+              <View key={tile.label} style={s.statTile}>
+                <View style={[s.statTileIconBox, { backgroundColor: tile.color + '22' }]}>
+                  <Ionicons name={tile.icon} size={18} color={tile.color} />
                 </View>
-              ))}
-            </View>
-          ))}
+                <Text style={s.statTileVal} numberOfLines={1}>{tile.value}</Text>
+                <Text style={s.statTileLabel} numberOfLines={1}>{tile.label}</Text>
+              </View>
+            ))}
+          </View>
+
+          {rows.map((row, idx) => {
+            const titleCol = columns.find((c) => c.key === titleKey);
+            const badgeCol = columns.find((c) => c.key === badgeKey);
+            const titleText = titleCol ? cellValue(row, titleCol) : `Row ${idx + 1}`;
+            const badgeText = badgeCol ? cellValue(row, badgeCol) : null;
+            const badgeColor = badgeText ? statusTint(badgeText, colors) : accent;
+            return (
+              <View key={row.id ?? idx} style={[s.card, { borderLeftColor: accent }]}>
+                <View style={s.cardHeader}>
+                  <View style={[s.cardIconBox, { backgroundColor: accent + '22' }]}>
+                    <Ionicons name={REPORT_ICONS[reportType] ?? 'document-text-outline'} size={16} color={accent} />
+                  </View>
+                  <Text style={s.cardTitle} numberOfLines={1}>{titleText}</Text>
+                  {!!badgeText && badgeText !== '—' && (
+                    <View style={[s.cardBadge, { backgroundColor: badgeColor + '1c', borderColor: badgeColor + '44' }]}>
+                      <Text style={[s.cardBadgeText, { color: badgeColor }]} numberOfLines={1}>{badgeText}</Text>
+                    </View>
+                  )}
+                </View>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.cardColsRow}>
+                  {dataColumns.map((col) => {
+                    const val = cellValue(row, col);
+                    const isPct = col.key.toLowerCase().includes('pct');
+                    const pctNum = isPct ? Math.max(0, Math.min(100, parseFloat(val) || 0)) : null;
+                    return (
+                      <View key={col.key} style={s.cardCol}>
+                        <View style={s.cardColLabelRow}>
+                          <Ionicons name={columnIcon(col)} size={11} color={colors.textMuted} />
+                          <Text style={s.cardColLabel} numberOfLines={1}>{col.label}</Text>
+                        </View>
+                        <Text style={s.cardColVal} numberOfLines={1}>{val}</Text>
+                        {pctNum != null && (
+                          <View style={s.miniProgressTrack}>
+                            <View style={[s.miniProgressFill, { width: `${pctNum}%`, backgroundColor: accent }]} />
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            );
+          })}
         </ScrollView>
       )}
     </View>
@@ -229,23 +454,47 @@ function makeStyles(c: AppColors) {
     container: { flex: 1, backgroundColor: c.background },
     header: {
       flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-      paddingHorizontal: 16, paddingVertical: 12,
+      paddingHorizontal: 16, paddingBottom: 16,
       backgroundColor: c.surface, borderBottomWidth: 1, borderBottomColor: c.border,
     },
     backBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
     title: { fontSize: 18, fontFamily: SERIF, color: c.textPrimary, fontWeight: '700' },
-    subtypeRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: c.surface, borderBottomWidth: 1, borderBottomColor: c.border },
+    subtypeScroll: { flexGrow: 0, flexShrink: 0 },
+    subtypeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: c.surface, borderBottomWidth: 1, borderBottomColor: c.border },
     subtypeChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, backgroundColor: c.gray50, borderWidth: 1, borderColor: c.border },
     subtypeChipActive: { backgroundColor: c.primary, borderColor: c.primary },
     subtypeChipText: { fontSize: 12, fontWeight: '600', color: c.gray600 },
     subtypeChipTextActive: { color: '#fff' },
     empty: { alignItems: 'center', gap: 12, paddingTop: 60, flex: 1, justifyContent: 'center' },
     emptyText: { fontSize: 14, color: c.textMuted },
-    list: { padding: 16, gap: 10, paddingBottom: 32 },
-    countText: { fontSize: 11, color: c.textMuted, marginBottom: 2 },
-    card: { backgroundColor: c.surface, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: c.border, gap: 6 },
-    cardRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
-    cardKey: { fontSize: 11, color: c.textMuted, fontWeight: '600', flexShrink: 0 },
-    cardVal: { fontSize: 12, color: c.textPrimary, fontWeight: '600', flex: 1, textAlign: 'right' },
+    list: { padding: 16, gap: 12, paddingBottom: 32 },
+
+    // Headline stat tiles
+    statsRow: { flexDirection: 'row', gap: 8 },
+    statTile: {
+      flex: 1, backgroundColor: c.surface, borderRadius: 12, borderWidth: 1, borderColor: c.border,
+      paddingVertical: 12, paddingHorizontal: 6, alignItems: 'center', gap: 6,
+    },
+    statTileIconBox: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+    statTileVal: { fontSize: 15, fontWeight: '800', color: c.textPrimary },
+    statTileLabel: { fontSize: 9, fontWeight: '600', color: c.textMuted, textAlign: 'center' },
+
+    // Report row card
+    card: { backgroundColor: c.surface, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: c.border, borderLeftWidth: 4 },
+    cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
+    cardIconBox: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+    cardTitle: { flex: 1, fontSize: 14, fontWeight: '700', color: c.textPrimary },
+    cardBadge: { paddingHorizontal: 9, paddingVertical: 4, borderRadius: 20, borderWidth: 1, maxWidth: 120 },
+    cardBadgeText: { fontSize: 11, fontWeight: '700', textTransform: 'capitalize' },
+
+    // Column-wise data strip — horizontally scrollable so any number of
+    // columns (financial reports run to 9-10) stays readable on a phone.
+    cardColsRow: { flexDirection: 'row', gap: 20 },
+    cardCol: { minWidth: 68 },
+    cardColLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginBottom: 3 },
+    cardColLabel: { fontSize: 10, color: c.textMuted, fontWeight: '600' },
+    cardColVal: { fontSize: 13, color: c.textPrimary, fontWeight: '700' },
+    miniProgressTrack: { height: 4, borderRadius: 2, backgroundColor: c.gray100, overflow: 'hidden', marginTop: 5, width: 56 },
+    miniProgressFill: { height: '100%', borderRadius: 2 },
   });
 }

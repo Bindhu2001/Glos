@@ -39,6 +39,7 @@ export default function LeaderboardWidget({
 
   const sorted = [...entries].sort((a, b) => b.score - a.score);
   const me = sorted.find((e) => e.id === meId);
+  const myRank = me ? sorted.findIndex((e) => e.id === meId) + 1 : null;
 
   if (sorted.length === 0) return null;
 
@@ -48,17 +49,17 @@ export default function LeaderboardWidget({
         <Text style={s.headTitle}>{title}</Text>
         {me && (
           <TouchableOpacity onPress={() => setModalOpen(true)}>
-            <Text style={s.viewScoreLink}>View my score →</Text>
+            <Text style={s.viewScoreLink}>Rank {myRank} · View my score →</Text>
           </TouchableOpacity>
         )}
       </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingVertical: 4 }}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0, flexShrink: 0 }} contentContainerStyle={{ gap: 12, paddingVertical: 4 }}>
         {sorted.map((m, idx) => {
           const isMe = m.id === meId;
           const avColor = idx === 0 ? colors.success : idx === 1 ? colors.primary : idx === 2 ? colors.secondary : colors.gray300;
           return (
             <View key={m.id} style={[s.lbCard, isMe && s.lbCardMe]}>
-              {idx < 3 ? <Text style={s.lbMedal}>{PODIUM_ICONS[idx]}</Text> : <Text style={s.lbRankNum}>{`#${idx + 1}`}</Text>}
+              {idx < 3 ? <Text style={s.lbMedal}>{PODIUM_ICONS[idx]}</Text> : <Text style={s.lbRankNum}>{idx + 1}</Text>}
               <View style={[s.lbAvatar, { backgroundColor: avColor }]}>
                 <Text style={s.lbAvatarTxt}>{initials(m.name)}</Text>
               </View>
@@ -84,10 +85,16 @@ export default function LeaderboardWidget({
                 return (
                   <View style={s.levelRow}>
                     <Text style={s.levelEmoji}>{lvl.emoji}</Text>
-                    <View>
+                    <View style={{ flex: 1 }}>
                       <Text style={[s.levelLabel, { color: lvl.color }]}>{lvl.label}</Text>
                       <Text style={s.levelScore}>{me.score} total points</Text>
                     </View>
+                    {myRank != null && (
+                      <View style={s.rankBadge}>
+                        <Text style={s.rankBadgeNum}>{myRank}</Text>
+                        <Text style={s.rankBadgeLbl}>of {sorted.length}</Text>
+                      </View>
+                    )}
                   </View>
                 );
               })()}
@@ -139,6 +146,9 @@ function makeStyles(c: AppColors) {
     levelEmoji: { fontSize: 30 },
     levelLabel: { fontSize: 15, fontWeight: '800' },
     levelScore: { fontSize: 12, color: c.textSecondary, marginTop: 2 },
+    rankBadge: { alignItems: 'center', backgroundColor: c.surface, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: c.border },
+    rankBadgeNum: { fontSize: 15, fontWeight: '900', color: c.primary },
+    rankBadgeLbl: { fontSize: 9, fontWeight: '700', color: c.textMuted, marginTop: 1 },
     catRow: { marginBottom: 14 },
     catHead: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
     catLabel: { fontSize: 13, fontWeight: '700', color: c.textPrimary },

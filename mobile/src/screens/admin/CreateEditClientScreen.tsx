@@ -15,6 +15,7 @@ import Input from '../../components/common/Input';
 import Button from '../../components/common/Button';
 import DatePickerField from '../../components/common/DatePickerField';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
+import LoadError from '../../components/common/LoadError';
 
 type Rt = RouteProp<AdminStackParamList, 'CreateEditClient'>;
 
@@ -32,6 +33,7 @@ export default function CreateEditClientScreen() {
   const insets = useSafeAreaInsets();
 
   const [dataLoading, setDataLoading] = useState(isEdit);
+  const [loadError, setLoadError] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const [clientName, setClientName] = useState('');
@@ -50,6 +52,7 @@ export default function CreateEditClientScreen() {
   const load = useCallback(async () => {
     if (!workspace?.id || !clientId) return;
     setDataLoading(true);
+    setLoadError(false);
     try {
       const res = await api.contracts.getClient(workspace.id, clientId);
       const c = res.data;
@@ -67,6 +70,7 @@ export default function CreateEditClientScreen() {
       setStatus((c.status as any) ?? 'active');
     } catch (err) {
       showAlert('Could not load client', apiErrorMessage(err));
+      setLoadError(true);
     } finally {
       setDataLoading(false);
     }
@@ -130,9 +134,10 @@ export default function CreateEditClientScreen() {
   };
 
   if (dataLoading) return <LoadingSpinner />;
+  if (loadError) return <LoadError onRetry={load} />;
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <View style={[s.container, { paddingTop: insets.top }]}>
         <ScreenHeader
           title={isEdit ? 'Edit Client' : 'New Client'}

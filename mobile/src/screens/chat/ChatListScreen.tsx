@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, ActivityIndicator, RefreshControl, TextInput } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -13,14 +13,12 @@ import { AppColors } from '../../utils/colors';
 import { ChatStackParamList } from '../../navigation/types';
 import { apiErrorMessage } from '../../utils/apiError';
 import { showAlert } from '../../components/common/AlertModal';
+import { stripAttachmentMarkers } from '../../utils/attachments';
 import LoadError from '../../components/common/LoadError';
+import Avatar from '../../components/common/Avatar';
+import { getAllDrafts } from '../../utils/chatDrafts';
 
 type Nav = NativeStackNavigationProp<ChatStackParamList, 'ChatList'>;
-
-function initials(name?: string) {
-  if (!name) return '?';
-  return name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2);
-}
 
 function timeAgo(iso?: string) {
   if (!iso) return '';
@@ -37,6 +35,13 @@ export default function ChatListScreen() {
   const { workspace } = useWorkspace();
   const api = useApi();
   const { getToken } = useAuth();
+  // See ChatThreadScreen for why this is read via a ref rather than listed in
+  // the socket effect's deps: Clerk's `getToken` isn't reference-stable across
+  // renders, so including it there made the effect re-run constantly, which —
+  // combined with the un-cleaned-up `once('connect', ...)` below — silently
+  // accumulated duplicate listeners over the life of the screen.
+  const getTokenRef = useRef(getToken);
+  getTokenRef.current = getToken;
   const insets = useSafeAreaInsets();
   const s = useMemo(() => makeStyles(colors), [colors]);
 
@@ -46,10 +51,16 @@ export default function ChatListScreen() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
+  const [drafts, setDrafts] = useState<Record<number, string>>({});
+  const hasLoadedRef = useRef(false);
 
+  // useFocusEffect below already re-runs this on mount, so a plain mount effect
+  // would double-fetch. It also re-runs on every return to this screen — only
+  // the very first call should show the full-screen spinner; refocusing an
+  // already-loaded list should refresh quietly instead of blanking the screen.
   const load = useCallback(async (isRefresh = false) => {
     if (!workspace?.id) return;
-    if (!isRefresh) setLoading(true);
+    if (!isRefresh && !hasLoadedRef.current) setLoading(true);
     try {
       const res = await api.chat.listConversations(workspace.id);
       setConversations(res.data ?? []);
@@ -59,19 +70,33 @@ export default function ChatListScreen() {
     } finally {
       setLoading(false);
       setRefreshing(false);
+      hasLoadedRef.current = true;
     }
   }, [workspace?.id]);
 
-  useEffect(() => { load(); }, [load]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
+  // Refreshed on every focus (not just mount) so coming back from a thread
+  // where you typed something updates that row's preview immediately.
+  useFocusEffect(useCallback(() => {
+    getAllDrafts().then(setDrafts);
+  }, []));
+
   const noteConv = conversations.find((c) => c.type === 'note');
+  // Web bumps updated_at and re-sorts on every new_message (Chat.jsx) so the most
+  // recently active conversation floats to top — the list endpoint here doesn't
+  // guarantee that ordering itself, so sort client-side the same way.
   const regularConvs = conversations
     .filter((c) => c.type !== 'note')
     .filter((c) => {
       if (!search.trim()) return true;
       const name = (c.display_name ?? c.name ?? '').toLowerCase();
       return name.includes(search.trim().toLowerCase());
+    })
+    .sort((a, b) => {
+      const at = new Date(a.updated_at ?? a.last_message?.created_at ?? 0).getTime();
+      const bt = new Date(b.updated_at ?? b.last_message?.created_at ?? 0).getTime();
+      return bt - at;
     });
 
   const openNotes = async () => {
@@ -91,10 +116,10 @@ export default function ChatListScreen() {
 
   useEffect(() => {
     if (!workspace?.id) return;
-    const socket = getSocket(async () => (await getToken()) ?? '');
+    const socket = getSocket(async () => (await getTokenRef.current()) ?? '');
     if (!socket) return;
     const appId = workspace.id;
-    const onUpdate = () => load();
+    const onUpdate = () => load(true);
     const onPresence = (payload: any) => setOnlineIds(new Set((payload.online ?? []).map((x: any) => String(x))));
     const doJoin = () => {
       socket.emit('join', { appId });
@@ -109,6 +134,10 @@ export default function ChatListScreen() {
     if (socket.connected) doJoin();
     else socket.once('connect', doJoin);
     return () => {
+      // Cancels a still-pending `doJoin` if this effect re-runs (or unmounts)
+      // before 'connect' fired — see ChatThreadScreen for the full explanation
+      // of the leak this prevents.
+      socket.off('connect', doJoin);
       socket.off('new_message', onUpdate);
       socket.off('read_receipt', onUpdate);
       socket.off('conversation_created', onUpdate);
@@ -116,15 +145,22 @@ export default function ChatListScreen() {
       socket.off('conversation_deleted', onUpdate);
       socket.off('presence_update', onPresence);
     };
-  }, [workspace?.id, getToken, load]);
+  // getToken is read via getTokenRef (see above) so this only (re)joins when
+  // the workspace changes, not on every render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspace?.id, load]);
 
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
-      <View style={s.header}>
-        <Text style={s.title}>Chat</Text>
-        <TouchableOpacity style={s.addBtn} onPress={() => navigation.navigate('NewConversation', { appId: workspace!.id })}>
-          <Ionicons name="add" size={22} color={colors.primary} />
-        </TouchableOpacity>
+      <View style={s.pageHeader}>
+        <Text style={s.breadcrumb}>{workspace?.name?.toUpperCase() ?? 'WORKSPACE'} · CHAT</Text>
+        <View style={s.titleRow}>
+          <Text style={s.pageTitle}>Chat</Text>
+          <TouchableOpacity style={s.addBtn} onPress={() => navigation.navigate('NewConversation', { appId: workspace!.id })}>
+            <Ionicons name="add" size={20} color={colors.primary} />
+          </TouchableOpacity>
+        </View>
+        <Text style={s.subtitle}>Message your team, DMs and notes.</Text>
       </View>
 
       <View style={s.searchRow}>
@@ -172,8 +208,21 @@ export default function ChatListScreen() {
           ) : (
             regularConvs.map((c) => {
               const name = c.display_name ?? c.name ?? 'Conversation';
-              const lastBody = c.last_message?.deleted_at ? 'This message was deleted' : (c.last_message?.body ?? 'No messages yet');
+              const hasAttachment = !c.last_message?.deleted_at && !!c.last_message?.has_attachments;
+              // Strip the [[att:N]] inline-attachment marker web can insert into
+              // a body — otherwise a message that's e.g. "Check this [[att:0]]
+              // out" shows the raw token here, and a message that's *just* an
+              // attachment marker (no other text) would show as blank instead
+              // of falling back to "Attachment".
+              const strippedBody = c.last_message?.body ? stripAttachmentMarkers(c.last_message.body) : '';
+              const lastBody = c.last_message?.deleted_at
+                ? 'This message was deleted'
+                : (strippedBody.trim() ? strippedBody : (hasAttachment ? 'Attachment' : 'No messages yet'));
+              const draftText = drafts[c.id];
               const unread = c.unread_count > 0;
+              const otherPhotoUrl = c.type === 'direct'
+                ? c.members?.find((m: any) => String(m.id) === String(c.other_user_id))?.photo_url ?? null
+                : null;
               return (
                 <TouchableOpacity
                   key={c.id}
@@ -182,9 +231,7 @@ export default function ChatListScreen() {
                   onPress={() => navigation.navigate('ChatThread', { conversationId: c.id, appId: workspace!.id, title: name, type: c.type })}
                 >
                   <View style={s.avatarWrap}>
-                    <View style={s.avatar}>
-                      <Text style={s.avatarTxt}>{initials(name)}</Text>
-                    </View>
+                    <Avatar name={name} photoUrl={otherPhotoUrl} size={44} />
                     {c.type === 'direct' && c.other_user_id != null && onlineIds.has(String(c.other_user_id)) && (
                       <View style={s.onlineDot} />
                     )}
@@ -194,7 +241,26 @@ export default function ChatListScreen() {
                       <Text style={[s.name, unread && s.nameUnread]} numberOfLines={1}>{name}</Text>
                       <Text style={[s.time, unread && s.timeUnread]}>{timeAgo(c.last_message?.created_at)}</Text>
                     </View>
-                    <Text style={[s.lastMsg, unread && s.lastMsgUnread]} numberOfLines={1}>{lastBody}</Text>
+                    <View style={s.lastMsgRow}>
+                      {draftText ? (
+                        <>
+                          <Text style={s.draftLabel}>Draft: </Text>
+                          <Text style={s.lastMsg} numberOfLines={1}>{draftText}</Text>
+                        </>
+                      ) : (
+                        <>
+                          {hasAttachment && (
+                            <Ionicons
+                              name="attach"
+                              size={12}
+                              color={unread ? colors.primary : colors.gray400}
+                              style={{ marginRight: 3 }}
+                            />
+                          )}
+                          <Text style={[s.lastMsg, unread && s.lastMsgUnread]} numberOfLines={1}>{lastBody}</Text>
+                        </>
+                      )}
+                    </View>
                   </View>
                   {unread && (
                     <View style={s.badge}>
@@ -215,13 +281,15 @@ function makeStyles(c: AppColors) {
   const SERIF = Platform.OS === 'ios' ? 'Georgia' : 'serif';
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: c.background },
-    header: {
-      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-      paddingHorizontal: 20, paddingVertical: 12,
-      backgroundColor: c.surface, borderBottomWidth: 1, borderBottomColor: c.border,
+    pageHeader: {
+      backgroundColor: c.surface, paddingHorizontal: 20, paddingTop: 16, paddingBottom: 14,
+      borderBottomWidth: 1, borderBottomColor: c.border,
     },
-    title: { fontSize: 26, fontFamily: SERIF, color: c.textPrimary },
-    addBtn: { width: 36, height: 36, borderRadius: 10, backgroundColor: c.primaryLight, alignItems: 'center', justifyContent: 'center' },
+    breadcrumb: { fontSize: 10, fontWeight: '700', color: c.textMuted, letterSpacing: 1, marginBottom: 6 },
+    titleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6 },
+    pageTitle: { fontSize: 30, fontFamily: SERIF, color: c.textPrimary, flex: 1 },
+    addBtn: { width: 34, height: 34, borderRadius: 10, backgroundColor: c.primaryLight, alignItems: 'center', justifyContent: 'center' },
+    subtitle: { fontSize: 12, color: c.textSecondary },
     searchRow: {
       flexDirection: 'row', alignItems: 'center', gap: 8,
       marginHorizontal: 16, marginTop: 12, marginBottom: 4,
@@ -258,7 +326,9 @@ function makeStyles(c: AppColors) {
     nameUnread: { fontWeight: '800' },
     time: { fontSize: 11, color: c.textMuted, marginLeft: 8 },
     timeUnread: { color: c.primary, fontWeight: '700' },
-    lastMsg: { fontSize: 12, color: c.textSecondary },
+    lastMsgRow: { flexDirection: 'row', alignItems: 'center' },
+    draftLabel: { fontSize: 12, fontWeight: '700', color: c.danger },
+    lastMsg: { flexShrink: 1, fontSize: 12, color: c.textSecondary },
     lastMsgUnread: { color: c.textPrimary, fontWeight: '600' },
     badge: { backgroundColor: c.primary, borderRadius: 10, minWidth: 20, height: 20, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
     badgeText: { fontSize: 11, fontWeight: '700', color: '#fff' },

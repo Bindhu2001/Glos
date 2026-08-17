@@ -16,8 +16,11 @@ import LoadingSpinner from '../../components/common/LoadingSpinner';
 import LoadError from '../../components/common/LoadError';
 import { useLoadWithTimeout } from '../../hooks/useLoadWithTimeout';
 import EmptyState from '../../components/common/EmptyState';
+import ErrorBoundary from '../../components/common/ErrorBoundary';
+import { ScoreRing } from './widgets/OverviewCharts';
 
-type Tab = 'work' | 'goals' | 'reviews' | 'team' | 'recognitions';
+type Tab = 'overview' | 'work' | 'goals' | 'reviews' | 'team' | 'recognitions';
+type Scope = 'mine' | 'direct' | 'team' | 'all';
 
 interface Goal {
   id: number;
@@ -36,6 +39,7 @@ interface Goal {
   cycle_name?: string;
   employee_name?: string;
   user_name?: string;
+  role_title?: string;
 }
 
 interface Review {
@@ -43,13 +47,21 @@ interface Review {
   cycle_id?: number;
   cycle_name?: string;
   status: string;
+  role_id?: number;
+  platform_user_id?: number;
   self_score?: number;
   manager_score?: number;
   final_score?: number;
+  goals_score?: number;
+  skills_score?: number;
+  values_score?: number;
   created_at?: string;
   employee_name?: string;
   reviewee_name?: string;
+  user?: { id: number; first_name?: string; last_name?: string; email?: string };
 }
+
+const ACTIVE_REVIEW_STATUSES = ['pending_self', 'pending_manager', 'pending_approver'];
 
 const reviewTitle = (r: Review) => r.cycle_name || (r.cycle_id ? `Cycle #${r.cycle_id}` : `Review #${r.id}`);
 
@@ -108,7 +120,10 @@ export default function PerformanceScreen() {
   const isAdmin = workspace?.role === 'super_admin' || workspace?.role === 'admin';
   const { canSeeTeamContent } = useHasTeam();
 
-  const [activeTab, setActiveTab] = useState<Tab>('work');
+  const [activeTab, setActiveTab] = useState<Tab>('overview');
+  const [ovwScope, setOvwScope] = useState<Scope>('mine');
+  const [ovwScopeReviews, setOvwScopeReviews] = useState<Review[]>([]);
+  const [ovwScopeLoading, setOvwScopeLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const { loading, loadError, run } = useLoadWithTimeout();
 
@@ -148,60 +163,95 @@ export default function PerformanceScreen() {
   const [rejectReason, setRejectReason] = useState('');
   const [rejecting, setRejecting] = useState(false);
 
+  // Each call below is individually .catch()-guarded so one genuinely-expected
+  // failure (e.g. a plain member 403ing on a manager-only endpoint) degrades
+  // that one section gracefully instead of blanking the whole screen — but
+  // that used to also mean a *systemic* failure (stuck token, network down)
+  // silently resolved every single one to an empty list with zero indication
+  // anything was wrong. errorCount distinguishes the two: only throw (so
+  // run() shows "Unable to load data" with retry) when literally everything
+  // failed, which is overwhelming evidence of the latter, not 9 independent
+  // permission errors.
   const load = useCallback(async () => {
     if (!workspace) return;
-    try {
-      const [pendingRes, appraisalRes, goalsRes, reviewsRes, teamGoalsRes, teamReviewsRes, mgrAppraisalRes, approverAppraisalRes, apprRes] = await Promise.all([
-        api.performance.listPendingForMe(workspace.id).catch(() => ({ data: [] })),
-        api.performance.getAppraisals(workspace.id, { my: true }).catch(() => ({ data: [] })),
-        api.performance.getGoals(workspace.id).catch(() => ({ data: [] })),
-        api.performance.listMyReviews(workspace.id).catch(() => ({ data: [] })),
-        api.performance.listTeamGoals(workspace.id).catch(() => ({ data: [] })),
-        api.performance.listTeamReviews(workspace.id).catch(() => ({ data: [] })),
-        api.performance.getAppraisals(workspace.id, { view: 'manage' }).catch(() => ({ data: [] })),
-        api.performance.getAppraisals(workspace.id, { view: 'pending_approver' }).catch(() => ({ data: [] })),
-        api.appreciations.listReceived(workspace.id).catch(() => ({ data: [] })),
-      ]);
-      const norm = (d: any) => Array.isArray(d) ? d : (Array.isArray(d?.items) ? d.items : []);
-      setPendingReviews(norm(pendingRes.data));
-      setPendingAppraisals(norm(appraisalRes.data));
-      setGoals(norm(goalsRes.data));
-      setAllReviews(norm(reviewsRes.data));
-      setTeamGoals(norm(teamGoalsRes.data));
-      setTeamReviews(norm(teamReviewsRes.data));
-      setManagerAppraisals(norm(mgrAppraisalRes.data));
-      setApproverAppraisals(norm(approverAppraisalRes.data));
-      setAppreciations(norm(apprRes.data));
-    } catch {}
+    let errorCount = 0;
+    const guard = <T,>(p: Promise<T>): Promise<T | { data: any[] }> =>
+      p.catch(() => { errorCount++; return { data: [] }; });
+    const [pendingRes, appraisalRes, goalsRes, reviewsRes, teamGoalsRes, teamReviewsRes, mgrAppraisalRes, approverAppraisalRes, apprRes] = await Promise.all([
+      guard(api.performance.listPendingForMe(workspace.id)),
+      guard(api.performance.getAppraisals(workspace.id, { my: true })),
+      guard(api.performance.getGoals(workspace.id)),
+      guard(api.performance.listMyReviews(workspace.id)),
+      guard(api.performance.listTeamGoals(workspace.id)),
+      guard(api.performance.listTeamReviews(workspace.id)),
+      guard(api.performance.getAppraisals(workspace.id, { view: 'manage' })),
+      guard(api.performance.getAppraisals(workspace.id, { view: 'pending_approver' })),
+      guard(api.appreciations.listReceived(workspace.id)),
+    ]);
+    if (errorCount === 9) throw new Error('Could not load performance data');
+    const norm = (d: any) => Array.isArray(d) ? d : (Array.isArray(d?.items) ? d.items : []);
+    setPendingReviews(norm(pendingRes.data));
+    setPendingAppraisals(norm(appraisalRes.data));
+    setGoals(norm(goalsRes.data));
+    setAllReviews(norm(reviewsRes.data));
+    setTeamGoals(norm(teamGoalsRes.data));
+    setTeamReviews(norm(teamReviewsRes.data));
+    setManagerAppraisals(norm(mgrAppraisalRes.data));
+    setApproverAppraisals(norm(approverAppraisalRes.data));
+    setAppreciations(norm(apprRes.data));
   }, [workspace, api]);
 
   const loadTeam = useCallback(async () => {
     if (!workspace) return;
     setTeamLoading(true);
     try {
+      let errorCount = 0;
+      const guard = <T,>(p: Promise<T>): Promise<T | { data: any[] }> =>
+        p.catch(() => { errorCount++; return { data: [] }; });
       const [goalsRes, reviewsRes] = await Promise.all([
-        api.performance.listTeamGoals(workspace.id).catch(() => ({ data: [] })),
-        (workspace.role === 'super_admin'
+        guard(api.performance.listTeamGoals(workspace.id)),
+        guard(workspace.role === 'super_admin'
           ? api.performance.listAllReviews(workspace.id)
-          : api.performance.listTeamReviews(workspace.id)
-        ).catch(() => ({ data: [] })),
+          : api.performance.listTeamReviews(workspace.id)),
       ]);
+      if (errorCount === 2) throw new Error('Could not load team performance data');
       const norm = (d: any) => Array.isArray(d) ? d : (Array.isArray(d?.items) ? d.items : []);
       setTeamGoals(norm(goalsRes.data));
       setTeamReviews(norm(reviewsRes.data));
-    } catch {} finally { setTeamLoading(false); }
+    } finally { setTeamLoading(false); }
   }, [workspace, api]);
 
   useEffect(() => { run(load); }, [load]);
 
   useEffect(() => {
-    if (activeTab === 'team') loadTeam();
+    // Swallowed here — teamLoading is still correctly reset via loadTeam's
+    // own finally block; this tab has no dedicated error UI of its own, and
+    // building one is out of scope of just fixing the silent-swallow bug.
+    if (activeTab === 'team') loadTeam().catch(() => {});
   }, [activeTab]);
+
+  // Overview tab's scope selector (Mine / Direct / Team / All) — mirrors
+  // web's PerformanceHub.jsx Overview component.
+  useEffect(() => {
+    if (!workspace || !canSeeTeamContent || ovwScope === 'mine') {
+      setOvwScopeReviews([]);
+      return;
+    }
+    setOvwScopeLoading(true);
+    api.performance.listTeamReviews(workspace.id, { scope: ovwScope })
+      .then((res: any) => setOvwScopeReviews(Array.isArray(res.data) ? res.data : (res.data?.items ?? [])))
+      .catch(() => setOvwScopeReviews([]))
+      .finally(() => setOvwScopeLoading(false));
+  }, [workspace, canSeeTeamContent, ovwScope, api]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await (activeTab === 'team' ? loadTeam() : run(load, true));
-    setRefreshing(false);
+    try {
+      await (activeTab === 'team' ? loadTeam() : run(load, true));
+    } catch {
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   // ── Goal actions ──────────────────────────────────────────
@@ -328,12 +378,83 @@ export default function PerformanceScreen() {
   const filteredPendingReviews = q ? pendingReviews.filter(r => (r.cycle_name ?? '').toLowerCase().includes(q)) : pendingReviews;
   const filteredAppraisals = q ? pendingAppraisals.filter(a => appraisalTitle(a).toLowerCase().includes(q)) : pendingAppraisals;
   const filteredGoals = q ? goals.filter(g => g.goal_name.toLowerCase().includes(q)) : goals;
+  const isGoalEditLocked = (g: Goal) =>
+    allReviews.some(r => r.role_id === g.role_id && ACTIVE_REVIEW_STATUSES.includes(r.status));
   const filteredReviews = q ? allReviews.filter(r => (r.cycle_name ?? '').toLowerCase().includes(q)) : allReviews;
   const filteredTeamGoals = q ? teamGoals.filter(g => (g.goal_name + (g.employee_name ?? '')).toLowerCase().includes(q)) : teamGoals;
   const filteredTeamReviews = q ? teamReviews.filter(r => ((r.reviewee_name ?? r.employee_name ?? '') + (r.cycle_name ?? '')).toLowerCase().includes(q)) : teamReviews;
 
+  // ── Overview tab derived data (mirrors PerformanceHub.jsx Overview) ─────
+  const uname = (u?: { first_name?: string; last_name?: string; email?: string }) =>
+    u ? ([u.first_name, u.last_name].filter(Boolean).join(' ') || u.email || '—') : '—';
+
+  const buildRatingHistory = (reviews: Review[]) =>
+    [...reviews]
+      .filter(r => r.status === 'approved' && r.final_score != null)
+      .sort((a, b) => new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime())
+      .slice(-6)
+      .map(r => ({
+        label: (r.cycle_name ?? `#${r.cycle_id}`).replace(/\s+/g, '·').slice(0, 8),
+        score: Number(r.final_score),
+      }));
+
+  const buildManagerRatingHistory = (teamRevs: Review[]) => {
+    const byUser: Record<string, Review> = {};
+    for (const r of teamRevs) {
+      if (r.status !== 'approved' || r.final_score == null || r.platform_user_id == null) continue;
+      const uid = String(r.platform_user_id);
+      if (!byUser[uid] || new Date(r.created_at ?? 0) > new Date(byUser[uid].created_at ?? 0)) byUser[uid] = r;
+    }
+    return Object.values(byUser)
+      .sort((a, b) => Number(a.final_score) - Number(b.final_score))
+      .map(r => ({ label: uname(r.user) || r.reviewee_name || r.employee_name || '—', score: Number(r.final_score) }));
+  };
+
+  const ovwShowingTeam = canSeeTeamContent && ovwScope !== 'mine';
+  const ovwMyRatingHistory = buildRatingHistory(allReviews);
+  const ovwTeamRatingHistory = buildManagerRatingHistory(ovwScopeReviews);
+  const ovwRatingHistory = ovwShowingTeam ? ovwTeamRatingHistory : ovwMyRatingHistory;
+  const ovwPendingItems = canSeeTeamContent ? pendingReviews : allReviews.filter(r => r.status === 'pending_self');
+  const ovwLatestScore = ovwRatingHistory.length ? ovwRatingHistory[ovwRatingHistory.length - 1].score : null;
+  const ovwPrevScore = ovwRatingHistory.length > 1 ? ovwRatingHistory[ovwRatingHistory.length - 2].score : null;
+  const ovwScoreDelta = ovwLatestScore != null && ovwPrevScore != null ? ovwLatestScore - ovwPrevScore : null;
+  const ovwTeamAvgScore = ovwTeamRatingHistory.length
+    ? Math.round((ovwTeamRatingHistory.reduce((s, r) => s + r.score, 0) / ovwTeamRatingHistory.length) * 100) / 100
+    : null;
+  const ovwDisplayScore = ovwShowingTeam ? ovwTeamAvgScore : ovwLatestScore;
+  const ovwScoreLabel = ovwShowingTeam
+    ? (ovwScope === 'direct' ? 'Direct Avg' : ovwScope === 'all' ? 'Org Avg' : 'Team Avg')
+    : 'My Latest Rating';
+
+  // Center panel of the hero (mirrors web's PerformanceHub.jsx Overview): for "mine"
+  // scope, a Goals/Skills/Values breakdown of the latest approved review; for team
+  // scopes, the per-member rating list (web has no rating-trend line chart here).
+  const ovwLatestApproved = [...allReviews]
+    .filter(r => r.status === 'approved')
+    .sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime())[0];
+  const toScoreNum = (v: unknown) => (v == null ? null : Number(v));
+  const ovwBreakdown = ovwLatestApproved ? [
+    { label: 'Goals', score: toScoreNum(ovwLatestApproved.goals_score), color: colors.primary },
+    { label: 'Skills', score: toScoreNum(ovwLatestApproved.skills_score), color: colors.secondary },
+    { label: 'Values', score: toScoreNum(ovwLatestApproved.values_score), color: colors.success },
+  ] : [];
+
+  const goalGroupMeta: { key: string; label: string; color: string }[] = [
+    { key: 'approved', label: 'Approved', color: colors.success },
+    { key: 'submitted', label: 'Awaiting Approval', color: colors.primary },
+    { key: 'pending', label: 'Draft', color: colors.warning },
+    { key: 'rejected', label: 'Rejected', color: colors.danger },
+  ];
+  const ovwGoalGroups: Record<string, Goal[]> = {
+    approved: goals.filter(g => g.status === 'approved'),
+    submitted: goals.filter(g => g.status === 'submitted'),
+    pending: goals.filter(g => g.status === 'pending'),
+    rejected: goals.filter(g => g.status === 'rejected'),
+  };
+
   const tabs: { key: Tab; label: string }[] = [
-    { key: 'work', label: 'Overview' },
+    { key: 'overview', label: 'Overview' },
+    { key: 'work', label: 'My Work' },
     { key: 'goals', label: 'Goals' },
     { key: 'reviews', label: 'Reviews' },
     ...(canSeeTeamContent ? [{ key: 'team' as Tab, label: 'Team' }] : []),
@@ -349,7 +470,7 @@ export default function PerformanceScreen() {
   const totalManagerPending = pendingTeamGoals + pendingManagerReviews;
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
     <View style={[s.container, { paddingTop: insets.top }]}>
       {/* Page header */}
       <View style={s.pageHeader}>
@@ -378,10 +499,11 @@ export default function PerformanceScreen() {
             </TouchableOpacity>
           )}
         </View>
+        <Text style={s.subtitle}>Goals, reviews and appraisals.</Text>
       </View>
 
       {/* Tab bar */}
-      <View style={s.tabBar}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.tabBarScroll} contentContainerStyle={s.tabBar}>
         {tabs.map((t) => (
           <TouchableOpacity
             key={t.key}
@@ -391,31 +513,205 @@ export default function PerformanceScreen() {
             <Text style={[s.tabText, activeTab === t.key && s.tabTextActive]}>{t.label}</Text>
           </TouchableOpacity>
         ))}
-      </View>
+      </ScrollView>
 
       {/* Search bar */}
-      <View style={s.searchBar}>
-        <Ionicons name="search-outline" size={16} color={colors.gray400} />
-        <TextInput
-          style={s.searchInput}
-          placeholder="Search..."
-          placeholderTextColor={colors.gray400}
-          value={search}
-          onChangeText={setSearch}
-        />
-        {search.length > 0 && (
-          <TouchableOpacity onPress={() => setSearch('')}>
-            <Ionicons name="close-circle" size={16} color={colors.gray400} />
-          </TouchableOpacity>
-        )}
-      </View>
+      {activeTab !== 'overview' && (
+        <View style={s.searchBar}>
+          <Ionicons name="search-outline" size={16} color={colors.gray400} />
+          <TextInput
+            style={s.searchInput}
+            placeholder="Search..."
+            placeholderTextColor={colors.gray400}
+            value={search}
+            onChangeText={setSearch}
+          />
+          {search.length > 0 && (
+            <TouchableOpacity onPress={() => setSearch('')}>
+              <Ionicons name="close-circle" size={16} color={colors.gray400} />
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
 
       <ScrollView
         contentContainerStyle={s.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         showsVerticalScrollIndicator={false}
       >
-        {/* ── Overview ──────────────────────────────────── */}
+        {/* ── Overview (analytics hero) ────────────────────── */}
+        {activeTab === 'overview' && (
+          <ErrorBoundary>
+            <View style={s.ovwHeroRow}>
+              <ScoreRing score={ovwDisplayScore} colors={colors} />
+              <View style={{ flex: 1 }}>
+                <Text style={s.ovwHeroLabel}>{ovwScoreLabel}</Text>
+                {ovwScoreDelta != null && !ovwShowingTeam ? (
+                  <View style={s.ovwDeltaRow}>
+                    <Ionicons
+                      name={ovwScoreDelta >= 0 ? 'trending-up' : 'trending-down'}
+                      size={13}
+                      color={ovwScoreDelta >= 0 ? colors.success : colors.danger}
+                    />
+                    <Text style={[s.ovwDeltaTxt, { color: ovwScoreDelta >= 0 ? colors.success : colors.danger }]}>
+                      {ovwScoreDelta >= 0 ? '+' : ''}{ovwScoreDelta.toFixed(2)} vs last cycle
+                    </Text>
+                  </View>
+                ) : ovwDisplayScore == null ? (
+                  <Text style={s.ovwHeroSub}>No approved reviews yet</Text>
+                ) : null}
+              </View>
+            </View>
+
+            {canSeeTeamContent && (
+              <View style={s.chipRow}>
+                {(['mine', 'direct', 'team', ...(isAdmin ? ['all'] as Scope[] : [])] as Scope[]).map((sc) => (
+                  <TouchableOpacity
+                    key={sc}
+                    style={[s.selectorChip, ovwScope === sc && s.selectorChipActive]}
+                    onPress={() => setOvwScope(sc)}
+                  >
+                    <Text style={[s.selectorChipTxt, ovwScope === sc && s.selectorChipTxtActive]}>
+                      {sc === 'mine' ? 'Mine' : sc === 'direct' ? 'Direct' : sc === 'team' ? 'Team' : 'All'}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            {/* Latest Review breakdown (mine) / per-member rating list (team scopes) */}
+            <View style={s.ovwChartCard}>
+              {ovwShowingTeam ? (
+                <>
+                  <Text style={s.sectionLabel}>
+                    {ovwScope === 'direct' ? 'Direct Reportees Rating' : ovwScope === 'all' ? 'All Members Rating' : 'Entire Team Rating'}
+                  </Text>
+                  {ovwScopeLoading ? (
+                    <ActivityIndicator color={colors.primary} style={{ paddingVertical: 30 }} />
+                  ) : ovwTeamRatingHistory.length === 0 ? (
+                    <Text style={s.ovwEmptyTxt}>No approved reviews yet</Text>
+                  ) : (
+                    ovwTeamRatingHistory.map((m, i) => {
+                      const safeLabel = typeof m?.label === 'string' && m.label ? m.label : '—';
+                      const safeScore = typeof m?.score === 'number' && !isNaN(m.score) ? m.score : 0;
+                      return (
+                        <View key={i} style={s.ovwMemberRow}>
+                          <View style={s.ovwMemberAvatar}>
+                            <Text style={s.ovwMemberAvatarTxt}>{safeLabel.charAt(0).toUpperCase()}</Text>
+                          </View>
+                          <Text style={s.ovwMemberName} numberOfLines={1}>{safeLabel}</Text>
+                          <View style={s.ovwMemberBarTrack}>
+                            <View style={[s.ovwMemberBarFill, { width: `${(safeScore / 5) * 100}%`, backgroundColor: colors.secondary }]} />
+                          </View>
+                          <Text style={[s.ovwMemberScore, { color: colors.secondary }]}>{safeScore.toFixed(2)}</Text>
+                        </View>
+                      );
+                    })
+                  )}
+                </>
+              ) : (
+                <>
+                  <Text style={s.sectionLabel}>
+                    {ovwLatestApproved ? `Latest Review · ${reviewTitle(ovwLatestApproved)}` : 'Score Breakdown'}
+                  </Text>
+                  {ovwBreakdown.length === 0 ? (
+                    <Text style={s.ovwEmptyTxt}>No approved reviews yet</Text>
+                  ) : (
+                    ovwBreakdown.map((b) => (
+                      <View key={b.label} style={s.ovwBreakdownRow}>
+                        <View style={s.ovwBreakdownHead}>
+                          <Text style={s.ovwBreakdownLbl}>{b.label}</Text>
+                          <Text style={[s.ovwBreakdownScore, { color: b.score != null ? b.color : colors.textMuted }]}>
+                            {b.score != null ? b.score.toFixed(2) : '—'}
+                          </Text>
+                        </View>
+                        <View style={s.ovwBreakdownBarTrack}>
+                          <View style={[s.ovwBreakdownBarFill, { width: b.score != null ? `${(b.score / 5) * 100}%` : '0%', backgroundColor: b.color }]} />
+                        </View>
+                      </View>
+                    ))
+                  )}
+                </>
+              )}
+            </View>
+
+            {/* Action Required — mirrors web's single-item + "N more pending" pattern */}
+            <View style={s.ovwChartCard}>
+              <Text style={s.sectionLabel}>
+                {ovwPendingItems.length > 0 ? `Action Required · ${ovwPendingItems.length}` : 'Action Required'}
+              </Text>
+              {ovwPendingItems.length > 0 ? (
+                <>
+                  <TouchableOpacity
+                    style={s.ovwActionItem}
+                    activeOpacity={0.7}
+                    onPress={() => navigation.navigate('ReviewDetail', { reviewId: ovwPendingItems[0].id, appId: workspace?.id ?? 0 })}
+                  >
+                    <View style={[s.ovwActionIconBox, { backgroundColor: colors.warning + '18' }]}>
+                      <Ionicons name={canSeeTeamContent ? 'person-outline' : 'document-text-outline'} size={16} color={colors.warning} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={s.ovwActionTitle} numberOfLines={1}>
+                        {canSeeTeamContent
+                          ? (ovwPendingItems[0].reviewee_name ?? ovwPendingItems[0].employee_name ?? uname(ovwPendingItems[0].user))
+                          : reviewTitle(ovwPendingItems[0])}
+                      </Text>
+                      <StatusBadge status={ovwPendingItems[0].status} />
+                    </View>
+                    <Ionicons name="chevron-forward" size={16} color={colors.gray400} />
+                  </TouchableOpacity>
+                  {ovwPendingItems.length > 1 && (
+                    <Text style={s.ovwActionMore}>+{ovwPendingItems.length - 1} more pending</Text>
+                  )}
+                </>
+              ) : (
+                <View style={s.ovwAllCaughtUp}>
+                  <Ionicons name="checkmark-circle" size={32} color={colors.success} />
+                  <Text style={s.ovwAllCaughtUpTxt}>All caught up!</Text>
+                </View>
+              )}
+            </View>
+
+            {/* My Goals — grouped by status, matching web (not just counts) */}
+            <Text style={[s.sectionLabel, { marginTop: 16 }]}>My Goals</Text>
+            <View style={s.ovwChartCard}>
+              {goals.length === 0 ? (
+                <Text style={s.ovwEmptyTxt}>No goals yet</Text>
+              ) : (
+                goalGroupMeta.map(({ key, label, color }) => {
+                  const items = ovwGoalGroups[key];
+                  if (!items.length) return null;
+                  return (
+                    <View key={key}>
+                      <View style={s.ovwGoalGroupHead}>
+                        <View style={[s.ovwGoalDot, { backgroundColor: color }]} />
+                        <Text style={[s.ovwGoalGroupLabel, { color }]}>{label.toUpperCase()}</Text>
+                        <Text style={s.ovwGoalGroupCount}>{items.length}</Text>
+                      </View>
+                      {items.map((g) => (
+                        <View key={g.id} style={s.ovwGoalRow}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={s.ovwGoalName} numberOfLines={1}>{g.goal_name}</Text>
+                            {!!g.role_title && <Text style={s.ovwGoalRole}>{g.role_title}</Text>}
+                          </View>
+                          {!!g.weightage && (
+                            <View style={s.ovwGoalWWrap}>
+                              <View style={s.ovwGoalWBar}>
+                                <View style={[s.ovwGoalWFill, { width: `${Math.min(100, g.weightage)}%`, backgroundColor: color }]} />
+                              </View>
+                              <Text style={s.ovwGoalWTxt}>{g.weightage}%</Text>
+                            </View>
+                          )}
+                        </View>
+                      ))}
+                    </View>
+                  );
+                })
+              )}
+            </View>
+          </ErrorBoundary>
+        )}
+
         {activeTab === 'work' && (
           <>
             {latestReview && (
@@ -608,18 +904,24 @@ export default function PerformanceScreen() {
                 )}
                 <View style={s.goalActionsRow}>
                   {['pending', 'rejected', 'approved'].includes(g.status) && (
-                    <TouchableOpacity style={s.editGoalBtn} onPress={() => openEditGoal(g)}>
-                      <Ionicons name="create-outline" size={13} color={colors.primary} />
-                      <Text style={s.editGoalBtnText}>Edit</Text>
-                    </TouchableOpacity>
+                    isGoalEditLocked(g) ? (
+                      <Text style={s.goalLockedText}>🔒 Editing locked — performance review in progress</Text>
+                    ) : (
+                      <>
+                        <TouchableOpacity style={s.editGoalBtn} onPress={() => openEditGoal(g)}>
+                          <Ionicons name="create-outline" size={13} color={colors.primary} />
+                          <Text style={s.editGoalBtnText}>Edit</Text>
+                        </TouchableOpacity>
+                        {g.status === 'approved' && (
+                          <TouchableOpacity style={s.editGoalBtn} onPress={() => handleToggleGoalActive(g.id)}>
+                            <Ionicons name={g.is_active ? 'pause-outline' : 'play-outline'} size={13} color={colors.primary} />
+                            <Text style={s.editGoalBtnText}>{g.is_active ? 'Deactivate' : 'Activate'}</Text>
+                          </TouchableOpacity>
+                        )}
+                      </>
+                    )
                   )}
-                  {g.status === 'approved' && (
-                    <TouchableOpacity style={s.editGoalBtn} onPress={() => handleToggleGoalActive(g.id)}>
-                      <Ionicons name={g.is_active ? 'pause-outline' : 'play-outline'} size={13} color={colors.primary} />
-                      <Text style={s.editGoalBtnText}>{g.is_active ? 'Deactivate' : 'Activate'}</Text>
-                    </TouchableOpacity>
-                  )}
-                  {g.status === 'pending' && (
+                  {g.status === 'pending' && !isGoalEditLocked(g) && (
                     <TouchableOpacity style={s.submitGoalBtn} onPress={() => handleSubmitGoal(g.id)}>
                       <Text style={s.submitGoalBtnText}>Submit for Approval</Text>
                     </TouchableOpacity>
@@ -702,7 +1004,7 @@ export default function PerformanceScreen() {
 
         {/* ── Team ─────────────────────────────────────── */}
         {activeTab === 'team' && (
-          <>
+          <ErrorBoundary>
             {teamLoading ? (
               <ActivityIndicator color={colors.primary} style={{ marginTop: 40 }} />
             ) : (
@@ -782,7 +1084,7 @@ export default function PerformanceScreen() {
                 ))}
               </>
             )}
-          </>
+          </ErrorBoundary>
         )}
         {/* ── Recognitions ──────────────────────────────── */}
         {activeTab === 'recognitions' && (
@@ -812,8 +1114,8 @@ export default function PerformanceScreen() {
 
       {/* Create Goal Modal */}
       <Modal visible={showCreateGoal} animationType="slide" transparent onRequestClose={() => setShowCreateGoal(false)}>
-        <KeyboardAvoidingView style={s.modalOverlay} behavior="padding">
-          <View style={s.modalSheetWrapper}>
+        <KeyboardAvoidingView style={s.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <View style={[s.modalSheetWrapper, { paddingBottom: insets.bottom }]}>
           <ScrollView style={s.modalSheet} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
             <View style={s.modalHeader}>
               <Text style={s.modalTitle}>{editingGoalId ? 'Edit Goal' : 'New Goal'}</Text>
@@ -905,10 +1207,10 @@ export default function PerformanceScreen() {
       </Modal>
 
       {/* Reject Goal Modal */}
-      <Modal visible={showRejectModal} transparent animationType="fade">
+      <Modal visible={showRejectModal} transparent animationType="fade" onRequestClose={() => setShowRejectModal(false)}>
         <KeyboardAvoidingView
           style={s.modalOverlay}
-          behavior="padding"
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
           <View style={s.rejectSheet}>
             <Text style={s.modalTitle}>Reject Goal</Text>
@@ -959,8 +1261,9 @@ function makeStyles(c: AppColors) {
       borderBottomWidth: 1, borderBottomColor: c.border,
     },
     breadcrumb: { fontSize: 10, fontWeight: '700', color: c.textMuted, letterSpacing: 1, marginBottom: 6 },
-    titleRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    titleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6 },
     pageTitle: { fontSize: 30, fontFamily: SERIF, color: c.textPrimary, flex: 1 },
+    subtitle: { fontSize: 12, color: c.textSecondary },
     pendingBadge: { backgroundColor: c.warningLight, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
     pendingBadgeText: { fontSize: 11, fontWeight: '700', color: c.warning },
     reportsBtn: {
@@ -969,8 +1272,9 @@ function makeStyles(c: AppColors) {
     },
     reportsBtnText: { fontSize: 13, color: c.primary, fontWeight: '600' },
 
-    tabBar: { flexDirection: 'row', backgroundColor: c.surface, borderBottomWidth: 1, borderBottomColor: c.border },
-    tab: { flex: 1, paddingVertical: 12, alignItems: 'center' },
+    tabBarScroll: { flexGrow: 0, flexShrink: 0, backgroundColor: c.surface, borderBottomWidth: 1, borderBottomColor: c.border },
+    tabBar: { flexDirection: 'row' },
+    tab: { paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center' },
     tabActive: { borderBottomWidth: 2, borderBottomColor: c.primary },
     tabText: { fontSize: 13, fontWeight: '500', color: c.textSecondary },
     tabTextActive: { color: c.primary, fontWeight: '700' },
@@ -1002,6 +1306,78 @@ function makeStyles(c: AppColors) {
       textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10,
     },
     sectionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+
+    // Overview tab
+    ovwHeroRow: {
+      flexDirection: 'row', alignItems: 'center', gap: 16,
+      backgroundColor: c.surface, borderRadius: 14, borderWidth: 1, borderColor: c.border,
+      padding: 16, marginBottom: 14,
+    },
+    ovwHeroLabel: { fontSize: 13, fontWeight: '700', color: c.textPrimary },
+    ovwDeltaRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
+    ovwDeltaTxt: { fontSize: 12, fontWeight: '700' },
+    ovwHeroSub: { fontSize: 12, color: c.textSecondary, marginTop: 6 },
+    chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 14 },
+    selectorChip: {
+      paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, borderWidth: 1.5,
+      backgroundColor: c.surface, borderColor: c.border,
+    },
+    selectorChipActive: { backgroundColor: c.primaryLight, borderColor: c.primary },
+    selectorChipTxt: { fontSize: 13, fontWeight: '600', color: c.gray500 },
+    selectorChipTxtActive: { color: c.primary },
+    ovwChartCard: {
+      backgroundColor: c.surface, borderRadius: 14, borderWidth: 1, borderColor: c.border,
+      padding: 16, marginBottom: 14,
+    },
+    ovwEmptyTxt: { fontSize: 12, color: c.textMuted, textAlign: 'center', paddingVertical: 20 },
+
+    // Team member rating list (showingTeam)
+    ovwMemberRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: c.border },
+    ovwMemberAvatar: { width: 26, height: 26, borderRadius: 13, backgroundColor: c.gray100, alignItems: 'center', justifyContent: 'center' },
+    ovwMemberAvatarTxt: { fontSize: 10, fontWeight: '700', color: c.textMuted },
+    ovwMemberName: { fontSize: 13, fontWeight: '500', color: c.textPrimary, maxWidth: 110 },
+    ovwMemberBarTrack: { flex: 1, height: 5, borderRadius: 4, backgroundColor: c.border },
+    ovwMemberBarFill: { height: '100%', borderRadius: 4 },
+    ovwMemberScore: { fontSize: 14, fontWeight: '800' },
+
+    // Goals/Skills/Values breakdown (mine scope)
+    ovwBreakdownRow: { marginBottom: 12 },
+    ovwBreakdownHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 },
+    ovwBreakdownLbl: { fontSize: 12, fontWeight: '600', color: c.textSecondary },
+    ovwBreakdownScore: { fontSize: 13, fontWeight: '800' },
+    ovwBreakdownBarTrack: { height: 6, borderRadius: 4, backgroundColor: c.border },
+    ovwBreakdownBarFill: { height: '100%', borderRadius: 4 },
+
+    // Action Required
+    ovwActionItem: {
+      flexDirection: 'row', alignItems: 'center', gap: 10,
+      backgroundColor: c.gray50, borderRadius: 10, padding: 10, marginTop: 10,
+    },
+    ovwActionIconBox: { width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+    ovwActionTitle: { fontSize: 13, fontWeight: '600', color: c.textPrimary, marginBottom: 3 },
+    ovwActionMore: { fontSize: 11, color: c.textMuted, textAlign: 'center', marginTop: 8 },
+    ovwAllCaughtUp: { alignItems: 'center', gap: 6, paddingVertical: 12 },
+    ovwAllCaughtUpTxt: { fontSize: 12, color: c.textMuted },
+
+    // My Goals grouped list
+    ovwGoalGroupHead: {
+      flexDirection: 'row', alignItems: 'center', gap: 7,
+      backgroundColor: c.gray50, marginHorizontal: -16, paddingHorizontal: 16,
+      paddingVertical: 6, marginTop: 8,
+    },
+    ovwGoalDot: { width: 6, height: 6, borderRadius: 3 },
+    ovwGoalGroupLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
+    ovwGoalGroupCount: { fontSize: 10, color: c.textMuted, marginLeft: 'auto' },
+    ovwGoalRow: {
+      flexDirection: 'row', alignItems: 'center', gap: 10,
+      paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: c.border,
+    },
+    ovwGoalName: { fontSize: 13, fontWeight: '600', color: c.textPrimary },
+    ovwGoalRole: { fontSize: 11, color: c.textMuted, marginTop: 1 },
+    ovwGoalWWrap: { width: 52 },
+    ovwGoalWBar: { height: 3, borderRadius: 3, backgroundColor: c.border },
+    ovwGoalWFill: { height: '100%', borderRadius: 3 },
+    ovwGoalWTxt: { fontSize: 10, color: c.textMuted, textAlign: 'right', marginTop: 2 },
     card: {
       backgroundColor: c.surface, borderRadius: 12, padding: 14, marginBottom: 10,
       borderWidth: 1, borderColor: c.border,
@@ -1030,6 +1406,7 @@ function makeStyles(c: AppColors) {
       backgroundColor: c.gray50, borderWidth: 1, borderColor: c.border,
     },
     editGoalBtnText: { fontSize: 12, fontWeight: '600', color: c.primary },
+    goalLockedText: { fontSize: 12, color: c.textMuted, fontStyle: 'italic' },
 
     approvalRow: { flexDirection: 'row', gap: 10, marginTop: 12 },
     approveBtn: {

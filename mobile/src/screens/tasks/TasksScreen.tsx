@@ -31,10 +31,10 @@ const SORT_OPTIONS = [
 ];
 
 const STATUS_MAP: Record<string, string> = {
-  'Open': 'open',
+  'Not Started': 'open',
   'In Progress': 'in_progress',
   'Blocked': 'blocked',
-  'Done': 'done',
+  'Completed': 'done',
   'Cancelled': 'cancelled',
 };
 
@@ -94,8 +94,8 @@ export default function TasksScreen() {
 
   const { canSeeTeamContent, isAdmin } = useHasTeam();
   const STATUS_FILTERS = canSeeTeamContent
-    ? ['All', 'My Tasks', 'My Team', 'Open', 'In Progress', 'Blocked', 'Done', 'Cancelled']
-    : ['All', 'My Tasks', 'Open', 'In Progress', 'Blocked', 'Done', 'Cancelled'];
+    ? ['All', 'My Tasks', 'My Team', 'Not Started', 'In Progress', 'Blocked', 'Completed', 'Cancelled']
+    : ['All', 'My Tasks', 'Not Started', 'In Progress', 'Blocked', 'Completed', 'Cancelled'];
 
   const [tasks, setTasks] = useState<any[]>([]);
   const [members, setMembers] = useState<any[]>([]);
@@ -106,7 +106,7 @@ export default function TasksScreen() {
   const { loading, loadError, run } = useLoadWithTimeout();
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
-  const [activeFilter, setActiveFilter] = useState('All');
+  const [activeFilter, setActiveFilter] = useState('My Tasks');
   const [assigneeFilters, setAssigneeFilters] = useState<number[]>([]);
   const [areaFilter, setAreaFilter] = useState('');
   const [projectFilter, setProjectFilter] = useState<number | ''>('');
@@ -118,94 +118,114 @@ export default function TasksScreen() {
   const [showAssigneeModal, setShowAssigneeModal] = useState(false);
 
   // refs so load() reads current values without being recreated on every filter change
-  const activeFilterRef = useRef('All');
+  const activeFilterRef = useRef('My Tasks');
   const areaFilterRef = useRef('');
   const projectFilterRef = useRef<number | ''>('');
   const sortByRef = useRef('created_at');
 
+  // No outer try/catch here — a real failure (stuck token, network down) must
+  // reach run() so useLoadWithTimeout shows "Unable to load data" with a
+  // retry, instead of silently leaving the task list empty forever. The
+  // per-role/team-member fallbacks inside loadContext below are intentionally
+  // kept local since those are genuinely supplementary (filter dropdowns).
   const load = useCallback(async () => {
     if (!workspace) return;
-    try {
-      const filter = activeFilterRef.current;
-      const params: Record<string, unknown> = {};
-      if (filter === 'My Tasks') params.mine = 1;
-      if (areaFilterRef.current === 'others') params.area_id = 'others';
-      else if (areaFilterRef.current) params.area_id = areaFilterRef.current;
-      if (projectFilterRef.current !== '') params.project_id = projectFilterRef.current;
-      if (sortByRef.current) params.sort = sortByRef.current;
-      const r = await api.tasks.list(workspace.id, params);
-      setTasks(r.data?.items ?? r.data?.tasks ?? []);
-    } catch {}
+    const filter = activeFilterRef.current;
+    const params: Record<string, unknown> = {};
+    if (filter === 'My Tasks') params.mine = 1;
+    if (areaFilterRef.current === 'others') params.area_id = 'others';
+    else if (areaFilterRef.current) params.area_id = areaFilterRef.current;
+    if (projectFilterRef.current !== '') params.project_id = projectFilterRef.current;
+    if (sortByRef.current) params.sort = sortByRef.current;
+    const r = await api.tasks.list(workspace.id, params);
+    setTasks(r.data?.items ?? r.data?.tasks ?? []);
   }, [workspace, api]);
 
   const loadContext = useCallback(async () => {
     if (!workspace) return;
-    try {
-      const [mRes, rRes, meRes, projRes] = await Promise.all([
-        api.members.list(workspace.id),
-        api.roles.list(workspace.id),
-        api.me.getProfile(),
-        api.projects.listSimple(workspace.id).catch(() => ({ data: [] })),
-      ]);
-      const memberRows: any[] = mRes.data?.items ?? [];
-      setMembers(memberRows);
-      const meId = meRes.data?.id ?? meRes.data?.user?.id ?? null;
-      setMyUserId(meId);
-      const projRows: any[] = projRes.data?.items ?? projRes.data ?? [];
-      setProjects(projRows.map((p: any) => ({ id: p.id, name: p.name })));
+    const [mRes, rRes, meRes, projRes] = await Promise.all([
+      api.members.list(workspace.id),
+      api.roles.list(workspace.id),
+      api.me.getProfile(),
+      api.projects.listSimple(workspace.id).catch(() => ({ data: [] })),
+    ]);
+    const memberRows: any[] = mRes.data?.items ?? [];
+    setMembers(memberRows);
+    const meId = meRes.data?.id ?? meRes.data?.user?.id ?? null;
+    setMyUserId(meId);
+    const projRows: any[] = projRes.data?.items ?? projRes.data ?? [];
+    setProjects(projRows.map((p: any) => ({ id: p.id, name: p.name })));
 
-      // Scope the assignee filter to "my team" (self + subordinates) for managers,
-      // matching web's Assignee dropdown restriction — admins see everyone.
-      if (canSeeTeamContent && !isAdmin) {
+    // Scope the assignee filter to "my team" (self + subordinates) for managers,
+    // matching web's Assignee dropdown restriction — admins see everyone.
+    if (canSeeTeamContent && !isAdmin) {
+      try {
+        const teamRes = await api.dashboard.getManagerDashboard(workspace.id, 'all');
+        const ids: number[] = (teamRes.data?.members ?? []).map((m: any) => m.user?.id).filter(Boolean);
+        setTeamMemberIds(ids);
+      } catch { setTeamMemberIds(meId ? [meId] : []); }
+    } else if (isAdmin) {
+      setTeamMemberIds(memberRows.map((m: any) => m.user_id).filter(Boolean));
+    }
+
+    const roleRows: any[] = rRes.data?.items ?? [];
+    const flat: { id: number; name: string; roleTitle: string }[] = [];
+    await Promise.all(
+      roleRows.map(async (role: any) => {
         try {
-          const teamRes = await api.dashboard.getManagerDashboard(workspace.id, 'all');
-          const ids: number[] = (teamRes.data?.members ?? []).map((m: any) => m.user?.id).filter(Boolean);
-          setTeamMemberIds(ids);
-        } catch { setTeamMemberIds(meId ? [meId] : []); }
-      } else if (isAdmin) {
-        setTeamMemberIds(memberRows.map((m: any) => m.user_id).filter(Boolean));
-      }
-
-      const roleRows: any[] = rRes.data?.items ?? [];
-      const flat: { id: number; name: string; roleTitle: string }[] = [];
-      await Promise.all(
-        roleRows.map(async (role: any) => {
-          try {
-            const aRes = await api.roles.listAreas(workspace.id, role.id);
-            const areaItems: any[] = aRes.data?.items ?? [];
-            for (const a of areaItems) {
-              flat.push({ id: a.id, name: a.name, roleTitle: role.title });
-            }
-          } catch {}
-        })
-      );
-      setAreas(flat);
-    } catch {}
+          const aRes = await api.roles.listAreas(workspace.id, role.id);
+          const areaItems: any[] = aRes.data?.items ?? [];
+          for (const a of areaItems) {
+            flat.push({ id: a.id, name: a.name, roleTitle: role.title });
+          }
+        } catch {}
+      })
+    );
+    setAreas(flat);
   }, [workspace, api, canSeeTeamContent, isAdmin]);
 
+  // useFocusEffect below also fires on initial mount (a screen becomes focused
+  // as soon as it's pushed), which used to double-fetch api.tasks.list() on
+  // every first visit to this tab — once here, once there. hasLoadedRef makes
+  // the focus effect a no-op until the initial load (tasks + context) finishes,
+  // so it only does its job of refreshing tasks on later refocuses.
+  const hasLoadedRef = useRef(false);
   useEffect(() => {
-    run(() => Promise.all([load(), loadContext()]));
+    run(() => Promise.all([load(), loadContext()])).then(() => { hasLoadedRef.current = true; });
   }, [load, loadContext]);
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  useFocusEffect(useCallback(() => {
+    // Swallowed here deliberately (unlike the initial load above) — this is a
+    // quiet background refresh on refocus; the list already has data on
+    // screen, and load() no longer catches its own errors so this must, or a
+    // failed refocus-refresh would surface as an unhandled promise rejection.
+    if (hasLoadedRef.current) load().catch(() => {});
+  }, [load]));
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await load();
-    setRefreshing(false);
+    try {
+      await load();
+    } catch {
+      // Pull-to-refresh failing silently (list just doesn't update) is
+      // preferable to a raw alert here — same reasoning as the focus effect
+      // above. The important fix is that setRefreshing still always runs.
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const handleFilterPress = async (filter: string) => {
     setActiveFilter(filter);
     activeFilterRef.current = filter;
-    await load();
+    try { await load(); } catch {}
   };
 
   const applyFilter = async (opts: { area?: string; project?: number | ''; sort?: string }) => {
     if (opts.area !== undefined) { setAreaFilter(opts.area); areaFilterRef.current = opts.area; }
     if (opts.project !== undefined) { setProjectFilter(opts.project); projectFilterRef.current = opts.project; }
     if (opts.sort !== undefined) { setSortBy(opts.sort); sortByRef.current = opts.sort; }
-    await load();
+    try { await load(); } catch {}
   };
 
   const resetFilters = async () => {
@@ -216,15 +236,20 @@ export default function TasksScreen() {
     setDeadlinePreset('');
     setNeedSupport(false);
     setSortBy('created_at'); sortByRef.current = 'created_at';
-    await load();
+    try { await load(); } catch {}
   };
 
-  const filtered = (() => {
+  // Everything except the status chip itself — shared by the visible list (which
+  // also applies the status chip) and the header stat tiles (which must NOT
+  // collapse to the active status chip, since they're the status breakdown of
+  // whatever scope — My Tasks / My Team / assignee / priority / etc — is active).
+  // Previously the stat tiles were computed from the raw unscoped `tasks` fetch,
+  // so picking an Assignee/Priority/Deadline filter changed the visible list but
+  // left the header counts unchanged — a mismatch that reads as "wrong counts".
+  const scoped = (() => {
     const now = new Date();
-    const list = tasks.filter((t) => {
+    return tasks.filter((t) => {
       const matchSearch = !search || (t.title ?? '').toLowerCase().includes(search.toLowerCase());
-      const statusKey = STATUS_MAP[activeFilter];
-      const matchStatus = statusKey ? t.status === statusKey : true;
       const matchTeam = activeFilter === 'My Team'
         ? teamMemberIds.includes(t.assigned_to_user_id)
         : true;
@@ -232,9 +257,21 @@ export default function TasksScreen() {
       const matchPriority = !priorityFilter || t.priority === priorityFilter;
       const matchDeadline = !deadlinePreset || matchesDeadlinePreset(t.deadline ?? t.due_on, deadlinePreset, now);
       const matchNeedSupport = !needSupport || t.review_status === 'need_support';
-      return matchSearch && matchStatus && matchTeam && matchAssignee && matchPriority && matchDeadline && matchNeedSupport;
+      return matchSearch && matchTeam && matchAssignee && matchPriority && matchDeadline && matchNeedSupport;
     });
-    return list;
+  })();
+
+  const filtered = (() => {
+    const statusKey = STATUS_MAP[activeFilter];
+    let base = statusKey ? scoped.filter((t) => t.status === statusKey) : scoped;
+    // "My Tasks" is a work queue, not an archive — hide Done by default so
+    // completed work doesn't clutter it. The Done chip (and All) still show
+    // everything for anyone who wants to see finished tasks.
+    if (activeFilter === 'My Tasks') {
+      base = base.filter((t) => t.status !== 'done');
+    }
+    // Running-timer tasks float to the top, stable otherwise.
+    return [...base].sort((a, b) => (b.timer_started_at ? 1 : 0) - (a.timer_started_at ? 1 : 0));
   })();
 
   const hasActiveFilters = !!(
@@ -246,19 +283,22 @@ export default function TasksScreen() {
   if (loadError) return <LoadError onRetry={() => run(() => Promise.all([load(), loadContext()]))} />;
 
   const now = new Date();
-  const inProgressCount = tasks.filter(t => t.status === 'in_progress').length;
-  const doneCount = tasks.filter(t => t.status === 'done').length;
-  const overdueCount = tasks.filter(t =>
+  const inProgressCount = scoped.filter(t => t.status === 'in_progress').length;
+  const doneCount = scoped.filter(t => t.status === 'done').length;
+  const overdueCount = scoped.filter(t =>
     t.deadline && new Date(t.deadline) < now && t.status !== 'done' && t.status !== 'cancelled'
   ).length;
-  const blockedCount = tasks.filter(t => t.status === 'blocked').length;
+  const notStartedCount = scoped.filter(t => t.status === 'open').length;
 
+  // Matches web's Tasks.jsx summary card set/order exactly: Total, Completed,
+  // In Progress, Not Started, Overdue — this used to show Blocked instead of
+  // Not Started, which isn't one of web's cards at all.
   const stats = [
-    { label: 'TOTAL', count: tasks.length, color: colors.textPrimary },
-    { label: 'IN PROGRESS', count: inProgressCount, color: colors.primary },
+    { label: 'TOTAL', count: scoped.length, color: colors.textPrimary },
     { label: 'COMPLETED', count: doneCount, color: colors.success },
+    { label: 'IN PROGRESS', count: inProgressCount, color: colors.primary },
+    { label: 'NOT STARTED', count: notStartedCount, color: colors.textSecondary },
     { label: 'OVERDUE', count: overdueCount, color: colors.danger },
-    { label: 'BLOCKED', count: blockedCount, color: colors.warning },
   ];
 
   const assigneeName = (m: any) =>
@@ -328,39 +368,42 @@ export default function TasksScreen() {
             contentContainerStyle={s.filtersContent}
           >
             {STATUS_FILTERS.map((f) => (
-              <TouchableOpacity
-                key={f}
-                style={[s.chip, activeFilter === f && s.chipActive]}
-                onPress={() => handleFilterPress(f)}
-              >
-                {f === 'My Team' && (
-                  <Ionicons
-                    name="people-outline"
-                    size={12}
-                    color={activeFilter === f ? '#fff' : colors.gray600}
-                    style={{ marginRight: 4 }}
-                  />
-                )}
-                <Text style={[s.chipText, activeFilter === f && s.chipTextActive]}>{f}</Text>
-              </TouchableOpacity>
-            ))}
+              <React.Fragment key={f}>
+                <TouchableOpacity
+                  style={[s.chip, activeFilter === f && s.chipActive]}
+                  onPress={() => handleFilterPress(f)}
+                >
+                  {f === 'My Team' && (
+                    <Ionicons
+                      name="people-outline"
+                      size={12}
+                      color={activeFilter === f ? '#fff' : colors.gray600}
+                      style={{ marginRight: 4 }}
+                    />
+                  )}
+                  <Text style={[s.chipText, activeFilter === f && s.chipTextActive]}>{f}</Text>
+                </TouchableOpacity>
 
-            {assigneeOptions.length > 0 && (
-              <TouchableOpacity
-                style={[s.chip, assigneeFilters.length > 0 && s.chipActive]}
-                onPress={() => setShowAssigneeModal(true)}
-              >
-                <Ionicons
-                  name="person-outline"
-                  size={12}
-                  color={assigneeFilters.length > 0 ? '#fff' : colors.gray600}
-                  style={{ marginRight: 4 }}
-                />
-                <Text style={[s.chipText, assigneeFilters.length > 0 && s.chipTextActive]}>
-                  Assignee{assigneeFilters.length > 0 ? ` (${assigneeFilters.length})` : ''}
-                </Text>
-              </TouchableOpacity>
-            )}
+                {/* Assignee sits right next to My Team — it's the filter managers/admins
+                    reach for immediately after narrowing to their team. */}
+                {f === 'My Team' && assigneeOptions.length > 0 && (
+                  <TouchableOpacity
+                    style={[s.chip, assigneeFilters.length > 0 && s.chipActive]}
+                    onPress={() => setShowAssigneeModal(true)}
+                  >
+                    <Ionicons
+                      name="person-outline"
+                      size={12}
+                      color={assigneeFilters.length > 0 ? '#fff' : colors.gray600}
+                      style={{ marginRight: 4 }}
+                    />
+                    <Text style={[s.chipText, assigneeFilters.length > 0 && s.chipTextActive]}>
+                      Assignee{assigneeFilters.length > 0 ? ` (${assigneeFilters.length})` : ''}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </React.Fragment>
+            ))}
 
             <TouchableOpacity
               style={[s.chip, needSupport && s.chipActive]}
@@ -421,7 +464,7 @@ export default function TasksScreen() {
         />
 
         {/* Filter bottom sheet */}
-        <Modal visible={showFilters} animationType="slide" transparent>
+        <Modal visible={showFilters} animationType="slide" transparent onRequestClose={() => setShowFilters(false)}>
           <View style={s.modalOverlay}>
             <TouchableOpacity style={s.modalBackdrop} onPress={() => setShowFilters(false)} />
             <View style={[s.modalSheet, { paddingBottom: insets.bottom + 16 }]}>
@@ -445,7 +488,7 @@ export default function TasksScreen() {
                 {projects.length > 0 && (
                   <>
                     <Text style={s.sectionLabel}>PROJECT</Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.sheetChipsRow}>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.sheetChipsScroll} contentContainerStyle={s.sheetChipsRow}>
                       <TouchableOpacity
                         style={[s.sheetChip, projectFilter === '' && s.sheetChipActive]}
                         onPress={() => applyFilter({ project: '' })}
@@ -467,7 +510,7 @@ export default function TasksScreen() {
 
                 {/* Priority */}
                 <Text style={s.sectionLabel}>PRIORITY</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.sheetChipsRow}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.sheetChipsScroll} contentContainerStyle={s.sheetChipsRow}>
                   <TouchableOpacity
                     style={[s.sheetChip, priorityFilter === '' && s.sheetChipActive]}
                     onPress={() => setPriorityFilter('')}
@@ -487,7 +530,7 @@ export default function TasksScreen() {
 
                 {/* Deadline */}
                 <Text style={s.sectionLabel}>DEADLINE</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.sheetChipsRow}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.sheetChipsScroll} contentContainerStyle={s.sheetChipsRow}>
                   <TouchableOpacity
                     style={[s.sheetChip, deadlinePreset === '' && s.sheetChipActive]}
                     onPress={() => setDeadlinePreset('')}
@@ -507,7 +550,7 @@ export default function TasksScreen() {
 
                 {/* Area */}
                 <Text style={s.sectionLabel}>AREA</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.sheetChipsRow}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.sheetChipsScroll} contentContainerStyle={s.sheetChipsRow}>
                   <TouchableOpacity
                     style={[s.sheetChip, areaFilter === '' && s.sheetChipActive]}
                     onPress={() => applyFilter({ area: '' })}
@@ -672,7 +715,8 @@ function makeStyles(c: AppColors) {
     },
     sectionLabelInline: { fontSize: 10, fontWeight: '700', color: c.textMuted, letterSpacing: 1 },
     sectionClear: { fontSize: 12, fontWeight: '700', color: c.danger },
-    sheetChipsRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 20, paddingBottom: 4 },
+    sheetChipsScroll: { flexGrow: 0, flexShrink: 0 },
+    sheetChipsRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 20, paddingBottom: 4 },
     sheetChipsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 20, paddingBottom: 4 },
     sheetChip: {
       paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,

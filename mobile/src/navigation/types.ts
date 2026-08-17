@@ -5,6 +5,7 @@ export type RootStackParamList = {
   WorkspaceSelect: undefined;
   Main: NavigatorScreenParams<MainTabParamList> | undefined;
   Notifications: undefined;
+  AccountSecurity: undefined;
 };
 
 export type AuthStackParamList = {
@@ -28,18 +29,19 @@ export type ChatStackParamList = {
   ChatThread: { conversationId: number; appId: number; title?: string; type?: 'direct' | 'group' | 'note' };
   NewConversation: { appId: number };
   GroupInfo: { conversationId: number; appId: number };
+  ForwardMessage: { appId: number; body: string; attachments: any[] };
 };
 
 export type TasksStackParamList = {
   TasksList: undefined;
   TaskDetail: { taskId: number; appId: number };
-  CreateTask: { appId: number };
+  CreateTask: { appId: number; taskId?: number };
 };
 
 export type FeedStackParamList = {
-  FeedList: undefined;
+  FeedList: { initialTab?: 'feed' | 'appreciations' | 'feedback' } | undefined;
   PostDetail: { postId: number; appId: number };
-  CreatePost: { appId: number };
+  CreatePost: { appId: number; postId?: number; initialContent?: string };
 };
 
 export type PerformanceStackParamList = {
@@ -61,6 +63,7 @@ export type AdminStackParamList = {
   InviteMember: undefined;
   ClientsList: undefined;
   CreateEditClient: { clientId?: number };
+  MyOrganisation: undefined;
 };
 
 export type MoreStackParamList = {
@@ -71,6 +74,8 @@ export type MoreStackParamList = {
   AgreementsList: undefined;
   AgreementDetail: { agreementId: number; appId: number };
   CreateEditAgreement: { appId: number; agreementId?: number };
+  ServicesList: undefined;
+  CreateEditService: { serviceId?: number };
   Routines: undefined;
   BusinessReviewsList: undefined;
   BusinessReviewDetail: { reviewId: number; appId: number };
@@ -79,4 +84,6 @@ export type MoreStackParamList = {
   ReportsList: undefined;
   TaskReports: undefined;
   ReportView: { reportType: 'projects' | 'financial' | 'goals' | 'performance' | 'appraisals' | 'contracts' };
+  PoliciesList: undefined;
+  PolicyDetail: { policyId: number; appId: number };
 };

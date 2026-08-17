@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, Image } from 'react-native';
+import { View, Text, StyleSheet, Image, TouchableOpacity } from 'react-native';
 import { getInitials } from '../../utils/format';
 
 const PALETTE = [
@@ -16,29 +16,27 @@ interface Props {
   name: string;
   size?: number;
   photoUrl?: string | null;
+  onPress?: () => void;
 }
 
-export default function Avatar({ name, size = 36, photoUrl }: Props) {
+export default function Avatar({ name, size = 36, photoUrl, onPress }: Props) {
   const safeName = name || '?';
 
-  if (photoUrl) {
-    return (
-      <Image
-        source={{ uri: photoUrl }}
-        style={{ width: size, height: size, borderRadius: size / 2 }}
-      />
-    );
-  }
-
-  const bg = colorForName(safeName);
-  const initials = getInitials(safeName);
-  const fontSize = size * 0.38;
-
-  return (
-    <View style={[styles.circle, { width: size, height: size, borderRadius: size / 2, backgroundColor: bg }]}>
-      <Text style={[styles.text, { fontSize }]}>{initials}</Text>
+  const content = photoUrl ? (
+    <Image
+      source={{ uri: photoUrl }}
+      style={{ width: size, height: size, borderRadius: size / 2 }}
+    />
+  ) : (
+    <View style={[styles.circle, { width: size, height: size, borderRadius: size / 2, backgroundColor: colorForName(safeName) }]}>
+      <Text style={[styles.text, { fontSize: size * 0.38 }]}>{getInitials(safeName)}</Text>
     </View>
   );
+
+  if (onPress) {
+    return <TouchableOpacity onPress={onPress} activeOpacity={0.7}>{content}</TouchableOpacity>;
+  }
+  return content;
 }
 
 const styles = StyleSheet.create({

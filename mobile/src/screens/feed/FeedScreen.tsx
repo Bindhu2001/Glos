@@ -1,10 +1,10 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, FlatList, StyleSheet, TouchableOpacity, RefreshControl,
   Platform, Alert, TextInput, ScrollView, Modal, ActivityIndicator,
   KeyboardAvoidingView,
 } from 'react-native';
-import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { useNavigation, useFocusEffect, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,12 +16,15 @@ import PostCard from '../../components/feed/PostCard';
 import GiveAppreciationModal from '../../components/feed/GiveAppreciationModal';
 import Avatar from '../../components/common/Avatar';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
+import LoadError from '../../components/common/LoadError';
 import EmptyState from '../../components/common/EmptyState';
 import { FeedStackParamList } from '../../navigation/types';
 import { formatRelative } from '../../utils/format';
+import { renderMentionText } from '../../utils/mentions';
 import { showAlert } from '../../components/common/AlertModal';
 
 type Nav = NativeStackNavigationProp<FeedStackParamList, 'FeedList'>;
+type Route = RouteProp<FeedStackParamList, 'FeedList'>;
 type Tab = 'feed' | 'appreciations' | 'feedback';
 
 const BADGE_META: Record<string, { emoji: string; label: string }> = {
@@ -40,15 +43,24 @@ export default function FeedScreen() {
   const { colors } = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
   const navigation = useNavigation<Nav>();
+  const route = useRoute<Route>();
   const insets = useSafeAreaInsets();
 
   const isAdmin = workspace?.role === 'super_admin' || workspace?.role === 'admin';
 
-  const [activeTab, setActiveTab] = useState<Tab>('feed');
+  const [activeTab, setActiveTab] = useState<Tab>(route.params?.initialTab ?? 'feed');
+
+  // Deep-link from notifications (e.g. tapping a "feedback received" notification
+  // while the Feed tab is already mounted in the background) — the screen isn't
+  // remounted on re-navigation, so the initial useState value alone won't catch it.
+  useEffect(() => {
+    if (route.params?.initialTab) setActiveTab(route.params.initialTab);
+  }, [route.params?.initialTab]);
 
   // Feed tab
   const [posts, setPosts] = useState<any[]>([]);
   const [feedLoading, setFeedLoading] = useState(true);
+  const [feedError, setFeedError] = useState(false);
   const [feedRefreshing, setFeedRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [showAppreciation, setShowAppreciation] = useState(false);
@@ -58,12 +70,14 @@ export default function FeedScreen() {
   const [receivedAppreciations, setReceivedAppreciations] = useState<any[]>([]);
   const [givenAppreciations, setGivenAppreciations] = useState<any[]>([]);
   const [apprLoading, setApprLoading] = useState(false);
+  const [apprError, setApprError] = useState(false);
   const [apprView, setApprView] = useState<'received' | 'given'>('received');
 
   // Feedback tab
   const [receivedFeedback, setReceivedFeedback] = useState<any[]>([]);
   const [givenFeedback, setGivenFeedback] = useState<any[]>([]);
   const [feedbackLoading, setFeedbackLoading] = useState(false);
+  const [feedbackError, setFeedbackError] = useState(false);
   const [feedbackView, setFeedbackView] = useState<'received' | 'given'>('received');
 
   // Give Feedback modal
@@ -71,7 +85,7 @@ export default function FeedScreen() {
   const [fbMembers, setFbMembers] = useState<any[]>([]);
   const [fbMembersLoaded, setFbMembersLoaded] = useState(false);
   const [fbSearch, setFbSearch] = useState('');
-  const [fbSelected, setFbSelected] = useState<any>(null);
+  const [fbSelected, setFbSelected] = useState<any[]>([]);
   const [fbFeedbackText, setFbFeedbackText] = useState('');
   const [fbIsAnonymous, setFbIsAnonymous] = useState(false);
   const [fbSubmitting, setFbSubmitting] = useState(false);
@@ -80,6 +94,13 @@ export default function FeedScreen() {
   const [showCyclePicker, setShowCyclePicker] = useState(false);
   const [fbCyclesLoaded, setFbCyclesLoaded] = useState(false);
 
+  // Resolves audience_type='users'/'departments'/'roles' post badges to display
+  // names — loaded once up front (unlike fbMembers, which is lazy-loaded only
+  // when the Give Feedback modal opens) since post cards need it immediately.
+  const [audienceMembers, setAudienceMembers] = useState<{ id: number; name: string }[]>([]);
+  const [audienceDepartments, setAudienceDepartments] = useState<{ id: number; name: string }[]>([]);
+  const [audienceRoles, setAudienceRoles] = useState<{ id: number; name: string }[]>([]);
+
   // ── Feed ──────────────────────────────────────────────────
   const loadFeed = useCallback(async () => {
     if (!workspace) return;
@@ -87,7 +108,10 @@ export default function FeedScreen() {
       const r = await api.feed.list(workspace.id);
       const d = r.data;
       setPosts(Array.isArray(d) ? d : (d?.items ?? d?.posts ?? []));
-    } catch {}
+      setFeedError(false);
+    } catch {
+      setFeedError(true);
+    }
   }, [workspace, api]);
 
   // ── Appreciations ─────────────────────────────────────────
@@ -104,7 +128,10 @@ export default function FeedScreen() {
         setReceivedAppreciations(Array.isArray(r.data) ? r.data : (r.data?.items ?? []));
         setGivenAppreciations([]);
       }
-    } catch {} finally { setApprLoading(false); }
+      setApprError(false);
+    } catch {
+      setApprError(true);
+    } finally { setApprLoading(false); }
   }, [workspace, api, meId]);
 
   // ── Feedback ──────────────────────────────────────────────
@@ -118,7 +145,10 @@ export default function FeedScreen() {
       ]);
       setReceivedFeedback(Array.isArray(recRes.data) ? recRes.data : (recRes.data?.items ?? []));
       setGivenFeedback(Array.isArray(givRes.data) ? givRes.data : (givRes.data?.items ?? []));
-    } catch {} finally { setFeedbackLoading(false); }
+      setFeedbackError(false);
+    } catch {
+      setFeedbackError(true);
+    } finally { setFeedbackLoading(false); }
   }, [workspace, api]);
 
   useEffect(() => {
@@ -126,10 +156,37 @@ export default function FeedScreen() {
   }, [api]);
 
   useEffect(() => {
-    loadFeed().finally(() => setFeedLoading(false));
+    if (!workspace) return;
+    api.workspace.getMembers(workspace.id).then((r: any) => {
+      const items: any[] = r.data?.items ?? r.data ?? [];
+      setAudienceMembers(items.map((m: any) => ({
+        id: m.user_id,
+        name: `${m.first_name ?? ''} ${m.last_name ?? ''}`.trim() || m.email,
+      })));
+    }).catch(() => {});
+    api.departments.list(workspace.id).then((r: any) => {
+      const items: any[] = Array.isArray(r.data) ? r.data : (r.data?.items ?? []);
+      setAudienceDepartments(items.map((d: any) => ({ id: d.id, name: d.name })));
+    }).catch(() => {});
+    api.roles.list(workspace.id).then((r: any) => {
+      const items: any[] = Array.isArray(r.data) ? r.data : (r.data?.items ?? []);
+      setAudienceRoles(items.map((role: any) => ({ id: role.id, name: role.name ?? role.title })));
+    }).catch(() => {});
+  }, [workspace, api]);
+
+  // useFocusEffect below also fires on initial mount (a screen becomes focused
+  // as soon as it's pushed), which used to double-fetch api.feed.list() on
+  // every first visit to the Feed tab. hasFeedLoadedRef makes the focus effect
+  // a no-op until the initial load finishes, so it only refreshes on later
+  // refocuses, same pattern as TasksScreen/TaskDetailScreen.
+  const hasFeedLoadedRef = useRef(false);
+  useEffect(() => {
+    loadFeed().finally(() => { setFeedLoading(false); hasFeedLoadedRef.current = true; });
   }, [loadFeed]);
 
-  useFocusEffect(useCallback(() => { loadFeed(); }, [loadFeed]));
+  useFocusEffect(useCallback(() => {
+    if (hasFeedLoadedRef.current) loadFeed();
+  }, [loadFeed]));
 
   useEffect(() => {
     if (activeTab === 'appreciations') loadAppreciations();
@@ -196,6 +253,13 @@ export default function FeedScreen() {
     }
   };
 
+  // Mirrors the backend's own rule (author-only, within 15 minutes of
+  // posting) so the edit option simply isn't offered once it'd be rejected
+  // server-side, instead of surfacing a confusing 403 after the fact.
+  const EDIT_WINDOW_MS = 15 * 60 * 1000;
+  const canEditPost = (post: { author_user_id?: number; created_at: string }) =>
+    meId !== null && post.author_user_id === meId && (Date.now() - new Date(post.created_at).getTime()) <= EDIT_WINDOW_MS;
+
   const handlePin = async (postId: number) => {
     if (!workspace) return;
     try {
@@ -227,6 +291,7 @@ export default function FeedScreen() {
           setFbMembers(items.map((m: any) => ({
             id: m.user_id,
             name: `${m.first_name ?? ''} ${m.last_name ?? ''}`.trim() || m.email,
+            photoUrl: m.photo_url,
           })));
           setFbMembersLoaded(true);
         }).catch(() => {})
@@ -250,18 +315,18 @@ export default function FeedScreen() {
   };
 
   const submitFeedback = async () => {
-    if (!workspace || !fbSelected) return;
+    if (!workspace || fbSelected.length === 0) return;
     if (!fbFeedbackText.trim()) { showAlert('Please write your feedback'); return; }
     setFbSubmitting(true);
     try {
       await api.feed.giveFeedback(workspace.id, {
-        to_user_id: fbSelected.id,
+        to_user_ids: fbSelected.map((m) => m.id),
         feedback_text: fbFeedbackText.trim(),
         is_anonymous: fbIsAnonymous,
         cycle_id: fbCycleId ?? null,
       });
       setShowGiveFeedback(false);
-      setFbSelected(null);
+      setFbSelected([]);
       setFbFeedbackText('');
       setFbIsAnonymous(false);
       setFbSearch('');
@@ -272,7 +337,19 @@ export default function FeedScreen() {
     } finally { setFbSubmitting(false); }
   };
 
+  // Shared by the X button and the Modal's onRequestClose (Android hardware/
+  // gesture back) — without wiring the latter, back does nothing while this
+  // modal is open since RN's Modal swallows the back event itself.
+  const closeGiveFeedback = () => {
+    setShowGiveFeedback(false);
+    setFbSelected([]);
+    setFbFeedbackText('');
+    setFbSearch('');
+    setFbCycleId(null);
+  };
+
   if (feedLoading) return <LoadingSpinner />;
+  if (feedError && activeTab === 'feed') return <LoadError onRetry={() => { setFeedLoading(true); loadFeed().finally(() => setFeedLoading(false)); }} />;
 
   const filteredPosts = search
     ? posts.filter((p) => {
@@ -284,9 +361,27 @@ export default function FeedScreen() {
       })
     : posts;
 
+  const fbSelectedIds = new Set(fbSelected.map((m) => m.id));
   const fbFilteredMembers = fbSearch.trim()
     ? fbMembers.filter(m => m.name.toLowerCase().includes(fbSearch.toLowerCase()))
-    : [];
+    : fbMembers;
+  const fbAllFilteredSelected = fbFilteredMembers.length > 0 && fbFilteredMembers.every(m => fbSelectedIds.has(m.id));
+
+  const toggleFbOne = (m: any) => {
+    setFbSelected((prev) => (prev.some((x) => x.id === m.id) ? prev.filter((x) => x.id !== m.id) : [...prev, m]));
+  };
+
+  const toggleFbSelectAll = () => {
+    if (fbAllFilteredSelected) {
+      const filteredIds = new Set(fbFilteredMembers.map(m => m.id));
+      setFbSelected((prev) => prev.filter((m) => !filteredIds.has(m.id)));
+    } else {
+      setFbSelected((prev) => {
+        const existingIds = new Set(prev.map((m) => m.id));
+        return [...prev, ...fbFilteredMembers.filter((m) => !existingIds.has(m.id))];
+      });
+    }
+  };
 
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
@@ -363,7 +458,11 @@ export default function FeedScreen() {
                 onPress={() => navigation.navigate('PostDetail', { postId: item.id, appId: workspace!.id })}
                 onReact={(emoji) => handleReact(item.id, emoji)}
                 onDelete={(isAdmin || item.author_user_id === meId) ? () => handleDelete(item.id) : undefined}
+                onEdit={canEditPost(item) ? () => navigation.navigate('CreatePost', { appId: workspace!.id, postId: item.id, initialContent: item.content }) : undefined}
                 onPin={isAdmin ? () => handlePin(item.id) : undefined}
+                members={audienceMembers}
+                departments={audienceDepartments}
+                roles={audienceRoles}
               />
             )}
           />
@@ -405,7 +504,7 @@ export default function FeedScreen() {
             </TouchableOpacity>
           </View>
           <FlatList
-            data={apprLoading ? [] : (apprView === 'received' ? receivedAppreciations : givenAppreciations)}
+            data={apprView === 'received' ? receivedAppreciations : givenAppreciations}
             keyExtractor={(item) => String(item.id)}
             contentContainerStyle={s.list}
             showsVerticalScrollIndicator={false}
@@ -413,6 +512,8 @@ export default function FeedScreen() {
             ListEmptyComponent={
               apprLoading
                 ? <ActivityIndicator style={{ marginTop: 40 }} color={colors.primary} />
+                : apprError
+                ? <LoadError onRetry={loadAppreciations} />
                 : <EmptyState icon="heart-outline" title={apprView === 'received' ? 'No appreciations received yet' : 'No appreciations given yet'} subtitle="Be the first to appreciate someone!" />
             }
             renderItem={({ item }) => {
@@ -427,7 +528,7 @@ export default function FeedScreen() {
                       <Text style={s.apprFrom} numberOfLines={2}>
                         <Text style={s.apprName}>{uname(item.from_user_name, item.from_user, 'Someone')}</Text>
                         {' → '}
-                        <Text style={s.apprName}>{uname(item.to_user_name, item.to_user, 'Someone')}</Text>
+                        <Text style={s.apprName}>{namesWithMore(item.to_users, item.to_user_name, item.to_user)}</Text>
                       </Text>
                       {meta && (
                         <View style={s.apprBadgeChip}>
@@ -435,7 +536,7 @@ export default function FeedScreen() {
                         </View>
                       )}
                     </View>
-                    {!!item.message && <Text style={s.apprMsg}>"{item.message}"</Text>}
+                    {!!item.message && <Text style={s.apprMsg}>"{renderMentionText(item.message, s.mention)}"</Text>}
                     <Text style={s.apprTime}>{formatRelative(item.created_at)}</Text>
                   </View>
                 </View>
@@ -479,8 +580,10 @@ export default function FeedScreen() {
             showsVerticalScrollIndicator={false}
             refreshControl={<RefreshControl refreshing={feedbackLoading} onRefresh={loadFeedback} />}
           >
-            {feedbackLoading ? (
+            {feedbackLoading && (feedbackView === 'received' ? receivedFeedback : givenFeedback).length === 0 ? (
               <ActivityIndicator style={{ marginTop: 40 }} color={colors.primary} />
+            ) : feedbackError && (feedbackView === 'received' ? receivedFeedback : givenFeedback).length === 0 ? (
+              <LoadError onRetry={loadFeedback} />
             ) : (feedbackView === 'received' ? receivedFeedback : givenFeedback).length === 0 ? (
               <EmptyState
                 icon="chatbubble-outline"
@@ -494,14 +597,17 @@ export default function FeedScreen() {
                     <Avatar
                       name={feedbackView === 'received'
                         ? (item.is_anonymous ? 'A' : uname(item.from_user_name, item.from_user, '?'))
-                        : uname(item.to_user_name, item.to_user, '?')}
+                        : namesWithMore(item.to_users, item.to_user_name, item.to_user)}
+                      photoUrl={feedbackView === 'received'
+                        ? (item.is_anonymous ? null : item.from_user?.photo_url)
+                        : (item.to_users?.[0]?.photo_url ?? item.to_user?.photo_url)}
                       size={34}
                     />
                     <View style={{ flex: 1 }}>
                       <Text style={s.fbPerson}>
                         {feedbackView === 'received'
                           ? `From ${item.is_anonymous ? 'Anonymous' : uname(item.from_user_name, item.from_user)}`
-                          : `To ${uname(item.to_user_name, item.to_user)}`
+                          : `To ${namesWithMore(item.to_users, item.to_user_name, item.to_user)}`
                         }
                       </Text>
                       <Text style={s.fbTime}>{formatRelative(item.created_at)}</Text>
@@ -512,7 +618,7 @@ export default function FeedScreen() {
                       </View>
                     )}
                   </View>
-                  <Text style={s.fbMsg}>{item.feedback_text}</Text>
+                  <Text style={s.fbMsg}>{renderMentionText(item.feedback_text, s.mention)}</Text>
                 </View>
               ))
             )}
@@ -521,65 +627,71 @@ export default function FeedScreen() {
       )}
 
       {/* ── Give Feedback Modal ───────────────────────────── */}
-      <Modal visible={showGiveFeedback} transparent animationType="slide">
+      <Modal visible={showGiveFeedback} transparent animationType="slide" onRequestClose={closeGiveFeedback}>
         <KeyboardAvoidingView
           style={s.modalOverlay}
-          behavior="padding"
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
-          <View style={s.modalSheet}>
+          <View style={[s.modalSheet, { paddingBottom: insets.bottom + 20 }]}>
             <View style={s.modalHeader}>
               <Text style={s.modalTitle}>💬 Give Feedback</Text>
-              <TouchableOpacity onPress={() => {
-                setShowGiveFeedback(false);
-                setFbSelected(null);
-                setFbFeedbackText('');
-                setFbSearch('');
-                setFbCycleId(null);
-              }}>
+              <TouchableOpacity onPress={closeGiveFeedback}>
                 <Ionicons name="close" size={22} color={colors.textPrimary} />
               </TouchableOpacity>
             </View>
-            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+            {/* flexShrink: 1 — without it the ScrollView never gets squeezed into
+                a bounded viewport by modalSheet's maxHeight (RN's flexShrink
+                default is 0), so a long member list overflows uncapped instead
+                of becoming scrollable. See GiveAppreciationModal for the same fix. */}
+            <ScrollView style={{ flexShrink: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
               <Text style={s.formLabel}>To</Text>
-              {fbSelected ? (
-                <TouchableOpacity style={s.selectedRow} onPress={() => setFbSelected(null)}>
-                  <Avatar name={fbSelected.name} size={32} />
-                  <Text style={s.selectedName}>{fbSelected.name}</Text>
-                  <Ionicons name="close-circle" size={18} color={colors.gray400} />
-                </TouchableOpacity>
+              <View style={s.fbSearchBar}>
+                <Ionicons name="search-outline" size={15} color={colors.gray400} />
+                <TextInput
+                  style={s.fbSearchInput}
+                  placeholder="Search team members..."
+                  placeholderTextColor={colors.gray400}
+                  value={fbSearch}
+                  onChangeText={setFbSearch}
+                />
+              </View>
+              {!fbMembersLoaded ? (
+                <ActivityIndicator style={{ marginVertical: 16 }} color={colors.primary} />
               ) : (
-                <>
-                  <View style={s.fbSearchBar}>
-                    <Ionicons name="search-outline" size={15} color={colors.gray400} />
-                    <TextInput
-                      style={s.fbSearchInput}
-                      placeholder="Search team members..."
-                      placeholderTextColor={colors.gray400}
-                      value={fbSearch}
-                      onChangeText={setFbSearch}
-                    />
-                  </View>
-                  {!fbMembersLoaded ? (
-                    <ActivityIndicator style={{ marginVertical: 16 }} color={colors.primary} />
-                  ) : fbSearch.trim() === '' ? (
-                    <Text style={s.fbHint}>Type a name to search</Text>
-                  ) : fbFilteredMembers.length === 0 ? (
-                    <Text style={s.fbHint}>No members found</Text>
-                  ) : (
-                    <View style={s.fbMemberList}>
-                      {fbFilteredMembers.slice(0, 20).map((m) => (
-                        <TouchableOpacity
-                          key={m.id}
-                          style={s.fbMemberRow}
-                          onPress={() => { setFbSelected(m); setFbSearch(''); }}
-                        >
-                          <Avatar name={m.name} size={32} />
-                          <Text style={s.fbMemberName}>{m.name}</Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
+                <View style={s.fbMemberList}>
+                  {fbFilteredMembers.length > 0 && (
+                    <TouchableOpacity style={s.fbSelectAllRow} onPress={toggleFbSelectAll}>
+                      <View style={[s.checkbox, fbAllFilteredSelected && s.checkboxActive]}>
+                        {fbAllFilteredSelected && <Ionicons name="checkmark" size={13} color="#fff" />}
+                      </View>
+                      <Text style={s.fbSelectAllText}>{fbAllFilteredSelected ? 'Deselect All' : 'Select All'}</Text>
+                      <Text style={s.fbSelectedCount}>{fbSelected.length}/{fbMembers.length}</Text>
+                    </TouchableOpacity>
                   )}
-                </>
+                  {/* Select All stays fixed above; only the member rows
+                      scroll, bounded to ~3 rows tall. */}
+                  <ScrollView style={s.fbMemberScroll} nestedScrollEnabled showsVerticalScrollIndicator={false}>
+                    {fbFilteredMembers.slice(0, 50).map((m) => {
+                      const checked = fbSelectedIds.has(m.id);
+                      return (
+                      <TouchableOpacity
+                        key={m.id}
+                        style={s.fbMemberRow}
+                        onPress={() => toggleFbOne(m)}
+                      >
+                        <Avatar name={m.name} photoUrl={m.photoUrl} size={32} />
+                        <Text style={[s.fbMemberName, { flex: 1 }]}>{m.name}</Text>
+                        <View style={[s.checkbox, checked && s.checkboxActive]}>
+                          {checked && <Ionicons name="checkmark" size={13} color="#fff" />}
+                        </View>
+                      </TouchableOpacity>
+                      );
+                    })}
+                    {fbFilteredMembers.length === 0 && (
+                      <Text style={s.fbHint}>No members found</Text>
+                    )}
+                  </ScrollView>
+                </View>
               )}
 
               <Text style={s.formLabel}>Review Period</Text>
@@ -620,9 +732,9 @@ export default function FeedScreen() {
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={[s.submitBtn, (fbSubmitting || !fbSelected) && s.submitBtnDisabled]}
+                style={[s.submitBtn, (fbSubmitting || fbSelected.length === 0) && s.submitBtnDisabled]}
                 onPress={submitFeedback}
-                disabled={fbSubmitting || !fbSelected}
+                disabled={fbSubmitting || fbSelected.length === 0}
               >
                 {fbSubmitting
                   ? <ActivityIndicator color="#fff" size="small" />
@@ -675,6 +787,16 @@ function uname(flat: string | null | undefined, obj: any, fallback = 'Unknown'):
   if (flat) return flat;
   if (obj?.first_name || obj?.last_name) return [obj.first_name, obj.last_name].filter(Boolean).join(' ');
   return obj?.email || fallback;
+}
+
+// Mirrors web's NamesWithMore: "Alice, Bob & +3 more" for multi-recipient
+// appreciations/feedback, falling back to the single to_user for older records.
+function namesWithMore(toUsers: any[] | undefined, flatSingle: string | null | undefined, singleObj: any): string {
+  const names = (toUsers && toUsers.length ? toUsers : [singleObj]).filter(Boolean).map((u) => uname(null, u, 'Someone'));
+  if (names.length === 0) return flatSingle ?? 'Someone';
+  if (names.length === 1) return names[0];
+  if (names.length === 2) return `${names[0]} & ${names[1]}`;
+  return `${names[0]}, ${names[1]} & +${names.length - 2} more`;
 }
 
 function makeStyles(c: AppColors) {
@@ -746,6 +868,7 @@ function makeStyles(c: AppColors) {
     apprBadgeChipText: { fontSize: 11, fontWeight: '600', color: c.primary },
     apprTime: { fontSize: 11, color: c.gray400, marginTop: 4 },
     apprMsg: { fontSize: 14, color: c.textPrimary, lineHeight: 20, fontStyle: 'italic', marginTop: 4 },
+    mention: { fontWeight: '700', color: c.primary },
 
     // Feedback list
     toggleRow: {
@@ -786,11 +909,6 @@ function makeStyles(c: AppColors) {
       fontSize: 12, fontWeight: '700', color: c.textSecondary,
       textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 16, marginBottom: 8,
     },
-    selectedRow: {
-      flexDirection: 'row', alignItems: 'center', gap: 10,
-      backgroundColor: c.primaryLight, borderRadius: 12, padding: 12,
-    },
-    selectedName: { flex: 1, fontSize: 14, fontWeight: '600', color: c.textPrimary },
     fbSearchBar: {
       flexDirection: 'row', alignItems: 'center', gap: 8,
       backgroundColor: c.gray100, borderRadius: 10,
@@ -800,6 +918,13 @@ function makeStyles(c: AppColors) {
     fbSearchInput: { flex: 1, fontSize: 14, color: c.textPrimary },
     fbHint: { fontSize: 14, color: c.gray400, textAlign: 'center', padding: 16 },
     fbMemberList: { marginTop: 8, borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: c.border },
+    fbSelectAllRow: {
+      flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12,
+      backgroundColor: c.gray50, borderBottomWidth: 1, borderBottomColor: c.border,
+    },
+    fbSelectAllText: { fontSize: 13, fontWeight: '700', color: c.textPrimary },
+    fbSelectedCount: { marginLeft: 'auto', fontSize: 12, color: c.textMuted },
+    fbMemberScroll: { maxHeight: 175 },
     fbMemberRow: {
       flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12,
       backgroundColor: c.surface, borderBottomWidth: 1, borderBottomColor: c.border,

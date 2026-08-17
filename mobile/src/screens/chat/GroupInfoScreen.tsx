@@ -15,6 +15,7 @@ import Avatar from '../../components/common/Avatar';
 import Input from '../../components/common/Input';
 import Button from '../../components/common/Button';
 import MemberPickerModal, { PickOption } from '../../components/common/MemberPickerModal';
+import UserProfileModal, { ProfileUser } from '../../components/common/UserProfileModal';
 
 type Nav = NativeStackNavigationProp<ChatStackParamList, 'GroupInfo'>;
 type Rt = RouteProp<ChatStackParamList, 'GroupInfo'>;
@@ -39,9 +40,10 @@ export default function GroupInfoScreen() {
   const [name, setName] = useState('');
   const [savingName, setSavingName] = useState(false);
   const [addModal, setAddModal] = useState(false);
+  const [profileUser, setProfileUser] = useState<ProfileUser | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (isRefresh = false) => {
+    if (!isRefresh) setLoading(true);
     try {
       const [meRes, convRes, membersRes] = await Promise.all([
         api.me.getProfile(),
@@ -77,7 +79,7 @@ export default function GroupInfoScreen() {
     setSavingName(true);
     try {
       await api.chat.editGroup(params.appId, params.conversationId, { name: name.trim() });
-      await load();
+      await load(true);
     } catch (err) {
       showAlert('Could not rename group', apiErrorMessage(err));
     } finally {
@@ -90,7 +92,7 @@ export default function GroupInfoScreen() {
     if (ids.length === 0) return;
     try {
       await api.chat.editGroup(params.appId, params.conversationId, { add_member_ids: ids });
-      await load();
+      await load(true);
     } catch (err) {
       showAlert('Could not add members', apiErrorMessage(err));
     }
@@ -106,7 +108,7 @@ export default function GroupInfoScreen() {
           text: 'Remove', style: 'destructive', onPress: async () => {
             try {
               await api.chat.editGroup(params.appId, params.conversationId, { remove_member_ids: [userId] });
-              await load();
+              await load(true);
             } catch (err) {
               showAlert('Could not remove member', apiErrorMessage(err));
             }
@@ -119,7 +121,7 @@ export default function GroupInfoScreen() {
   const toggleAdmin = async (userId: number) => {
     try {
       await api.chat.toggleGroupAdmin(params.appId, params.conversationId, userId);
-      await load();
+      await load(true);
     } catch (err) {
       showAlert('Could not update admin status', apiErrorMessage(err));
     }
@@ -188,7 +190,12 @@ export default function GroupInfoScreen() {
         {members.map((m: any) => {
           const isMe = String(m.id) === String(myUserId);
           return (
-            <View key={m.id} style={s.memberRow}>
+            <TouchableOpacity
+              key={m.id}
+              style={s.memberRow}
+              activeOpacity={0.7}
+              onPress={() => setProfileUser({ id: m.id, name: m.name, photoUrl: m.photo_url, email: m.email })}
+            >
               <Avatar name={m.name} photoUrl={m.photo_url} size={36} />
               <View style={{ flex: 1 }}>
                 <Text style={s.memberName}>{m.name}{isMe ? ' (You)' : ''}</Text>
@@ -204,7 +211,7 @@ export default function GroupInfoScreen() {
                   </TouchableOpacity>
                 </View>
               )}
-            </View>
+            </TouchableOpacity>
           );
         })}
 
@@ -223,6 +230,7 @@ export default function GroupInfoScreen() {
         onClose={() => setAddModal(false)}
         allowClear={false}
       />
+      <UserProfileModal user={profileUser} onClose={() => setProfileUser(null)} />
     </View>
   );
 }

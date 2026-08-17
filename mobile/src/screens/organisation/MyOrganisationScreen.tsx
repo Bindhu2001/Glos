@@ -10,9 +10,29 @@ import { AppColors } from '../../utils/colors';
 import { apiErrorMessage } from '../../utils/apiError';
 import LoadError from '../../components/common/LoadError';
 
-function parseCoreValues(raw?: string): string[] {
+interface CoreValue {
+  value: string;
+  description?: string;
+  accepted_behavior?: string;
+  unaccepted_behavior?: string;
+}
+
+function parseCoreValues(raw?: string): CoreValue[] {
   if (!raw) return [];
-  try { return JSON.parse(raw); } catch { return []; }
+  try {
+    const a = JSON.parse(raw);
+    if (!Array.isArray(a)) return [];
+    // Older orgs stored this as a plain string array — normalize to the
+    // {value, description, accepted_behavior, unaccepted_behavior} shape
+    // the web app (MyOrganisation.jsx) now writes, so rendering never has
+    // to branch on which shape it got.
+    return a.map((v) => (typeof v === 'string' ? { value: v } : v));
+  } catch { return []; }
+}
+
+const VALUE_COLORS = ['#2563eb', '#16a34a', '#9333ea', '#ea580c', '#dc2626', '#0d9488'];
+function splitBehaviors(raw?: string): string[] {
+  return (raw ?? '').split(',').map((t) => t.trim()).filter(Boolean);
 }
 
 export default function MyOrganisationScreen() {
@@ -45,9 +65,10 @@ export default function MyOrganisationScreen() {
 
   if (loading) return <View style={{ flex: 1, backgroundColor: colors.background }}><ActivityIndicator style={{ flex: 1 }} color={colors.primary} /></View>;
   if (error) return <LoadError message={error} onRetry={load} />;
-  if (!org) return null;
+  if (!org) return <LoadError message="Organisation details are unavailable." onRetry={load} />;
 
   const coreValues = parseCoreValues(org.core_values);
+  const logoSrc = org.logo_data || org.logo_url || null;
 
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
@@ -61,13 +82,13 @@ export default function MyOrganisationScreen() {
 
       <ScrollView contentContainerStyle={s.body} showsVerticalScrollIndicator={false}>
         <View style={s.identityRow}>
-          {org.logo_url ? (
-            <Image source={{ uri: org.logo_url }} style={s.logo} />
-          ) : (
-            <View style={s.logoPlaceholder}>
+          <View style={s.logoWrap}>
+            {logoSrc ? (
+              <Image source={{ uri: logoSrc }} style={s.logo} resizeMode="contain" />
+            ) : (
               <Text style={s.logoInitials}>{(org.name ?? 'O').split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase()}</Text>
-            </View>
-          )}
+            )}
+          </View>
           <View style={{ flex: 1 }}>
             <Text style={s.orgName}>{org.name}</Text>
             {org.industry ? <Text style={s.orgIndustry}>{org.industry}</Text> : null}
@@ -110,10 +131,31 @@ export default function MyOrganisationScreen() {
         {coreValues.length > 0 && (
           <>
             <Text style={s.sectionHead}>CORE VALUES</Text>
-            <View style={s.valuesWrap}>
-              {coreValues.map((v, i) => (
-                <View key={i} style={s.valueChip}><Text style={s.valueChipText}>{v}</Text></View>
-              ))}
+            <View style={{ gap: 10 }}>
+              {coreValues.map((cv, i) => {
+                const color = VALUE_COLORS[i % VALUE_COLORS.length];
+                const accepted = splitBehaviors(cv.accepted_behavior);
+                const unaccepted = splitBehaviors(cv.unaccepted_behavior);
+                return (
+                  <View key={i} style={[s.valueCard, { borderLeftColor: color }]}>
+                    <View style={s.valueCardHead}>
+                      <View style={[s.valueDot, { backgroundColor: color }]} />
+                      <Text style={s.valueName}>{cv.value}</Text>
+                    </View>
+                    {!!cv.description && <Text style={s.valueDesc}>{cv.description}</Text>}
+                    {(accepted.length > 0 || unaccepted.length > 0) && (
+                      <View style={s.valueTagsWrap}>
+                        {accepted.map((t, j) => (
+                          <View key={`a-${j}`} style={s.tagChip}><Text style={s.tagChipText}>{t}</Text></View>
+                        ))}
+                        {unaccepted.map((t, j) => (
+                          <View key={`u-${j}`} style={[s.tagChip, s.tagChipDanger]}><Text style={[s.tagChipText, s.tagChipTextDanger]}>{t}</Text></View>
+                        ))}
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
             </View>
           </>
         )}
@@ -135,9 +177,16 @@ function makeStyles(c: AppColors) {
     title: { fontSize: 20, fontFamily: SERIF, color: c.textPrimary, fontWeight: '700' },
     body: { padding: 16, paddingBottom: 32 },
     identityRow: { flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 16 },
-    logo: { width: 56, height: 56, borderRadius: 14 },
-    logoPlaceholder: { width: 56, height: 56, borderRadius: 14, backgroundColor: c.primaryLight, alignItems: 'center', justifyContent: 'center' },
-    logoInitials: { fontSize: 20, fontWeight: '900', color: c.primary },
+    // Fixed-size box with a background/border (mirrors web's MyOrganisation.jsx logo
+    // container) so a non-square uploaded logo scales to fit inside via
+    // resizeMode="contain" instead of being cropped to fill the box.
+    logoWrap: {
+      width: 72, height: 72, borderRadius: 12, flexShrink: 0,
+      backgroundColor: c.gray50, borderWidth: 1, borderColor: c.border,
+      alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
+    },
+    logo: { width: '100%', height: '100%' },
+    logoInitials: { fontSize: 22, fontWeight: '900', color: c.primary },
     orgName: { fontSize: 20, fontWeight: '800', color: c.textPrimary },
     orgIndustry: { fontSize: 12, color: c.textSecondary, marginTop: 2 },
     metaCard: {
@@ -148,8 +197,18 @@ function makeStyles(c: AppColors) {
     metaText: { fontSize: 12, color: c.textSecondary, flex: 1 },
     sectionHead: { fontSize: 11, fontWeight: '700', color: c.textMuted, letterSpacing: 1, marginTop: 8, marginBottom: 8 },
     paragraph: { fontSize: 13, color: c.textSecondary, lineHeight: 19, marginBottom: 4 },
-    valuesWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-    valueChip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: c.primaryLight },
-    valueChipText: { fontSize: 12, fontWeight: '600', color: c.primary },
+    valueCard: {
+      backgroundColor: c.surface, borderRadius: 10, borderWidth: 1, borderColor: c.border,
+      borderLeftWidth: 4, padding: 12, gap: 6,
+    },
+    valueCardHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    valueDot: { width: 8, height: 8, borderRadius: 4 },
+    valueName: { fontSize: 13, fontWeight: '700', color: c.textPrimary },
+    valueDesc: { fontSize: 12, color: c.textSecondary, lineHeight: 18 },
+    valueTagsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 2 },
+    tagChip: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, backgroundColor: c.successLight },
+    tagChipText: { fontSize: 11, fontWeight: '600', color: c.success },
+    tagChipDanger: { backgroundColor: c.dangerLight },
+    tagChipTextDanger: { color: c.danger },
   });
 }

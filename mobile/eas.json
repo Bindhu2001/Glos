@@ -9,7 +9,7 @@
       "distribution": "internal",
       "env": {
         "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY": "pk_live_Y2xlcmsucWEuZ2xvc29ubGluZS5jb20k",
-        "EXPO_PUBLIC_API_URL": "https://qa.glosonline.com/api"
+        "EXPO_PUBLIC_API_URL": "https://login.glosonline.com/api"
       }
     },
     "preview": {
@@ -17,9 +17,12 @@
       "android": {
         "buildType": "apk"
       },
+      "ios": {
+        "simulator": true
+      },
       "env": {
         "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY": "pk_live_Y2xlcmsucWEuZ2xvc29ubGluZS5jb20k",
-        "EXPO_PUBLIC_API_URL": "https://qa.glosonline.com/api"
+        "EXPO_PUBLIC_API_URL": "https://login.glosonline.com/api"
       }
     },
     "production-apk": {
@@ -29,7 +32,7 @@
       },
       "env": {
         "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY": "pk_live_Y2xlcmsucWEuZ2xvc29ubGluZS5jb20k",
-        "EXPO_PUBLIC_API_URL": "https://qa.glosonline.com/api"
+        "EXPO_PUBLIC_API_URL": "https://login.glosonline.com/api"
       }
     },
     "production": {
@@ -41,7 +44,7 @@
       },
       "env": {
         "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY": "pk_live_Y2xlcmsucWEuZ2xvc29ubGluZS5jb20k",
-        "EXPO_PUBLIC_API_URL": "https://qa.glosonline.com/api"
+        "EXPO_PUBLIC_API_URL": "https://login.glosonline.com/api"
       }
     }
   },

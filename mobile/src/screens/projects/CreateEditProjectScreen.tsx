@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, KeyboardAvoidingView, TextInput } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, KeyboardAvoidingView, TextInput, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
@@ -16,6 +16,7 @@ import Button from '../../components/common/Button';
 import DatePickerField from '../../components/common/DatePickerField';
 import Avatar from '../../components/common/Avatar';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
+import LoadError from '../../components/common/LoadError';
 import MemberPickerModal, { PickOption } from '../../components/common/MemberPickerModal';
 
 type Nav = NativeStackNavigationProp<MoreStackParamList, 'CreateEditProject'>;
@@ -38,6 +39,7 @@ export default function CreateEditProjectScreen() {
   const insets = useSafeAreaInsets();
 
   const [dataLoading, setDataLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const [name, setName] = useState('');
@@ -61,6 +63,7 @@ export default function CreateEditProjectScreen() {
 
   const load = useCallback(async () => {
     setDataLoading(true);
+    setLoadError(false);
     try {
       const [meRes, membersRes, clientsRes, projRes] = await Promise.all([
         api.me.getProfile(),
@@ -95,6 +98,7 @@ export default function CreateEditProjectScreen() {
       }
     } catch (err) {
       showAlert('Could not load form data', apiErrorMessage(err));
+      setLoadError(true);
     } finally {
       setDataLoading(false);
     }
@@ -150,9 +154,10 @@ export default function CreateEditProjectScreen() {
   };
 
   if (dataLoading) return <LoadingSpinner />;
+  if (loadError) return <LoadError onRetry={load} />;
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <View style={[s.container, { paddingTop: insets.top }]}>
         <ScreenHeader
           title={isEdit ? 'Edit Project' : 'New Project'}

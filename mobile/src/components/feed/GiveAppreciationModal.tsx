@@ -3,6 +3,7 @@ import {
   Modal, View, Text, StyleSheet, TouchableOpacity, TextInput,
   ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApi } from '../../hooks/useApi';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -31,10 +32,11 @@ export default function GiveAppreciationModal({ visible, onClose, onSuccess, app
   const api = useApi();
   const { colors } = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
+  const insets = useSafeAreaInsets();
 
   const [employees, setEmployees] = useState<any[]>([]);
   const [search, setSearch] = useState('');
-  const [selected, setSelected] = useState<any>(null);
+  const [selected, setSelected] = useState<any[]>([]);
   const [badge, setBadge] = useState<string | null>(null);
   const [message, setMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -51,6 +53,7 @@ export default function GiveAppreciationModal({ visible, onClose, onSuccess, app
           platform_user_id: m.user_id,
           full_name: `${m.first_name ?? ''} ${m.last_name ?? ''}`.trim() || m.email,
           role_title: m.role,
+          photo_url: m.photo_url,
         })));
       })
       .catch(() => {})
@@ -59,7 +62,7 @@ export default function GiveAppreciationModal({ visible, onClose, onSuccess, app
 
   const reset = () => {
     setSearch('');
-    setSelected(null);
+    setSelected([]);
     setBadge(null);
     setMessage('');
   };
@@ -67,14 +70,14 @@ export default function GiveAppreciationModal({ visible, onClose, onSuccess, app
   const handleClose = () => { reset(); onClose(); };
 
   const handleSubmit = async () => {
-    if (!selected) { showAlert('Select someone to appreciate'); return; }
+    if (selected.length === 0) { showAlert('Select at least one person to appreciate'); return; }
     if (!message.trim()) { showAlert('Add a message'); return; }
-    const recipientId = selected.platform_user_id;
-    if (!recipientId) { showAlert('This person has not joined the app yet'); return; }
+    const recipientIds = selected.map((e) => e.platform_user_id).filter(Boolean);
+    if (recipientIds.length === 0) { showAlert('None of the selected people have joined the app yet'); return; }
     setSubmitting(true);
     try {
       await api.appreciations.give(appId, {
-        to_user_id: recipientId,
+        to_user_ids: recipientIds,
         message: message.trim(),
         ...(badge ? { badge } : {}),
       });
@@ -88,20 +91,44 @@ export default function GiveAppreciationModal({ visible, onClose, onSuccess, app
     }
   };
 
+  const selectedIds = new Set(selected.map((e) => e.id));
   const filtered = search.trim()
     ? employees.filter((e) => {
         const name = e.full_name ?? [e.first_name, e.last_name].filter(Boolean).join(' ');
         return name.toLowerCase().includes(search.toLowerCase());
       })
-    : [];
+    : employees;
+  const allFilteredSelected = filtered.length > 0 && filtered.every((e) => selectedIds.has(e.id));
+
+  const toggleOne = (e: any) => {
+    setSelected((prev) => (prev.some((x) => x.id === e.id) ? prev.filter((x) => x.id !== e.id) : [...prev, e]));
+  };
+
+  const toggleSelectAll = () => {
+    if (allFilteredSelected) {
+      const filteredIds = new Set(filtered.map((e) => e.id));
+      setSelected((prev) => prev.filter((e) => !filteredIds.has(e.id)));
+    } else {
+      setSelected((prev) => {
+        const existingIds = new Set(prev.map((e) => e.id));
+        return [...prev, ...filtered.filter((e) => !existingIds.has(e.id))];
+      });
+    }
+  };
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={handleClose}>
+      {/* iOS only: the app already runs Android with
+          softwareKeyboardLayoutMode: "resize" (app.json), so the OS itself
+          shrinks the window when the keyboard opens there. Also applying
+          KeyboardAvoidingView's own bottom padding on Android double-
+          compensates, and that manual padding can get stuck after the
+          keyboard closes, leaving a permanent gap above the nav bar. */}
       <KeyboardAvoidingView
         style={s.overlay}
-        behavior="padding"
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
-        <View style={s.sheet}>
+        <View style={[s.sheet, { paddingBottom: insets.bottom + 20 }]}>
           <View style={s.sheetHeader}>
             <Text style={s.sheetTitle}>⭐ Give Appreciation</Text>
             <TouchableOpacity onPress={handleClose} hitSlop={8}>
@@ -109,58 +136,69 @@ export default function GiveAppreciationModal({ visible, onClose, onSuccess, app
             </TouchableOpacity>
           </View>
 
-          <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-            {/* Recipient */}
+          {/* flexShrink: 1 — RN defaults to flexShrink: 0, so without this the
+              ScrollView never gets squeezed into a bounded viewport by the
+              sheet's maxHeight: it just grows past it uncapped, and content
+              past the visible edge is unreachable since there's nothing
+              smaller-than-content to scroll within. Only shows up once the
+              member list is long enough to actually exceed the sheet. */}
+          <ScrollView style={{ flexShrink: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+            {/* Recipients — multi-select with Select All, matching web's "Who are you appreciating?" list */}
             <Text style={s.label}>To</Text>
-            {selected ? (
-              <TouchableOpacity style={s.selectedRow} onPress={() => setSelected(null)}>
-                <Avatar name={selected.full_name ?? 'Unknown'} size={32} />
-                <Text style={s.selectedName}>{selected.full_name}</Text>
-                <Ionicons name="close-circle" size={18} color={colors.gray400} />
-              </TouchableOpacity>
+            <View style={s.searchBar}>
+              <Ionicons name="search-outline" size={15} color={colors.gray400} />
+              <TextInput
+                style={s.searchInput}
+                placeholder="Search team members..."
+                placeholderTextColor={colors.gray400}
+                value={search}
+                onChangeText={setSearch}
+              />
+            </View>
+            {loadingMembers ? (
+              <ActivityIndicator style={{ marginVertical: 16 }} color={colors.primary} />
             ) : (
-              <>
-                <View style={s.searchBar}>
-                  <Ionicons name="search-outline" size={15} color={colors.gray400} />
-                  <TextInput
-                    style={s.searchInput}
-                    placeholder="Search team members..."
-                    placeholderTextColor={colors.gray400}
-                    value={search}
-                    onChangeText={setSearch}
-                  />
-                </View>
-                {loadingMembers ? (
-                  <ActivityIndicator style={{ marginVertical: 16 }} color={colors.primary} />
-                ) : !search.trim() ? (
-                  <Text style={s.emptyText}>Type a name to search</Text>
-                ) : (
-                  <View style={s.memberList}>
-                    {filtered.slice(0, 50).map((e) => {
-                      const displayName = e.full_name ?? ([e.first_name, e.last_name].filter(Boolean).join(' ') || 'Unknown');
-                      return (
-                      <TouchableOpacity
-                        key={e.id}
-                        style={s.memberRow}
-                        onPress={() => { setSelected({ ...e, full_name: displayName }); setSearch(''); }}
-                      >
-                        <Avatar name={displayName} size={34} />
-                        <View style={{ flex: 1 }}>
-                          <Text style={s.memberName}>{displayName}</Text>
-                          {e.role_title ? <Text style={s.memberRole}>{e.role_title}</Text> : null}
-                        </View>
-                        {!e.platform_user_id && (
-                          <Text style={s.notJoined}>Not joined</Text>
-                        )}
-                      </TouchableOpacity>
-                      );
-                    })}
-                    {filtered.length === 0 && (
-                      <Text style={s.emptyText}>No members found</Text>
-                    )}
-                  </View>
+              <View style={s.memberList}>
+                {filtered.length > 0 && (
+                  <TouchableOpacity style={s.selectAllRow} onPress={toggleSelectAll}>
+                    <View style={[s.checkbox, allFilteredSelected && s.checkboxActive]}>
+                      {allFilteredSelected && <Ionicons name="checkmark" size={13} color="#fff" />}
+                    </View>
+                    <Text style={s.selectAllText}>{allFilteredSelected ? 'Deselect All' : 'Select All'}</Text>
+                    <Text style={s.selectedCount}>{selected.length}/{employees.length}</Text>
+                  </TouchableOpacity>
                 )}
-              </>
+                {/* Select All stays fixed above; only the member rows scroll,
+                    bounded to ~3 rows tall so a long team doesn't push the
+                    badge/message/submit controls below off screen. */}
+                <ScrollView style={s.memberScroll} nestedScrollEnabled showsVerticalScrollIndicator={false}>
+                  {filtered.slice(0, 50).map((e) => {
+                    const displayName = e.full_name ?? ([e.first_name, e.last_name].filter(Boolean).join(' ') || 'Unknown');
+                    const checked = selectedIds.has(e.id);
+                    return (
+                    <TouchableOpacity
+                      key={e.id}
+                      style={s.memberRow}
+                      onPress={() => toggleOne({ ...e, full_name: displayName })}
+                    >
+                      <Avatar name={displayName} photoUrl={e.photo_url} size={34} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={s.memberName}>{displayName}</Text>
+                      </View>
+                      {!e.platform_user_id && (
+                        <Text style={s.notJoined}>Not joined</Text>
+                      )}
+                      <View style={[s.checkbox, checked && s.checkboxActive]}>
+                        {checked && <Ionicons name="checkmark" size={13} color="#fff" />}
+                      </View>
+                    </TouchableOpacity>
+                    );
+                  })}
+                  {filtered.length === 0 && (
+                    <Text style={s.emptyText}>No members found</Text>
+                  )}
+                </ScrollView>
+              </View>
             )}
 
             {/* Badge */}
@@ -224,11 +262,6 @@ function makeStyles(c: AppColors) {
     },
     sheetTitle: { fontSize: 17, fontWeight: '700', color: c.textPrimary },
     label: { fontSize: 12, fontWeight: '700', color: c.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 18, marginBottom: 8 },
-    selectedRow: {
-      flexDirection: 'row', alignItems: 'center', gap: 10,
-      backgroundColor: c.primaryLight, borderRadius: 12, padding: 12,
-    },
-    selectedName: { flex: 1, fontSize: 14, fontWeight: '600', color: c.textPrimary },
     searchBar: {
       flexDirection: 'row', alignItems: 'center', gap: 8,
       backgroundColor: c.gray100, borderRadius: 10,
@@ -237,14 +270,25 @@ function makeStyles(c: AppColors) {
     },
     searchInput: { flex: 1, fontSize: 14, color: c.textPrimary },
     memberList: { marginTop: 8, borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: c.border },
+    selectAllRow: {
+      flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12,
+      backgroundColor: c.gray50, borderBottomWidth: 1, borderBottomColor: c.border,
+    },
+    selectAllText: { fontSize: 13, fontWeight: '700', color: c.textPrimary },
+    selectedCount: { marginLeft: 'auto', fontSize: 12, color: c.textMuted },
+    memberScroll: { maxHeight: 180 },
     memberRow: {
       flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12,
       backgroundColor: c.surface, borderBottomWidth: 1, borderBottomColor: c.border,
     },
     memberName: { fontSize: 14, fontWeight: '600', color: c.textPrimary },
-    memberRole: { fontSize: 12, color: c.textSecondary, marginTop: 1 },
     notJoined: { fontSize: 11, color: c.gray400, fontStyle: 'italic' },
     emptyText: { fontSize: 14, color: c.gray400, textAlign: 'center', padding: 16 },
+    checkbox: {
+      width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: c.border,
+      alignItems: 'center', justifyContent: 'center', backgroundColor: c.surface, flexShrink: 0,
+    },
+    checkboxActive: { backgroundColor: c.primary, borderColor: c.primary },
     badgeWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
     badgeChip: {
       flexDirection: 'row', alignItems: 'center', gap: 5,

@@ -11,6 +11,14 @@ export const workspaceApi = (client: AxiosInstance) => ({
   hasTeam: (appId: number) => client.get(`/apps/${appId}/hr/org-chart/has-team`),
 });
 
+// ── Attachments ─────────────────────────────────────────────
+// Shared presign endpoint used by chat/task_comment/task_description/feed —
+// see src/utils/attachments.ts for the full upload flow.
+export const attachmentsApi = (client: AxiosInstance) => ({
+  presign: (appId: number, data: { file_name: string; content_type: string; file_size: number; context: string }) =>
+    client.post(`/apps/${appId}/attachments/presign`, data),
+});
+
 // ── Me ──────────────────────────────────────────────────────
 export const meApi = (client: AxiosInstance) => ({
   getProfile: () => client.get('/me'),
@@ -27,11 +35,17 @@ export const invitationsApi = (client: AxiosInstance) => ({
 
 // ── Notifications ────────────────────────────────────────────
 export const notificationsApi = (client: AxiosInstance) => ({
-  list: (params?: { unread?: boolean; limit?: number }) =>
+  // app_id scopes both endpoints to the workspace the user is currently in —
+  // without it the backend returns notifications across every app the user
+  // belongs to, which is what web's cross-app NotificationBell wants but not
+  // mobile's single-workspace-at-a-time view.
+  list: (params?: { unread?: boolean; limit?: number; app_id?: number }) =>
     client.get('/notifications', { params }),
-  unreadCount: () => client.get('/notifications/unread-count'),
+  unreadCount: (appId?: number) =>
+    client.get('/notifications/unread-count', { params: appId != null ? { app_id: appId } : undefined }),
   markRead: (id: number) => client.patch(`/notifications/${id}/read`),
-  markAllRead: () => client.post('/notifications/read-all'),
+  markAllRead: (appId?: number) =>
+    client.post('/notifications/read-all', appId != null ? { app_id: appId } : undefined),
 });
 
 // ── Dashboard ────────────────────────────────────────────────
@@ -122,6 +136,14 @@ export const contractsApi = (client: AxiosInstance) => ({
     client.delete(`/apps/${appId}/hr/contracts/agreements/${id}/services/${casId}`),
   listServices: (appId: number, params?: Record<string, unknown>) =>
     client.get(`/apps/${appId}/hr/contracts/services`, { params }),
+  getService: (appId: number, id: number) =>
+    client.get(`/apps/${appId}/hr/contracts/services/${id}`),
+  createService: (appId: number, data: Record<string, unknown>) =>
+    client.post(`/apps/${appId}/hr/contracts/services`, data),
+  updateService: (appId: number, id: number, data: Record<string, unknown>) =>
+    client.patch(`/apps/${appId}/hr/contracts/services/${id}`, data),
+  deleteService: (appId: number, id: number) =>
+    client.delete(`/apps/${appId}/hr/contracts/services/${id}`),
   listClients: (appId: number, params?: Record<string, unknown>) =>
     client.get(`/apps/${appId}/hr/contracts/clients`, { params }),
   getClient: (appId: number, id: number) =>
@@ -188,10 +210,20 @@ export const businessReviewsApi = (client: AxiosInstance) => ({
     client.patch(`/apps/${appId}/hr/business-reviews/${id}/action-items/${aiId}`, data),
   deleteActionItem: (appId: number, id: number, aiId: number) =>
     client.delete(`/apps/${appId}/hr/business-reviews/${id}/action-items/${aiId}`),
-  addMemberComment: (appId: number, id: number, body: string) =>
-    client.post(`/apps/${appId}/hr/business-reviews/${id}/member-comments`, { body }),
+  addMemberComment: (appId: number, id: number, forUserId: number | string, body: string) =>
+    client.post(`/apps/${appId}/hr/business-reviews/${id}/member-comments`, { for_user_id: forUserId, body }),
   deleteMemberComment: (appId: number, id: number, commentId: number) =>
     client.delete(`/apps/${appId}/hr/business-reviews/${id}/member-comments/${commentId}`),
+  saveTaskStatuses: (appId: number, id: number, taskStatuses: { task_id: number; status: string }[]) =>
+    client.put(`/apps/${appId}/hr/business-reviews/${id}/task-statuses`, { taskStatuses }),
+  upsertAssessment: (appId: number, id: number, forUserId: number | string, data: Record<string, unknown>) =>
+    client.put(`/apps/${appId}/hr/business-reviews/${id}/assessments/${forUserId}`, data),
+});
+
+// ── Task Planner (daily planned-time blocks) ──────────────────
+export const taskPlannerApi = (client: AxiosInstance) => ({
+  getBlocks: (appId: number, params: { user_id?: number | string; date?: string }) =>
+    client.get(`/apps/${appId}/hr/task-planner/blocks`, { params }),
 });
 
 // ── Tasks ────────────────────────────────────────────────────
@@ -206,6 +238,8 @@ export const tasksApi = (client: AxiosInstance) => ({
     client.patch(`/apps/${appId}/hr/tasks/${taskId}`, data),
   delete: (appId: number, taskId: number) =>
     client.delete(`/apps/${appId}/hr/tasks/${taskId}`),
+  getWorkload: (appId: number, userId: number) =>
+    client.get(`/apps/${appId}/hr/tasks/workload/${userId}`),
   // Timer
   startTimer: (appId: number, taskId: number) =>
     client.post(`/apps/${appId}/hr/tasks/${taskId}/timer`, { action: 'start' }),
@@ -219,10 +253,17 @@ export const tasksApi = (client: AxiosInstance) => ({
   // Comments
   getComments: (appId: number, taskId: number) =>
     client.get(`/apps/${appId}/hr/tasks/${taskId}/comments`),
-  addComment: (appId: number, taskId: number, body: string) =>
-    client.post(`/apps/${appId}/hr/tasks/${taskId}/comments`, { body }),
+  addComment: (appId: number, taskId: number, body: string, attachments?: Record<string, unknown>[]) =>
+    client.post(`/apps/${appId}/hr/tasks/${taskId}/comments`, { body, ...(attachments?.length ? { attachments } : {}) }),
+  updateComment: (appId: number, taskId: number, commentId: number, body: string) =>
+    client.patch(`/apps/${appId}/hr/tasks/${taskId}/comments/${commentId}`, { body }),
   deleteComment: (appId: number, taskId: number, commentId: number) =>
     client.delete(`/apps/${appId}/hr/tasks/${taskId}/comments/${commentId}`),
+  // Description attachments
+  addDescriptionAttachment: (appId: number, taskId: number, attachment: Record<string, unknown>) =>
+    client.post(`/apps/${appId}/hr/tasks/${taskId}/description-attachments`, attachment),
+  removeDescriptionAttachment: (appId: number, taskId: number, attachmentId: number) =>
+    client.delete(`/apps/${appId}/hr/tasks/${taskId}/description-attachments/${attachmentId}`),
   // Checklist
   getChecklist: (appId: number, taskId: number) =>
     client.get(`/apps/${appId}/hr/tasks/${taskId}/checklist`),
@@ -251,6 +292,9 @@ export const feedApi = (client: AxiosInstance) => ({
   list: (appId: number) => client.get(`/apps/${appId}/hr/feed`),
   create: (appId: number, data: Record<string, unknown>) =>
     client.post(`/apps/${appId}/hr/feed`, data),
+  // Author-only, and the server rejects this after 15 minutes from creation.
+  update: (appId: number, postId: number, content: string) =>
+    client.patch(`/apps/${appId}/hr/feed/${postId}`, { content }),
   delete: (appId: number, postId: number) =>
     client.delete(`/apps/${appId}/hr/feed/${postId}`),
   pin: (appId: number, postId: number) =>
@@ -264,7 +308,7 @@ export const feedApi = (client: AxiosInstance) => ({
   deleteComment: (appId: number, postId: number, commentId: number) =>
     client.delete(`/apps/${appId}/hr/feed/${postId}/comments/${commentId}`),
   // Feedback
-  giveFeedback: (appId: number, data: { to_user_id: number; feedback_text: string; is_anonymous?: boolean; cycle_id?: number | null; type?: string }) =>
+  giveFeedback: (appId: number, data: { to_user_ids: number[]; feedback_text: string; is_anonymous?: boolean; cycle_id?: number | null; type?: string }) =>
     client.post(`/apps/${appId}/hr/feedback`, data),
   getReceivedFeedback: (appId: number) =>
     client.get(`/apps/${appId}/hr/feedback/received`),
@@ -306,8 +350,8 @@ export const performanceApi = (client: AxiosInstance) => ({
     client.get(`/apps/${appId}/hr/performance-reviews`),
   listPendingForMe: (appId: number) =>
     client.get(`/apps/${appId}/hr/performance-reviews/pending-for-me`),
-  listTeamReviews: (appId: number) =>
-    client.get(`/apps/${appId}/hr/performance-reviews/team`),
+  listTeamReviews: (appId: number, params?: Record<string, unknown>) =>
+    client.get(`/apps/${appId}/hr/performance-reviews/team`, { params }),
   listAllReviews: (appId: number) =>
     client.get(`/apps/${appId}/hr/performance-reviews/all`),
   submitReview: (appId: number, reviewId: number, data: Record<string, unknown>) =>
@@ -344,7 +388,7 @@ export const employeesApi = (client: AxiosInstance) => ({
 
 // ── Appreciations ────────────────────────────────────────────
 export const appreciationsApi = (client: AxiosInstance) => ({
-  give: (appId: number, data: { to_user_id: number; message: string; badge?: string }) =>
+  give: (appId: number, data: { to_user_ids: number[]; message: string; badge?: string }) =>
     client.post(`/apps/${appId}/hr/appreciations`, data),
   listReceived: (appId: number) =>
     client.get(`/apps/${appId}/hr/appreciations`),
@@ -410,11 +454,13 @@ export const rolesApi = (client: AxiosInstance) => ({
     client.post(`/apps/${appId}/hr/roles`, data),
   listAreas: (appId: number, roleId: number) =>
     client.get(`/apps/${appId}/hr/roles/${roleId}/areas`),
+  listAssignmentsForUser: (appId: number, userId: number) =>
+    client.get(`/apps/${appId}/hr/role-assignments/by-user/${userId}`),
 });
 
 // ── Policies ─────────────────────────────────────────────────
 export const policiesApi = (client: AxiosInstance) => ({
-  list: (appId: number) => client.get(`/apps/${appId}/hr/policies`),
+  list: (appId: number, params?: Record<string, unknown>) => client.get(`/apps/${appId}/hr/policies`, { params }),
   get: (appId: number, policyId: number) => client.get(`/apps/${appId}/hr/policies/${policyId}`),
   create: (appId: number, data: Record<string, unknown>) =>
     client.post(`/apps/${appId}/hr/policies`, data),

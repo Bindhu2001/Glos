@@ -335,21 +335,21 @@ export default function WorkspaceSelectScreen() {
         />
       )}
       {!loading && !error && (
-        <View style={s.footer}>
-          <TouchableOpacity onPress={() => { setWorkspace(null); signOut({ redirectUrl: undefined }); }} style={s.signOutBtn}>
-            <Ionicons name="log-out-outline" size={16} color={colors.danger} />
-            <Text style={s.signOutText}>Sign Out</Text>
-          </TouchableOpacity>
+        <View style={[s.footer, { paddingBottom: Math.max(insets.bottom, 16) + 14 }]}>
           <View style={s.footerTrust}>
             <Ionicons name="shield-checkmark-outline" size={13} color={colors.gray400} />
             <Text style={s.footerText}>Secure • Reliable • Trusted</Text>
           </View>
+          <TouchableOpacity onPress={() => { setWorkspace(null); signOut({ redirectUrl: undefined }); }} style={s.signOutBtn}>
+            <Ionicons name="log-out-outline" size={16} color={colors.danger} />
+            <Text style={s.signOutText}>Sign Out</Text>
+          </TouchableOpacity>
         </View>
       )}
 
       {/* Create Workspace Modal */}
       <Modal visible={showCreate} transparent animationType="slide" onRequestClose={() => setShowCreate(false)}>
-        <KeyboardAvoidingView style={s.modalOverlay} behavior="padding">
+        <KeyboardAvoidingView style={s.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
           <View style={s.modalSheet}>
             <View style={s.modalHeader}>
               <Text style={s.modalTitle}>Create Workspace</Text>

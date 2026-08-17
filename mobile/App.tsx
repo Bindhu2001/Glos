@@ -5,6 +5,7 @@ import { ClerkProvider } from '@clerk/clerk-expo';
 import * as SecureStore from 'expo-secure-store';
 import { WorkspaceProvider } from './src/contexts/WorkspaceContext';
 import AppNavigator from './src/navigation/AppNavigator';
+import ErrorBoundary from './src/components/common/ErrorBoundary';
 
 const CLERK_PUBLISHABLE_KEY = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ?? '';
 
@@ -28,11 +29,13 @@ const tokenCache = {
 export default function App() {
   return (
     <ClerkProvider publishableKey={CLERK_PUBLISHABLE_KEY} tokenCache={tokenCache}>
-      <SafeAreaProvider>
-        <WorkspaceProvider>
-          <AppNavigator />
-        </WorkspaceProvider>
-      </SafeAreaProvider>
+      <ErrorBoundary>
+        <SafeAreaProvider>
+          <WorkspaceProvider>
+            <AppNavigator />
+          </WorkspaceProvider>
+        </SafeAreaProvider>
+      </ErrorBoundary>
     </ClerkProvider>
   );
 }

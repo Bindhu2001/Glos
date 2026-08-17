@@ -42,7 +42,14 @@ export default function InviteMemberScreen() {
         { text: 'OK', onPress: () => navigation.goBack() },
       ]);
     } catch (err: any) {
-      const msg = err?.response?.data?.error ?? 'Failed to send invitation.';
+      const d = err?.response?.data;
+      // Matches web's MembersAndInvites.jsx exactly — the backend returns a
+      // generic "error" string too, but this specific 402/user_limit_exceeded
+      // case gets a friendlier message with the actual seat count instead of
+      // the raw backend text.
+      const msg = err?.response?.status === 402 && d?.reason === 'user_limit_exceeded'
+        ? `You've reached your plan's limit of ${d.allowed} user${d.allowed === 1 ? '' : 's'}. Upgrade your plan to invite more members.`
+        : d?.error ?? 'Failed to send invitation.';
       Alert.alert('Error', msg);
     } finally {
       setLoading(false);
@@ -52,7 +59,7 @@ export default function InviteMemberScreen() {
   return (
     <KeyboardAvoidingView
       style={{ flex: 1 }}
-      behavior="padding"
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <View style={[s.container, { paddingTop: insets.top }]}>
         <View style={s.header}>

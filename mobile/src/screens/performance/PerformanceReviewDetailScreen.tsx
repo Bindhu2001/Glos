@@ -177,7 +177,7 @@ export default function PerformanceReviewDetailScreen() {
   const canSelfRate = review?.status === 'pending_self' && review?.platform_user_id === currentUserId;
   const canManagerRate = review?.status === 'pending_manager'
     && (isAdmin || (currentUserId != null && managerUserIds.some((id) => String(id) === String(currentUserId))));
-  const isDesignatedApprover = (finalApprover?.user_id != null && finalApprover.user_id === currentUserId) || workspace?.role === 'super_admin';
+  const isDesignatedApprover = (finalApprover?.user_ids ?? []).some((id: number) => String(id) === String(currentUserId)) || workspace?.role === 'super_admin';
   const canFinalRate = review?.status === 'pending_approver' && isDesignatedApprover;
   const isViewOnly = !canSelfRate && !canManagerRate && !canFinalRate;
 
@@ -348,7 +348,7 @@ export default function PerformanceReviewDetailScreen() {
   };
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <View style={[s.container, { paddingTop: insets.top }]}>
         <View style={s.header}>
           <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn}>

@@ -1,5 +1,6 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, ActivityIndicator, RefreshControl } from 'react-native';
+import Svg, { Circle, Text as SvgText } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -22,7 +23,7 @@ const TYPE_LABELS: Record<string, string> = {
   other: 'Custom Review',
 };
 
-const STATUS_COLORS: Record<string, string> = { open: '#059669', closed: '#6b7280' };
+const STATUS_COLORS: Record<string, string> = { open: '#d97706', closed: '#059669' };
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const DOW = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
@@ -48,22 +49,39 @@ export default function BusinessReviewsListScreen() {
   const [viewMode, setViewMode] = useState<ViewMode>('calendar');
   const [cursor, setCursor] = useState(() => new Date());
 
+  const hasLoadedRef = useRef(false);
+
   const load = useCallback(async (isRefresh = false) => {
     if (!workspace?.id) return;
-    if (!isRefresh) setLoading(true);
+    if (!isRefresh && !hasLoadedRef.current) setLoading(true);
     try {
-      const res = await api.businessReviews.list(workspace.id, { attendee_only: workspace.role === 'member' ? 'true' : undefined });
-      setReviews(res.data?.reviews ?? res.data ?? []);
+      if (workspace.role === 'member') {
+        // Non-admins can be a manager (own_only: reviews they conduct for their reportees)
+        // AND an attendee/reportee of someone else's review at the same time — merge both,
+        // matching web's DailyCalendarWidget (MyDashboard.jsx) which fetches both scopes.
+        const [ownRes, attendeeRes] = await Promise.all([
+          canSeeTeamContent
+            ? api.businessReviews.list(workspace.id, { own_only: 'true' }).catch(() => ({ data: { reviews: [] } }))
+            : Promise.resolve({ data: { reviews: [] } }),
+          api.businessReviews.list(workspace.id, { attendee_only: 'true' }),
+        ]);
+        const merged = new Map<number, any>();
+        for (const r of [...(ownRes.data?.reviews ?? []), ...(attendeeRes.data?.reviews ?? [])]) merged.set(r.id, r);
+        setReviews([...merged.values()]);
+      } else {
+        const res = await api.businessReviews.list(workspace.id);
+        setReviews(res.data?.reviews ?? res.data ?? []);
+      }
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, 'Could not load business reviews.'));
     } finally {
       setLoading(false);
       setRefreshing(false);
+      hasLoadedRef.current = true;
     }
-  }, [workspace?.id, workspace?.role]);
+  }, [workspace?.id, workspace?.role, canSeeTeamContent]);
 
-  useEffect(() => { load(); }, [load]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const dailyByDay = useMemo(() => {
@@ -149,9 +167,20 @@ export default function BusinessReviewsListScreen() {
                   const isToday = c.key === ymd(new Date());
                   const statusColor = rev ? (STATUS_COLORS[rev.status] ?? '#6b7280') : null;
                   return (
-                    <TouchableOpacity key={i} style={[s.cell, isToday && s.cellToday]} onPress={() => onDayPress(c.key)} activeOpacity={0.7}>
-                      <Text style={[s.dayTxt, isToday && s.dayTxtToday]}>{c.day}</Text>
-                      {statusColor && <View style={[s.dot, { backgroundColor: statusColor }]} />}
+                    <TouchableOpacity key={i} style={s.cell} onPress={() => onDayPress(c.key)} activeOpacity={0.7}>
+                      <Svg width={32} height={32}>
+                        <Circle
+                          cx={16} cy={16} r={16}
+                          fill={statusColor ?? (isToday ? colors.primaryLight : 'transparent')}
+                        />
+                        <SvgText
+                          x={16} y={21} textAnchor="middle" fontSize={12}
+                          fontWeight={statusColor || isToday ? '800' : '400'}
+                          fill={statusColor ? '#fff' : isToday ? colors.primary : colors.textSecondary}
+                        >
+                          {c.day}
+                        </SvgText>
+                      </Svg>
                     </TouchableOpacity>
                   );
                 })}
@@ -274,12 +303,9 @@ function makeStyles(c: AppColors) {
     dowTxt: { flex: 1, textAlign: 'center', fontSize: 10, fontWeight: '700', color: c.textMuted, marginBottom: 4 },
     grid: { flexDirection: 'row', flexWrap: 'wrap' },
     cell: { width: `${100 / 7}%`, aspectRatio: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 2 },
-    cellToday: { backgroundColor: c.primaryLight, borderRadius: 8 },
-    dayTxt: { fontSize: 12, color: c.textSecondary },
-    dayTxtToday: { color: c.primary, fontWeight: '800' },
-    dot: { width: 6, height: 6, borderRadius: 3, marginTop: 3 },
     legendRow: { flexDirection: 'row', gap: 16, marginTop: 10, justifyContent: 'center' },
     legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+    dot: { width: 8, height: 8, borderRadius: 4 },
     legendTxt: { fontSize: 11, color: c.textSecondary },
     otherHead: { fontSize: 11, fontWeight: '700', color: c.textMuted, letterSpacing: 1, marginTop: 18, marginBottom: 10 },
   });

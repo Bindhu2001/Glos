@@ -4,7 +4,8 @@ import {
   TextInput, Alert, RefreshControl, ActivityIndicator,
   KeyboardAvoidingView, Platform, Modal, FlatList,
 } from 'react-native';
-import { useRoute, RouteProp } from '@react-navigation/native';
+import { useRoute, RouteProp, useNavigation, useFocusEffect } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApi } from '../../hooks/useApi';
@@ -21,8 +22,17 @@ import LoadingSpinner from '../../components/common/LoadingSpinner';
 import LoadError from '../../components/common/LoadError';
 import { useLoadWithTimeout } from '../../hooks/useLoadWithTimeout';
 import Avatar from '../../components/common/Avatar';
+import { stripNonContentElements, stripTags } from '../../utils/postContent';
+import UserProfileModal, { ProfileUser } from '../../components/common/UserProfileModal';
+import AttachmentChips from '../../components/common/AttachmentChips';
+import AttachmentList from '../../components/common/AttachmentList';
+import DatePickerField from '../../components/common/DatePickerField';
+import TimePickerField from '../../components/common/TimePickerField';
+import { showAlert } from '../../components/common/AlertModal';
+import { pickAttachmentFiles, uploadAttachments, PickedFile } from '../../utils/attachments';
 
 type Route = RouteProp<TasksStackParamList, 'TaskDetail'>;
+type Nav = NativeStackNavigationProp<TasksStackParamList, 'TaskDetail'>;
 type TabName = 'details' | 'comments' | 'checklist' | 'timelogs' | 'timeline';
 
 const STATUSES = [
@@ -77,10 +87,11 @@ function formatTimelineEvent(event: any, members: any[]): string {
       const d = meta?.new_deadline ?? event.new_value ?? '';
       return d ? `Deadline set to ${d}` : 'Deadline removed';
     }
-    case 'checklist_item_added': return `Checklist item added: "${meta?.text ?? event.note ?? ''}"`;
-    case 'checklist_item_checked': return `Completed: "${meta?.text ?? event.note ?? ''}"`;
-    case 'checklist_item_unchecked': return `Unchecked: "${meta?.text ?? event.note ?? ''}"`;
-    case 'checklist_item_deleted': return `Removed checklist item: "${meta?.text ?? event.note ?? ''}"`;
+    case 'checklist_item_added': return `Checklist item added: "${event.new_value ?? meta?.text ?? ''}"`;
+    case 'checklist_item_checked': return `Completed: "${event.note ?? meta?.text ?? ''}"`;
+    case 'checklist_item_unchecked': return `Unchecked: "${event.note ?? meta?.text ?? ''}"`;
+    case 'checklist_item_edited': return `Checklist item edited: "${event.old_value ?? ''}" → "${event.new_value ?? ''}"`;
+    case 'checklist_item_deleted': return `Removed checklist item: "${event.old_value ?? meta?.text ?? ''}"`;
     case 'estimated_time_set': {
       const mins = meta?.estimated_minutes ?? Number(event.new_value) ?? 0;
       return mins ? `Estimated time set to ${Math.round(mins / 60 * 10) / 10}h` : 'Estimated time set';
@@ -89,16 +100,24 @@ function formatTimelineEvent(event: any, members: any[]): string {
   }
 }
 
-function decodeHtml(str: string) {
-  return str
-    .replace(/<[^>]*>/g, '')
-    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ')
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
+// Matches qa-production/frontend TimeLogsPanel.jsx's calcDuration/MAX_LOG_MINUTES —
+// entries longer than 2 hrs are rejected server-side too (task_time_logs.js).
+const MAX_LOG_MINUTES = 120;
+
+function timeToMinutes(t: string) {
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + m;
+}
+
+function calcRangeMinutes(start: string, end: string) {
+  let mins = timeToMinutes(end) - timeToMinutes(start);
+  if (mins <= 0) mins += 24 * 60; // overnight
+  return mins;
 }
 
 export default function TaskDetailScreen() {
   const route = useRoute<Route>();
+  const navigation = useNavigation<Nav>();
   const { taskId, appId } = route.params;
   const api = useApi();
   const { workspace } = useWorkspace();
@@ -111,11 +130,14 @@ export default function TaskDetailScreen() {
   const [checklist, setChecklist] = useState<any[]>([]);
   const [timeLogs, setTimeLogs] = useState<any[]>([]);
   const [members, setMembers] = useState<any[]>([]);
+  const [profileUser, setProfileUser] = useState<ProfileUser | null>(null);
   const [meId, setMeId] = useState<number | null>(null);
   const { loading, loadError, run } = useLoadWithTimeout();
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<TabName>('details');
   const [commentText, setCommentText] = useState('');
+  const [pendingCommentFiles, setPendingCommentFiles] = useState<PickedFile[]>([]);
+  const [uploadingCommentFiles, setUploadingCommentFiles] = useState(false);
   const [checklistText, setChecklistText] = useState('');
   const [liveSeconds, setLiveSeconds] = useState(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -125,9 +147,17 @@ export default function TaskDetailScreen() {
   const [assigneeModal, setAssigneeModal] = useState(false);
   const [timeline, setTimeline] = useState<any[]>([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
-  const [editModal, setEditModal] = useState(false);
-  const [editTitle, setEditTitle] = useState('');
-  const [editDescription, setEditDescription] = useState('');
+
+  // Manual time-log entry (Time tab "+ Add") — mirrors web's TimeLogsPanel
+  const [showAddTimeLog, setShowAddTimeLog] = useState(false);
+  const [tlMode, setTlMode] = useState<'range' | 'manual'>('range');
+  const [tlStart, setTlStart] = useState('09:00');
+  const [tlEnd, setTlEnd] = useState('17:00');
+  const [tlMinutes, setTlMinutes] = useState('');
+  const [tlLoggedOn, setTlLoggedOn] = useState(() => new Date().toISOString().slice(0, 10));
+  const [tlNotes, setTlNotes] = useState('');
+  const [tlPosting, setTlPosting] = useState(false);
+  const [tlError, setTlError] = useState<string | null>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ x: 0, y: 0, animated: false });
@@ -169,7 +199,16 @@ export default function TaskDetailScreen() {
     setMembers(mbrs.data?.members ?? mbrs.data?.items ?? mbrs.data ?? []);
   }, [taskId, appId, api]);
 
-  useEffect(() => { run(load); }, [load]);
+  // A plain useEffect(load) here alongside useFocusEffect(load) below used to
+  // both fire on initial mount (a freshly-pushed screen is immediately
+  // focused), double-fetching all 6 endpoints below on every task open. Now
+  // there's a single load path; hasLoadedRef decides whether refocusing
+  // (e.g. coming back from Group Info) shows the full-screen spinner again.
+  const hasLoadedRef = useRef(false);
+  useFocusEffect(useCallback(() => {
+    run(load, hasLoadedRef.current);
+    hasLoadedRef.current = true;
+  }, [load, run]));
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -197,18 +236,12 @@ export default function TaskDetailScreen() {
     return m ? (m.name ?? (`${m.first_name ?? ''} ${m.last_name ?? ''}`.trim() || m.email)) : 'Team Member';
   };
 
-  const handleSaveEdit = async () => {
-    if (!editTitle.trim()) { Alert.alert('Validation', 'Title is required.'); return; }
-    setSaving(true);
-    try {
-      await api.tasks.update(appId, taskId, { title: editTitle.trim(), description: editDescription.trim() || null });
-      setTask((prev: any) => prev ? { ...prev, title: editTitle.trim(), description: editDescription.trim() || prev.description } : prev);
-      setEditModal(false);
-    } catch {
-      Alert.alert('Error', 'Could not update task.');
-    } finally {
-      setSaving(false);
-    }
+  const getCommentAuthorPhoto = (c: any): string | null => {
+    if (c.author_photo_url) return c.author_photo_url;
+    if (c.user?.photo_url) return c.user.photo_url;
+    const uid = c.author_user_id ?? c.author_id ?? c.user_id;
+    const m = members.find((mb) => (mb.user_id ?? mb.id) === uid);
+    return m?.photo_url ?? null;
   };
 
   const changeStatus = async (status: string) => {
@@ -233,16 +266,36 @@ export default function TaskDetailScreen() {
     }
   };
 
+  const pickCommentFiles = async () => {
+    try {
+      const files = await pickAttachmentFiles();
+      if (files.length) setPendingCommentFiles((prev) => [...prev, ...files]);
+    } catch {
+      showAlert('Error', 'Could not pick file.');
+    }
+  };
+
+  const removePendingCommentFile = (i: number) =>
+    setPendingCommentFiles((prev) => prev.filter((_, idx) => idx !== i));
+
   const postComment = async () => {
-    if (!commentText.trim()) return;
+    if (!commentText.trim() && pendingCommentFiles.length === 0) return;
     setSaving(true);
     try {
-      await api.tasks.addComment(appId, taskId, commentText.trim());
+      let attachments: Record<string, unknown>[] = [];
+      if (pendingCommentFiles.length > 0) {
+        setUploadingCommentFiles(true);
+        attachments = await uploadAttachments(api, appId, 'task_comment', pendingCommentFiles);
+        setUploadingCommentFiles(false);
+      }
+      await api.tasks.addComment(appId, taskId, commentText.trim(), attachments);
       setCommentText('');
+      setPendingCommentFiles([]);
       const r = await api.tasks.getComments(appId, taskId);
       setComments(r.data?.items ?? r.data?.comments ?? []);
     } catch {
-      Alert.alert('Error', 'Could not post comment.');
+      setUploadingCommentFiles(false);
+      showAlert('Error', 'Could not post comment.');
     } finally {
       setSaving(false);
     }
@@ -263,6 +316,16 @@ export default function TaskDetailScreen() {
         },
       },
     ]);
+  };
+
+  const editComment = async (commentId: number, newBody: string) => {
+    try {
+      const res = await api.tasks.updateComment(appId, taskId, commentId, newBody);
+      const updated = res.data;
+      setComments((prev) => prev.map((c) => (c.id === commentId ? { ...c, ...updated } : c)));
+    } catch {
+      showAlert('Error', 'Could not update comment.');
+    }
   };
 
   const addChecklist = async () => {
@@ -335,6 +398,72 @@ export default function TaskDetailScreen() {
     }
   };
 
+  const resetTimeLogForm = () => {
+    setTlMode('range');
+    setTlStart('09:00');
+    setTlEnd('17:00');
+    setTlMinutes('');
+    setTlLoggedOn(new Date().toISOString().slice(0, 10));
+    setTlNotes('');
+    setTlError(null);
+  };
+
+  const cancelAddTimeLog = () => {
+    setShowAddTimeLog(false);
+    resetTimeLogForm();
+  };
+
+  const addTimeLogEntry = async () => {
+    if (!tlNotes.trim()) { setTlError('Note is required'); return; }
+    let body: Record<string, unknown>;
+    if (tlMode === 'range') {
+      const mins = calcRangeMinutes(tlStart, tlEnd);
+      if (mins > MAX_LOG_MINUTES) {
+        setTlError('Cannot log more than 2 hrs at once. Log 2 hrs max per entry.');
+        return;
+      }
+      body = { start_time: tlStart, end_time: tlEnd, logged_on: tlLoggedOn, notes: tlNotes.trim() };
+    } else {
+      const m = Number(tlMinutes);
+      if (!Number.isFinite(m) || m <= 0) { setTlError('Enter minutes (e.g. 5)'); return; }
+      if (m > MAX_LOG_MINUTES) {
+        setTlError('Cannot log more than 2 hrs (120 min) at once.');
+        return;
+      }
+      body = { duration_minutes: Math.round(m), logged_on: tlLoggedOn, notes: tlNotes.trim() };
+    }
+    setTlPosting(true);
+    setTlError(null);
+    try {
+      await api.tasks.addTimeLog(appId, taskId, body);
+      const tl = await api.tasks.getTimeLogs(appId, taskId);
+      setTimeLogs(tl.data?.items ?? tl.data?.logs ?? []);
+      setShowAddTimeLog(false);
+      resetTimeLogForm();
+    } catch (err: any) {
+      setTlError(err?.response?.data?.error || 'Could not log time.');
+    } finally {
+      setTlPosting(false);
+    }
+  };
+
+  const deleteTimeLogEntry = (logId: number) => {
+    showAlert('Delete Time Log', 'Delete this time log entry?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete', style: 'destructive',
+        onPress: async () => {
+          try {
+            await api.tasks.deleteTimeLog(appId, taskId, logId);
+            setTimeLogs((prev) => prev.filter((l) => l.id !== logId));
+          } catch {
+            showAlert('Error', 'Could not delete time log.');
+          }
+        },
+      },
+    ]);
+  };
+
   if (loading) return <LoadingSpinner />;
   if (loadError) return <LoadError onRetry={() => run(load)} />;
   if (!task) return (
@@ -361,12 +490,31 @@ export default function TaskDetailScreen() {
   const checklistTotal = checklist.length;
   const checklistPct = checklistTotal === 0 ? 0 : Math.round((checklistDone / checklistTotal) * 100);
 
+  const timeLogsTotalMinutes = timeLogs.reduce((sum, l) => sum + (Number(l.duration_minutes) || 0), 0);
+  // Include the current timer session (running or paused-but-not-yet-logged)
+  // so this stays accurate in real time, not just after "Stop & Log" commits it.
+  const liveTimerMinutes = timerActive ? Math.floor(liveSeconds / 60) : 0;
+  const loggedMinutes = timeLogsTotalMinutes + liveTimerMinutes;
+  const estimatedMinutes = Number(task.estimated_minutes) || 0;
+  const isOverBudget = estimatedMinutes > 0 && loggedMinutes > estimatedMinutes;
+  const isNearBudget = estimatedMinutes > 0 && !isOverBudget && loggedMinutes >= estimatedMinutes * 0.8;
+  const timeSummaryColor = isOverBudget ? colors.danger : isNearBudget ? colors.warning : colors.textMuted;
+  const tlRangePreview = tlMode === 'range' ? calcRangeMinutes(tlStart, tlEnd) : null;
+
   const assigneeMember = task.assigned_to_user_id
     ? members.find((m) => (m.user_id ?? m.id) === task.assigned_to_user_id)
     : null;
   const assigneeName = task.assignee_name
     ?? (assigneeMember
       ? (assigneeMember.name ?? `${assigneeMember.first_name ?? ''} ${assigneeMember.last_name ?? ''}`.trim())
+      : null);
+
+  const creatorMember = task.created_by_user_id
+    ? members.find((m) => (m.user_id ?? m.id) === task.created_by_user_id)
+    : null;
+  const creatorName = task.created_by_name
+    ?? (creatorMember
+      ? (creatorMember.name ?? `${creatorMember.first_name ?? ''} ${creatorMember.last_name ?? ''}`.trim())
       : null);
 
   const TABS: { key: TabName; label: string; count?: number }[] = [
@@ -378,28 +526,34 @@ export default function TaskDetailScreen() {
   ];
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
     <View style={[s.container, { paddingTop: insets.top }]}>
       <ScreenHeader
         title={task.title}
         showBack
         right={canEdit ? (
-          <TouchableOpacity onPress={() => { setEditTitle(task.title ?? ''); setEditDescription(task.description ? decodeHtml(task.description) : ''); setEditModal(true); }}>
+          <TouchableOpacity onPress={() => navigation.navigate('CreateTask', { appId, taskId })}>
             <Ionicons name="create-outline" size={22} color={colors.primary} />
           </TouchableOpacity>
         ) : undefined}
       />
 
-      {/* Badges row — tap status to change */}
+      {/* Badges row — status is display-only here; use the Status button below to change it */}
       <View style={s.badges}>
-        <TouchableOpacity onPress={() => canEdit && setStatusModal(true)}>
-          <Badge label={STATUSES.find(s => s.value === task.status)?.label ?? capitalize(task.status)} bg={statusColor.bg} color={statusColor.text} />
-        </TouchableOpacity>
+        <Badge label={STATUSES.find(s => s.value === task.status)?.label ?? capitalize(task.status)} bg={statusColor.bg} color={statusColor.text} />
         <Badge label={capitalize(task.priority)} bg={priorityColor.bg} color={priorityColor.text} />
         {task.due_on && (
           <View style={s.dueBadge}>
             <Ionicons name="calendar-outline" size={12} color={colors.gray400} />
             <Text style={s.dueText}>{formatDate(task.due_on)}</Text>
+          </View>
+        )}
+        {(loggedMinutes > 0 || estimatedMinutes > 0) && (
+          <View style={s.timeSummary}>
+            <Ionicons name="time-outline" size={13} color={timeSummaryColor} />
+            <Text style={[s.timeSummaryText, { color: timeSummaryColor }]}>
+              {formatDuration(loggedMinutes)}{estimatedMinutes > 0 ? ` / ${formatDuration(estimatedMinutes)}` : ''}
+            </Text>
           </View>
         )}
       </View>
@@ -480,17 +634,25 @@ export default function TaskDetailScreen() {
       >
         {activeTab === 'details' && (
           <View>
-            {task.description ? (
+            {(task.description || task.description_attachments?.length > 0) ? (
               <View style={s.section}>
                 <Text style={s.sectionTitle}>Description</Text>
-                <Text style={s.description}>{decodeHtml(task.description)}</Text>
+                {!!task.description && <Text style={s.description}>{stripTags(stripNonContentElements(task.description))}</Text>}
+                {task.description_attachments?.length > 0 && (
+                  // View-only here — deleting a description attachment is an edit
+                  // action, so it only lives on the Edit screen (CreateTaskScreen).
+                  <AttachmentList attachments={task.description_attachments} />
+                )}
               </View>
             ) : null}
             <View style={s.section}>
               <Text style={s.sectionTitle}>Info</Text>
               <View style={s.infoGrid}>
                 {task.created_at && <InfoRow icon="time-outline" label="Created" value={formatRelative(task.created_at)} colors={colors} s={s} />}
+                {creatorName && <InfoRow icon="person-circle-outline" label="Created By" value={creatorName} colors={colors} s={s} />}
                 {task.due_on && <InfoRow icon="calendar-outline" label="Due" value={formatDate(task.due_on)} colors={colors} s={s} />}
+                {task.project_name && <InfoRow icon="folder-open-outline" label="Project" value={task.project_name} colors={colors} s={s} />}
+                {task.milestone_title && <InfoRow icon="flag-outline" label="Milestone" value={task.milestone_title} colors={colors} s={s} />}
               </View>
             </View>
             {/* Assignee section */}
@@ -499,7 +661,17 @@ export default function TaskDetailScreen() {
               <TouchableOpacity style={s.assigneeRow} onPress={() => canEdit && setAssigneeModal(true)}>
                 {assigneeName ? (
                   <>
-                    <Avatar name={assigneeName} size={28} />
+                    <Avatar
+                      name={assigneeName}
+                      photoUrl={assigneeMember?.photo_url}
+                      size={28}
+                      onPress={() => setProfileUser({
+                        id: task.assigned_to_user_id,
+                        name: assigneeName,
+                        photoUrl: assigneeMember?.photo_url,
+                        email: assigneeMember?.email,
+                      })}
+                    />
                     <Text style={s.assigneeName}>{assigneeName}</Text>
                   </>
                 ) : (
@@ -516,9 +688,11 @@ export default function TaskDetailScreen() {
             {comments.map((c) => (
               <CommentItem
                 key={c.id}
-                comment={{ ...c, author_name: getCommentAuthorName(c) }}
+                comment={{ ...c, author_name: getCommentAuthorName(c), author_photo_url: getCommentAuthorPhoto(c) }}
                 canDelete={meId !== null && (c.author_user_id === meId || c.author_id === meId)}
                 onDelete={() => deleteComment(c.id)}
+                canEdit={meId !== null && (c.author_user_id === meId || c.author_id === meId)}
+                onEdit={(newBody) => editComment(c.id, newBody)}
               />
             ))}
             {comments.length === 0 && (
@@ -567,18 +741,124 @@ export default function TaskDetailScreen() {
 
         {activeTab === 'timelogs' && (
           <View>
-            {timeLogs.map((log) => (
-              <View key={log.id} style={s.logRow}>
-                <View style={s.logMain}>
-                  <View style={s.logTopRow}>
-                    <Text style={s.logUser}>{log.user_name ?? 'You'}</Text>
-                    <Text style={s.logDur}>{log.duration_seconds ? formatDurationSeconds(log.duration_seconds) : formatDuration(log.duration_minutes)}</Text>
+            <View style={s.tlHeader}>
+              <Text style={s.tlHeaderText}>
+                {timeLogsTotalMinutes > 0 ? `${formatDuration(timeLogsTotalMinutes)} total` : 'No time logged yet'}
+              </Text>
+              {!showAddTimeLog && (
+                <TouchableOpacity onPress={() => setShowAddTimeLog(true)} style={s.tlAddBtn} hitSlop={8}>
+                  <Ionicons name="add" size={16} color={colors.primary} />
+                  <Text style={s.tlAddBtnText}>Add</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {showAddTimeLog && (
+              <View style={s.tlForm}>
+                <View style={s.tlModeTabs}>
+                  <TouchableOpacity
+                    style={[s.tlModeTab, tlMode === 'range' && s.tlModeTabActive]}
+                    onPress={() => setTlMode('range')}
+                  >
+                    <Text style={[s.tlModeTabText, tlMode === 'range' && s.tlModeTabTextActive]}>Start→End</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[s.tlModeTab, tlMode === 'manual' && s.tlModeTabActive]}
+                    onPress={() => setTlMode('manual')}
+                  >
+                    <Text style={[s.tlModeTabText, tlMode === 'manual' && s.tlModeTabTextActive]}>Minutes</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {tlMode === 'range' ? (
+                  <>
+                    <View style={s.tlRow}>
+                      <View style={{ flex: 1 }}>
+                        <TimePickerField label="Start" value={tlStart} onChange={setTlStart} />
+                      </View>
+                      <Text style={s.tlArrow}>→</Text>
+                      <View style={{ flex: 1 }}>
+                        <TimePickerField label="End" value={tlEnd} onChange={setTlEnd} />
+                      </View>
+                    </View>
+                    <View style={s.tlRow}>
+                      <View style={{ flex: 1 }}>
+                        <DatePickerField label="Date" value={tlLoggedOn} onChange={setTlLoggedOn} maxDate={new Date()} containerStyle={{ marginBottom: 0 }} />
+                      </View>
+                      {tlRangePreview != null && (
+                        <Text style={s.tlPreview}>{formatDuration(tlRangePreview)}</Text>
+                      )}
+                    </View>
+                  </>
+                ) : (
+                  <View style={s.tlRow}>
+                    <TextInput
+                      style={[s.tlInput, { flex: 1 }]}
+                      placeholder="Minutes (e.g. 5)"
+                      placeholderTextColor={colors.gray400}
+                      keyboardType="number-pad"
+                      value={tlMinutes}
+                      onChangeText={setTlMinutes}
+                    />
+                    <View style={{ flex: 1 }}>
+                      <DatePickerField value={tlLoggedOn} onChange={setTlLoggedOn} maxDate={new Date()} containerStyle={{ marginBottom: 0 }} />
+                    </View>
                   </View>
-                  <Text style={s.logDate}>{formatLogEntry(log.created_at) || formatDate(log.logged_on)}</Text>
+                )}
+
+                <TextInput
+                  style={s.tlInput}
+                  placeholder="Note *"
+                  placeholderTextColor={colors.gray400}
+                  value={tlNotes}
+                  onChangeText={setTlNotes}
+                  maxLength={500}
+                />
+
+                {!!tlError && <Text style={s.tlErrorText}>{tlError}</Text>}
+
+                <View style={s.tlFormActions}>
+                  <TouchableOpacity style={s.tlCancelBtn} onPress={cancelAddTimeLog} disabled={tlPosting}>
+                    <Text style={s.tlCancelText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[s.tlLogBtn, (tlPosting || (tlMode === 'manual' && !tlMinutes)) && { opacity: 0.5 }]}
+                    onPress={addTimeLogEntry}
+                    disabled={tlPosting || (tlMode === 'manual' && !tlMinutes)}
+                  >
+                    {tlPosting ? <ActivityIndicator size="small" color="#fff" /> : <Text style={s.tlLogText}>Log</Text>}
+                  </TouchableOpacity>
                 </View>
               </View>
-            ))}
-            {timeLogs.length === 0 && <Text style={s.empty}>No time logged yet.</Text>}
+            )}
+
+            {timeLogs.map((log) => {
+              const canDeleteLog = log.user_id === meId || isAdmin;
+              const logUserName = log.user_id === meId
+                ? 'You'
+                : (log.user_name || resolveMemberName(members, log.user_id) || 'Team Member');
+              return (
+                <View key={log.id} style={s.logRow}>
+                  <View style={s.logMain}>
+                    <View style={s.logTopRow}>
+                      <Text style={s.logUser}>{logUserName}</Text>
+                      <Text style={s.logDur}>{log.duration_seconds ? formatDurationSeconds(log.duration_seconds) : formatDuration(log.duration_minutes)}</Text>
+                    </View>
+                    <Text style={s.logDate}>
+                      {formatLogEntry(log.created_at) || formatDate(log.logged_on)}
+                      {log.start_time && log.end_time ? `  ·  ${log.start_time}–${log.end_time}` : ''}
+                    </Text>
+                    {!!log.notes && <Text style={s.logNotes} numberOfLines={2}>"{log.notes}"</Text>}
+                  </View>
+                  {canDeleteLog && (
+                    <TouchableOpacity onPress={() => deleteTimeLogEntry(log.id)} hitSlop={8} style={s.logDeleteBtn}>
+                      <Ionicons name="trash-outline" size={15} color={colors.danger} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              );
+            })}
+            {timeLogs.length === 0 && !showAddTimeLog && <Text style={s.empty}>No time logged yet.</Text>}
           </View>
         )}
 
@@ -610,7 +890,15 @@ export default function TaskDetailScreen() {
       </ScrollView>
 
       {activeTab === 'comments' && (
-        <View style={[s.inputBar, { paddingBottom: insets.bottom + 8 }]}>
+        <>
+          <AttachmentChips files={pendingCommentFiles} onRemove={removePendingCommentFile} uploading={uploadingCommentFiles} containerStyle={{ paddingHorizontal: 16, paddingBottom: 8 }} />
+          {/* No insets.bottom here — this screen renders inside the tab navigator,
+              whose own tabBarStyle already reserves the device's bottom safe area
+              below it, so adding it again just left a dead gap above the tab bar. */}
+          <View style={[s.inputBar, { paddingBottom: 8 }]}>
+            <TouchableOpacity onPress={pickCommentFiles} style={s.attachBtn} disabled={uploadingCommentFiles}>
+              <Ionicons name="attach" size={20} color={colors.gray400} />
+            </TouchableOpacity>
           <TextInput
             style={s.inputField}
             placeholder="Add a comment..."
@@ -622,10 +910,11 @@ export default function TaskDetailScreen() {
           <TouchableOpacity onPress={postComment} style={s.sendBtn} disabled={saving}>
             {saving ? <ActivityIndicator size="small" color="#ffffff" /> : <Ionicons name="send" size={18} color="#ffffff" />}
           </TouchableOpacity>
-        </View>
+          </View>
+        </>
       )}
       {activeTab === 'checklist' && (
-        <View style={[s.inputBar, { paddingBottom: insets.bottom + 8 }]}>
+        <View style={[s.inputBar, { paddingBottom: 8 }]}>
           <TextInput
             style={s.inputField}
             placeholder="Add checklist item..."
@@ -638,46 +927,6 @@ export default function TaskDetailScreen() {
           </TouchableOpacity>
         </View>
       )}
-
-      {/* Edit Task Modal */}
-      <Modal visible={editModal} transparent animationType="slide" onRequestClose={() => setEditModal(false)}>
-        <KeyboardAvoidingView style={s.modalOverlay} behavior="padding">
-          <View style={[s.modalSheet, { paddingBottom: insets.bottom + 16, maxHeight: '80%' }]}>
-            <View style={s.modalHandle} />
-            <Text style={s.modalTitle}>Edit Task</Text>
-            <Text style={[s.sectionTitle, { marginTop: 4, marginBottom: 6 }]}>Title</Text>
-            <TextInput
-              style={[s.editInput, { color: colors.textPrimary, borderColor: colors.border, backgroundColor: colors.gray50 }]}
-              value={editTitle}
-              onChangeText={setEditTitle}
-              placeholder="Task title"
-              placeholderTextColor={colors.gray400}
-            />
-            <Text style={[s.sectionTitle, { marginTop: 12, marginBottom: 6 }]}>Description</Text>
-            <TextInput
-              style={[s.editInput, s.editInputMulti, { color: colors.textPrimary, borderColor: colors.border, backgroundColor: colors.gray50 }]}
-              value={editDescription}
-              onChangeText={setEditDescription}
-              placeholder="Describe the task..."
-              placeholderTextColor={colors.gray400}
-              multiline
-              numberOfLines={5}
-              textAlignVertical="top"
-            />
-            <View style={s.editActions}>
-              <TouchableOpacity style={s.editCancel} onPress={() => setEditModal(false)}>
-                <Text style={s.editCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={s.editSave} onPress={handleSaveEdit} disabled={saving}>
-                {saving
-                  ? <ActivityIndicator color="#fff" size="small" />
-                  : <Text style={s.editSaveText}>Save</Text>
-                }
-              </TouchableOpacity>
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
 
       {/* Status picker modal */}
       <Modal visible={statusModal} transparent animationType="slide" onRequestClose={() => setStatusModal(false)}>
@@ -732,8 +981,8 @@ export default function TaskDetailScreen() {
                     style={[s.modalOption, isActive && s.modalOptionActive]}
                     onPress={() => changeAssignee(uid)}
                   >
-                    <Avatar name={name} size={28} />
-                    <Text style={[s.modalOptionText, isActive && { color: colors.primary, fontWeight: '700' }]}>
+                    <Avatar name={name} photoUrl={m.photo_url} size={28} />
+                    <Text style={[s.modalOptionText, isActive && { color: colors.primary, fontWeight: '700' }]} numberOfLines={1}>
                       {name}
                     </Text>
                     {isActive && <Ionicons name="checkmark" size={18} color={colors.primary} style={{ marginLeft: 'auto' }} />}
@@ -744,6 +993,7 @@ export default function TaskDetailScreen() {
           </View>
         </TouchableOpacity>
       </Modal>
+      <UserProfileModal user={profileUser} onClose={() => setProfileUser(null)} />
     </View>
     </KeyboardAvoidingView>
   );
@@ -753,8 +1003,8 @@ function InfoRow({ icon, label, value, colors, s }: { icon: keyof typeof Ionicon
   return (
     <View style={s.infoRow}>
       <Ionicons name={icon} size={14} color={colors.gray400} />
-      <Text style={s.infoLabel}>{label}:</Text>
-      <Text style={s.infoValue}>{value}</Text>
+      <Text style={s.infoLabel} numberOfLines={1}>{label}:</Text>
+      <Text style={s.infoValue} numberOfLines={1}>{value}</Text>
     </View>
   );
 }
@@ -775,6 +1025,8 @@ function makeStyles(c: AppColors) {
     timerActive: { borderColor: c.danger },
     timerBtnBlurred: { opacity: 0.35 },
     timerText: { fontSize: 13, fontWeight: '600', color: c.primary },
+    timeSummary: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    timeSummaryText: { fontSize: 12, fontWeight: '800', fontVariant: ['tabular-nums'] as any },
     statusBtn: {
       flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5,
       paddingVertical: 9, borderRadius: 10, borderWidth: 1.5, borderColor: c.primary,
@@ -792,7 +1044,7 @@ function makeStyles(c: AppColors) {
     description: { fontSize: 14, color: c.gray700, lineHeight: 22 },
     infoGrid: { gap: 8 },
     infoRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-    infoLabel: { fontSize: 13, color: c.gray500, width: 60 },
+    infoLabel: { fontSize: 13, color: c.gray500, width: 98, flexShrink: 0 },
     infoValue: { fontSize: 13, color: c.textPrimary, flex: 1 },
     assigneeRow: {
       flexDirection: 'row', alignItems: 'center', gap: 10,
@@ -808,12 +1060,42 @@ function makeStyles(c: AppColors) {
     progressBar: { height: 6, backgroundColor: c.gray100, borderRadius: 3, overflow: 'hidden' },
     progressFill: { height: '100%', backgroundColor: c.primary, borderRadius: 3 },
     empty: { fontSize: 14, color: c.gray400, textAlign: 'center', marginTop: 40 },
-    logRow: { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: c.border },
+    logRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: c.border },
     logMain: { flex: 1 },
     logTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 },
     logUser: { fontSize: 13, fontWeight: '600', color: c.textPrimary },
     logDur: { fontSize: 13, fontWeight: '700', color: c.primary },
     logDate: { fontSize: 11, color: c.gray400 },
+    logNotes: { fontSize: 11, color: c.textMuted, fontStyle: 'italic', marginTop: 3 },
+    logDeleteBtn: { padding: 2, marginTop: 2 },
+
+    // Time-log "+ Add" form
+    tlHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+    tlHeaderText: { fontSize: 13, fontWeight: '600', color: c.textSecondary },
+    tlAddBtn: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+    tlAddBtnText: { fontSize: 13, fontWeight: '700', color: c.primary },
+    tlForm: {
+      backgroundColor: c.gray50, borderRadius: 12, padding: 12, marginBottom: 14,
+      borderWidth: 1, borderColor: c.border, gap: 10,
+    },
+    tlModeTabs: { flexDirection: 'row', gap: 8 },
+    tlModeTab: { flex: 1, alignItems: 'center', paddingVertical: 7, borderRadius: 8, backgroundColor: c.surface, borderWidth: 1, borderColor: c.border },
+    tlModeTabActive: { backgroundColor: c.primary, borderColor: c.primary },
+    tlModeTabText: { fontSize: 12, fontWeight: '600', color: c.textSecondary },
+    tlModeTabTextActive: { color: '#fff' },
+    tlRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    tlArrow: { fontSize: 14, color: c.gray400, marginTop: 24 },
+    tlPreview: { fontSize: 13, fontWeight: '700', color: c.primary, marginLeft: 4 },
+    tlInput: {
+      backgroundColor: c.surface, borderWidth: 1, borderColor: c.border, borderRadius: 8,
+      paddingHorizontal: 10, paddingVertical: 9, fontSize: 13, color: c.textPrimary,
+    },
+    tlErrorText: { fontSize: 12, color: c.danger },
+    tlFormActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8 },
+    tlCancelBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, backgroundColor: c.gray100 },
+    tlCancelText: { fontSize: 12, fontWeight: '600', color: c.textSecondary },
+    tlLogBtn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8, backgroundColor: c.primary, minWidth: 60, alignItems: 'center' },
+    tlLogText: { fontSize: 12, fontWeight: '700', color: '#fff' },
     inputBar: {
       flexDirection: 'row', alignItems: 'flex-end', gap: 10,
       backgroundColor: c.surface, paddingHorizontal: 16, paddingTop: 10,
@@ -827,6 +1109,7 @@ function makeStyles(c: AppColors) {
       width: 38, height: 38, borderRadius: 19, backgroundColor: c.primary,
       alignItems: 'center', justifyContent: 'center',
     },
+    attachBtn: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
     // Modals
     modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
     modalSheet: {
@@ -840,7 +1123,7 @@ function makeStyles(c: AppColors) {
       paddingVertical: 12, paddingHorizontal: 8, borderRadius: 10,
     },
     modalOptionActive: { backgroundColor: c.primaryLight },
-    modalOptionText: { fontSize: 15, color: c.textPrimary },
+    modalOptionText: { fontSize: 15, color: c.textPrimary, flex: 1 },
     statusDot: { width: 10, height: 10, borderRadius: 5 },
     // Timeline
     timelineRow: { flexDirection: 'row', marginBottom: 16 },

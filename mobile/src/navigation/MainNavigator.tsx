@@ -36,6 +36,7 @@ import ChatListScreen from '../screens/chat/ChatListScreen';
 import ChatThreadScreen from '../screens/chat/ChatThreadScreen';
 import NewConversationScreen from '../screens/chat/NewConversationScreen';
 import GroupInfoScreen from '../screens/chat/GroupInfoScreen';
+import ForwardMessageScreen from '../screens/chat/ForwardMessageScreen';
 import MoreHomeScreen from '../screens/more/MoreHomeScreen';
 import ProjectsListScreen from '../screens/projects/ProjectsListScreen';
 import ProjectDetailScreen from '../screens/projects/ProjectDetailScreen';
@@ -43,6 +44,8 @@ import CreateEditProjectScreen from '../screens/projects/CreateEditProjectScreen
 import AgreementsListScreen from '../screens/contracts/AgreementsListScreen';
 import AgreementDetailScreen from '../screens/contracts/AgreementDetailScreen';
 import CreateEditAgreementScreen from '../screens/contracts/CreateEditAgreementScreen';
+import ServicesListScreen from '../screens/contracts/ServicesListScreen';
+import CreateEditServiceScreen from '../screens/contracts/CreateEditServiceScreen';
 import RoutinesScreen from '../screens/routines/RoutinesScreen';
 import BusinessReviewsListScreen from '../screens/businessReviews/BusinessReviewsListScreen';
 import BusinessReviewDetailScreen from '../screens/businessReviews/BusinessReviewDetailScreen';
@@ -50,6 +53,8 @@ import CreateBusinessReviewScreen from '../screens/businessReviews/CreateBusines
 import MyOrganisationScreen from '../screens/organisation/MyOrganisationScreen';
 import ReportsListScreen from '../screens/reports/ReportsListScreen';
 import GenericReportScreen from '../screens/reports/GenericReportScreen';
+import PoliciesListScreen from '../screens/policies/PoliciesListScreen';
+import PolicyDetailScreen from '../screens/policies/PolicyDetailScreen';
 
 const Tab = createBottomTabNavigator<MainTabParamList>();
 const TasksStack = createNativeStackNavigator<TasksStackParamList>();
@@ -103,6 +108,7 @@ function AdminNavigator() {
       <AdminStack.Screen name="InviteMember" component={InviteMemberScreen} />
       <AdminStack.Screen name="ClientsList" component={ClientsListScreen} />
       <AdminStack.Screen name="CreateEditClient" component={CreateEditClientScreen} />
+      <AdminStack.Screen name="MyOrganisation" component={MyOrganisationScreen} />
     </AdminStack.Navigator>
   );
 }
@@ -115,6 +121,7 @@ function ChatNavigator() {
       <ChatStack.Screen name="ChatThread" component={ChatThreadScreen} />
       <ChatStack.Screen name="NewConversation" component={NewConversationScreen} options={{ presentation: 'modal' }} />
       <ChatStack.Screen name="GroupInfo" component={GroupInfoScreen} />
+      <ChatStack.Screen name="ForwardMessage" component={ForwardMessageScreen} options={{ presentation: 'modal' }} />
     </ChatStack.Navigator>
   );
 }
@@ -130,6 +137,8 @@ function MoreNavigator() {
       <MoreStack.Screen name="AgreementsList" component={AgreementsListScreen} />
       <MoreStack.Screen name="AgreementDetail" component={AgreementDetailScreen} />
       <MoreStack.Screen name="CreateEditAgreement" component={CreateEditAgreementScreen} />
+      <MoreStack.Screen name="ServicesList" component={ServicesListScreen} />
+      <MoreStack.Screen name="CreateEditService" component={CreateEditServiceScreen} />
       <MoreStack.Screen name="Routines" component={RoutinesScreen} />
       <MoreStack.Screen name="BusinessReviewsList" component={BusinessReviewsListScreen} />
       <MoreStack.Screen name="BusinessReviewDetail" component={BusinessReviewDetailScreen} />
@@ -138,6 +147,8 @@ function MoreNavigator() {
       <MoreStack.Screen name="ReportsList" component={ReportsListScreen} />
       <MoreStack.Screen name="TaskReports" component={TaskReportsScreen} />
       <MoreStack.Screen name="ReportView" component={GenericReportScreen} />
+      <MoreStack.Screen name="PoliciesList" component={PoliciesListScreen} />
+      <MoreStack.Screen name="PolicyDetail" component={PolicyDetailScreen} />
     </MoreStack.Navigator>
   );
 }

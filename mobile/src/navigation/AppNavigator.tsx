@@ -10,6 +10,7 @@ import AuthNavigator from './AuthNavigator';
 import MainNavigator from './MainNavigator';
 import WorkspaceSelectScreen from '../screens/workspace/WorkspaceSelectScreen';
 import NotificationsScreen from '../screens/notifications/NotificationsScreen';
+import AccountSecurityScreen from '../screens/profile/AccountSecurityScreen';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import AlertModal, { alertRef } from '../components/common/AlertModal';
 
@@ -84,6 +85,7 @@ function Navigator() {
                 component={NotificationsScreen}
                 options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
               />
+              <Stack.Screen name="AccountSecurity" component={AccountSecurityScreen} />
             </>
           )}
         </Stack.Navigator>

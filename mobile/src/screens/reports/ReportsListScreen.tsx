@@ -29,8 +29,8 @@ export default function ReportsListScreen() {
   ].filter((i) => i.show);
 
   return (
-    <View style={[s.container, { paddingTop: insets.top }]}>
-      <View style={s.header}>
+    <View style={s.container}>
+      <View style={[s.header, { paddingTop: insets.top + 12 }]}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn}>
           <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
         </TouchableOpacity>
@@ -39,8 +39,8 @@ export default function ReportsListScreen() {
       </View>
       <ScrollView contentContainerStyle={s.list} showsVerticalScrollIndicator={false}>
         {items.map((item) => (
-          <TouchableOpacity key={item.key} style={s.card} activeOpacity={0.7} onPress={item.onPress}>
-            <View style={[s.iconBox, { backgroundColor: item.color + '18' }]}>
+          <TouchableOpacity key={item.key} style={[s.card, { borderLeftColor: item.color }]} activeOpacity={0.7} onPress={item.onPress}>
+            <View style={[s.iconBox, { backgroundColor: item.color + '1c' }]}>
               <Ionicons name={item.icon} size={20} color={item.color} />
             </View>
             <View style={{ flex: 1 }}>
@@ -61,7 +61,7 @@ function makeStyles(c: AppColors) {
     container: { flex: 1, backgroundColor: c.background },
     header: {
       flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-      paddingHorizontal: 16, paddingVertical: 12,
+      paddingHorizontal: 16, paddingBottom: 16,
       backgroundColor: c.surface, borderBottomWidth: 1, borderBottomColor: c.border,
     },
     backBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
@@ -70,7 +70,8 @@ function makeStyles(c: AppColors) {
     card: {
       flexDirection: 'row', alignItems: 'center', gap: 12,
       backgroundColor: c.surface, borderRadius: 14, padding: 14,
-      borderWidth: 1, borderColor: c.border,
+      borderWidth: 1, borderColor: c.border, borderLeftWidth: 4,
+      shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 6, elevation: 1,
     },
     iconBox: { width: 40, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
     cardLabel: { fontSize: 14, fontWeight: '700', color: c.textPrimary },

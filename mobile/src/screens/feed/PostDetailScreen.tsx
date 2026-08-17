@@ -18,18 +18,12 @@ import CommentItem from '../../components/tasks/CommentItem';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import LoadError from '../../components/common/LoadError';
 import { useLoadWithTimeout } from '../../hooks/useLoadWithTimeout';
+import PostContentView from '../../components/feed/PostContentView';
+import AttachmentList from '../../components/common/AttachmentList';
 
 type Route = RouteProp<FeedStackParamList, 'PostDetail'>;
 
 const REACTIONS = ['❤️', '👍', '🎉', '👏', '🔥'];
-
-function decodeHtml(str: string) {
-  return str
-    .replace(/<[^>]*>/g, '')
-    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ')
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
-}
 
 export default function PostDetailScreen() {
   const route = useRoute<Route>();
@@ -54,8 +48,9 @@ export default function PostDetailScreen() {
   const { loading, loadError, run } = useLoadWithTimeout();
 
   const load = useCallback(async () => {
-    setPost(null);
-    setComments([]);
+    // Don't null post/comments before the fetch — on pull-to-refresh this
+    // would flash "Post not found" while the request is still in flight.
+    // The new data just overwrites the old once it arrives.
     const [posts, cmts] = await Promise.all([
       api.feed.list(appId),
       api.feed.getComments(appId, postId),
@@ -118,14 +113,27 @@ export default function PostDetailScreen() {
     </View>
   );
 
-  const preview = decodeHtml(post.content ?? '');
   const authorName = post.author_name
     ?? ([post.author?.first_name, post.author?.last_name].filter(Boolean).join(' ') || post.author?.email || 'Unknown');
 
+  // Mirrors the backend's own rule (author-only, within 15 minutes of
+  // posting) — same check as FeedScreen's list view.
+  const canEdit = meId !== null && post.author_user_id === meId
+    && (Date.now() - new Date(post.created_at).getTime()) <= 15 * 60 * 1000;
+
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
     <View style={[s.container, { paddingTop: insets.top }]}>
-      <ScreenHeader title="Post" showBack onBack={handleBack} />
+      <ScreenHeader
+        title="Post"
+        showBack
+        onBack={handleBack}
+        right={canEdit ? (
+          <TouchableOpacity onPress={() => navigation.navigate('CreatePost', { appId, postId: post.id, initialContent: post.content })}>
+            <Ionicons name="create-outline" size={22} color={colors.primary} />
+          </TouchableOpacity>
+        ) : undefined}
+      />
       <ScrollView
         contentContainerStyle={s.content}
         showsVerticalScrollIndicator={false}
@@ -133,13 +141,16 @@ export default function PostDetailScreen() {
       >
         <View style={s.postCard}>
           <View style={s.postHeader}>
-            <Avatar name={authorName} size={42} />
+            <Avatar name={authorName} photoUrl={post.author?.photo_url} size={42} />
             <View style={s.postMeta}>
               <Text style={s.authorName}>{authorName}</Text>
               <Text style={s.postTime}>{formatRelative(post.created_at)}</Text>
             </View>
           </View>
-          <Text style={s.postContent}>{preview}</Text>
+          <PostContentView content={post.content ?? ''} colors={colors} textStyle={s.postContent} />
+          {!!post.attachments?.length && (
+            <AttachmentList attachments={post.attachments} imageMaxWidth={240} imageMaxHeight={180} />
+          )}
 
           <View style={s.reactionsRow}>
             {REACTIONS.map((emoji) => {
@@ -181,7 +192,9 @@ export default function PostDetailScreen() {
         )}
       </ScrollView>
 
-      <View style={[s.inputBar, { paddingBottom: insets.bottom + 8 }]}>
+      {/* No insets.bottom — this screen sits inside the tab navigator, whose
+          tabBarStyle already reserves the device's bottom safe area below it. */}
+      <View style={[s.inputBar, { paddingBottom: 8 }]}>
         <TextInput
           style={s.inputField}
           placeholder="Write a comment..."

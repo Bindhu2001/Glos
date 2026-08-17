@@ -1,5 +1,6 @@
-import React, { forwardRef, useImperativeHandle, useMemo, useState } from 'react';
+import React, { forwardRef, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../contexts/ThemeContext';
 import { AppColors } from '../../utils/colors';
@@ -12,35 +13,48 @@ export interface AlertButton {
 }
 
 export interface AlertHandle {
-  show: (title: string, message?: string, buttons?: AlertButton[]) => void;
+  show: (title: string, message?: string, buttons?: AlertButton[], onClose?: () => void) => void;
 }
 
 export const alertRef = React.createRef<AlertHandle>();
 
-export function showAlert(title: string, message?: string, buttons?: AlertButton[]) {
-  alertRef.current?.show(title, message, buttons);
+// onClose fires whenever the modal is dismissed, regardless of how (button
+// tap, Cancel, backdrop tap, hardware back) — callers use it to know when a
+// menu opened against some piece of state (e.g. a highlighted list row) has
+// actually gone away, since button onPress alone only covers one exit path.
+export function showAlert(title: string, message?: string, buttons?: AlertButton[], onClose?: () => void) {
+  alertRef.current?.show(title, message, buttons, onClose);
 }
 
 const AlertModal = forwardRef<AlertHandle>((_, ref) => {
   const { colors } = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
+  const insets = useSafeAreaInsets();
 
   const [visible, setVisible] = useState(false);
   const [title, setTitle] = useState('');
   const [message, setMessage] = useState('');
   const [buttons, setButtons] = useState<AlertButton[]>([{ text: 'OK' }]);
+  const onCloseRef = useRef<(() => void) | null>(null);
 
   useImperativeHandle(ref, () => ({
-    show: (t, m, btns) => {
+    show: (t, m, btns, onClose) => {
       setTitle(t);
       setMessage(m ?? '');
       setButtons(btns?.length ? btns : [{ text: 'OK' }]);
+      onCloseRef.current = onClose ?? null;
       setVisible(true);
     },
   }));
 
-  const handleButton = (btn: AlertButton) => {
+  const close = () => {
     setVisible(false);
+    onCloseRef.current?.();
+    onCloseRef.current = null;
+  };
+
+  const handleButton = (btn: AlertButton) => {
+    close();
     btn.onPress?.();
   };
 
@@ -52,9 +66,9 @@ const AlertModal = forwardRef<AlertHandle>((_, ref) => {
     const actionBtns = buttons.filter(b => b.style !== 'cancel');
 
     return (
-      <Modal visible={visible} transparent animationType="slide" statusBarTranslucent onRequestClose={() => setVisible(false)}>
-        <TouchableOpacity style={s.sheetOverlay} activeOpacity={1} onPress={() => setVisible(false)}>
-          <View style={s.sheetWrap}>
+      <Modal visible={visible} transparent animationType="slide" statusBarTranslucent onRequestClose={close}>
+        <TouchableOpacity style={s.sheetOverlay} activeOpacity={1} onPress={close}>
+          <View style={[s.sheetWrap, { paddingBottom: insets.bottom + 16 }]}>
             <View style={s.sheetContainer}>
               <View style={s.sheetHeader}>
                 <Text style={s.sheetTitle}>{title}</Text>
@@ -107,7 +121,7 @@ const AlertModal = forwardRef<AlertHandle>((_, ref) => {
   }
 
   return (
-    <Modal visible={visible} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setVisible(false)}>
+    <Modal visible={visible} transparent animationType="fade" statusBarTranslucent onRequestClose={close}>
       <View style={s.overlay}>
         <View style={s.container}>
           <Text style={s.title}>{title}</Text>

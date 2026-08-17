@@ -1,10 +1,11 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, RefreshControl,
   TouchableOpacity, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { useAudioPlayer } from 'expo-audio';
 import { Ionicons } from '@expo/vector-icons';
 import { useApi } from '../../hooks/useApi';
 import { useWorkspace } from '../../contexts/WorkspaceContext';
@@ -17,6 +18,7 @@ import LoadError from '../../components/common/LoadError';
 import Logo from '../../components/common/Logo';
 import Avatar from '../../components/common/Avatar';
 import { useLoadWithTimeout } from '../../hooks/useLoadWithTimeout';
+import { stripNonContentElements, stripTags } from '../../utils/postContent';
 import BusinessReviewCalendarWidget from './widgets/BusinessReviewCalendarWidget';
 import HoursTrendWidget from './widgets/HoursTrendWidget';
 import LeaderboardWidget, { LeaderboardEntry } from './widgets/LeaderboardWidget';
@@ -24,6 +26,7 @@ import TaskCompletionWidget from './widgets/TaskCompletionWidget';
 import TeamRoutineAnalysisWidget from './widgets/TeamRoutineAnalysisWidget';
 import AppreciationsFeedbackWidget from './widgets/AppreciationsFeedbackWidget';
 import TeamActivityTableWidget from './widgets/TeamActivityTableWidget';
+import BusinessReviewsTableWidget from './widgets/BusinessReviewsTableWidget';
 
 const PROJECT_STATUS_COLORS: Record<string, string> = {
   active: '#38bdf8', completed: '#4ade80', overdue: '#f87171', near_end: '#fbbf24', inactive: '#94a3b8', deleted: '#f87171',
@@ -88,6 +91,7 @@ interface TeamDashData {
   members?: TeamMember[];
   sub_managers?: Array<{ user_id: number; name: string }>;
   min_hours_per_week?: number;
+  min_hours_per_day?: number;
   team_totals?: {
     member_count?: number;
     hours_this_week?: number;
@@ -95,7 +99,7 @@ interface TeamDashData {
     total_overdue?: number;
     team_tasks?: { completed?: number; in_progress?: number; on_hold?: number; delayed?: number; total?: number };
     team_productivity?: number;
-    team_activity?: Array<{ actor_name?: string; action?: string; item?: string; ts?: string; tag?: string }>;
+    ontime_completion?: number;
     team_mood?: number;
     manager_name?: string;
     org_name?: string;
@@ -138,23 +142,24 @@ function initials(name?: string) {
   return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
 }
 
-function decodeHtml(str: string) {
-  return str
-    .replace(/<[^>]*>/g, '')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
+// Matches web's TeamDashboard.jsx MoodGauge exactly — same >=8/>=6 thresholds
+// for emoji, color, and label, so the same score reads the same way on both.
+function getMoodLabel(score: number): string {
+  if (score >= 8) return 'Great Team Vibes!';
+  if (score >= 6) return 'Good Energy';
+  return 'Needs Attention';
 }
 
-function getMoodLabel(score: number): string {
-  if (score >= 8) return 'Excellent';
-  if (score >= 6) return 'Good';
-  if (score >= 4) return 'Fair';
-  return 'Needs attention';
+function getMoodEmoji(score: number): string {
+  if (score >= 8) return '😄';
+  if (score >= 6) return '🙂';
+  return '😟';
+}
+
+function getMoodColor(score: number, colors: AppColors): string {
+  if (score >= 8) return colors.success;
+  if (score >= 6) return colors.warning;
+  return colors.danger;
 }
 
 function getMemberName(m: TeamMember): string {
@@ -172,7 +177,7 @@ function getMemberScore(m: TeamMember): number {
 }
 
 function getMemberWorkloadHrs(m: TeamMember): number {
-  return (m.tasks?.not_started_est_hrs ?? 0) + (m.tasks?.in_progress_est_hrs ?? 0);
+  return Number(m.tasks?.not_started_est_hrs ?? 0) + Number(m.tasks?.in_progress_est_hrs ?? 0);
 }
 
 const PODIUM_ICONS = ['🥇', '🥈', '🥉'];
@@ -181,18 +186,49 @@ export default function DashboardScreen() {
   const api = useApi();
   const { workspace, setWorkspace } = useWorkspace();
   const { isAdmin, canSeeTeamContent } = useHasTeam();
-  const { colors } = useTheme();
+  const { colors, isDark, toggleTheme } = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
 
+  // Cross-tab navigation into a nested MoreStack screen: without seeding
+  // MoreHome first, the target screen becomes MoreStack's sole/initial
+  // route, so its back button has nothing local to pop and falls through to
+  // the tab navigator instead — bouncing the user back to Home rather than
+  // to the More tab's own root, like every other stack behaves.
+  const goToMore = useCallback((screen: string, params?: Record<string, unknown>) => {
+    // Two synchronous navigate() calls race against React Navigation's own state
+    // batching — the second dispatch can read stale state and end up acting as if
+    // only the target screen was navigated to, i.e. it becomes the stack's sole
+    // route again. `initial: false` is the documented single-dispatch fix: it
+    // seeds the nested stack with its default initial route (MoreHome) and pushes
+    // the target on top atomically, so back always lands on MoreHome.
+    navigation.navigate('MoreTab', { screen, params, initial: false } as never);
+  }, [navigation]);
+
   const [data, setData] = useState<DashData | null>(null);
   const [teamData, setTeamData] = useState<TeamDashData | null>(null);
+  const [pendingBusinessReviews, setPendingBusinessReviews] = useState(0);
   const [userName, setUserName] = useState('');
   const [myPhotoUrl, setMyPhotoUrl] = useState<string | null>(null);
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [unread, setUnread] = useState(0);
+  // Web's NotificationBell.jsx polls every 30s and dings on an increase —
+  // mobile had no equivalent at all: unread count only ever refreshed on
+  // load/refocus, and silently, with no sound. Reuses the same nudge sound
+  // asset as chat (see useChatUnread.ts) rather than adding a second one.
+  const notifPlayer = useAudioPlayer(require('../../../assets/sounds/nudge.wav'));
+  const notifPlayerRef = useRef(notifPlayer);
+  notifPlayerRef.current = notifPlayer;
+  const prevUnreadRef = useRef<number | null>(null);
+  const applyUnread = useCallback((count: number) => {
+    if (prevUnreadRef.current !== null && count > prevUnreadRef.current) {
+      try { notifPlayerRef.current.seekTo(0); notifPlayerRef.current.play(); } catch {}
+    }
+    prevUnreadRef.current = count;
+    setUnread(count);
+  }, []);
   const [dashView, setDashView] = useState<DashView>('my');
   const [mgrScope, setMgrScope] = useState<'direct' | 'all' | 'admin'>('direct');
   const [viewAs, setViewAs] = useState<number | null>(null);
@@ -204,6 +240,7 @@ export default function DashboardScreen() {
   const [wished, setWished] = useState<Set<number>>(new Set());
   const [myProjects, setMyProjects] = useState<any[]>([]);
   const [myRoutines, setMyRoutines] = useState<RoutineStat[]>([]);
+  const [myRoutinesEfficiency, setMyRoutinesEfficiency] = useState<number | null>(null);
 
   // Team Dashboard extra widgets
   const [teamRoutines, setTeamRoutines] = useState<TeamRoutineReportee[]>([]);
@@ -231,6 +268,7 @@ export default function DashboardScreen() {
     const projItems = proj.data?.items ?? proj.data ?? [];
     setMyProjects(Array.isArray(projItems) ? projItems : []);
     setMyRoutines(rout.data?.routine_stats ?? []);
+    setMyRoutinesEfficiency(rout.data?.overall_efficiency ?? null);
   }, [api, currentMonth]);
 
   // Admins default to the "admin" scope (equivalent to the old full-org
@@ -244,18 +282,23 @@ export default function DashboardScreen() {
 
   const loadTeamData = useCallback(async () => {
     if (!workspace || !canSeeTeamContent) return;
-    const teamRes = await api.dashboard.getManagerDashboard(workspace.id, mgrScope, undefined, viewAs ?? undefined);
-    setTeamData(teamRes.data);
-
     const apiScope = mgrScope === 'all' ? 'team' : mgrScope;
     const scopeViewAs = mgrScope === 'all' && viewAs != null ? viewAs : undefined;
-    const [routRes, apprRes] = await Promise.all([
+    // routRes/apprRes only depend on mgrScope/viewAs/currentMonth, not on
+    // teamRes — no reason to wait for getManagerDashboard before firing them.
+    const [teamRes, routRes, apprRes, bizRevRes] = await Promise.all([
+      api.dashboard.getManagerDashboard(workspace.id, mgrScope, undefined, viewAs ?? undefined),
       api.routines.getTeamDashboard(workspace.id, { mode: 'month', month: currentMonth, scope: mgrScope, view_as: scopeViewAs }).catch(() => ({ data: {} })),
       api.appreciations.getTeamStats(workspace.id, { scope: apiScope, month: currentMonth, view_as: scopeViewAs }).catch(() => ({ data: {} })),
+      // Matches web's TeamDashboard.jsx "Business Reviews Pending" hero tile —
+      // open daily/weekly/monthly check-ins this manager still needs to complete.
+      api.businessReviews.dashboard(workspace.id, {}).catch(() => ({ data: {} })),
     ]);
+    setTeamData(teamRes.data);
     setTeamRoutines(routRes.data?.reportees ?? []);
     setApprMembers(apprRes.data?.members ?? []);
     setApprTotals({ total_appr: apprRes.data?.total_appr ?? 0, total_fb: apprRes.data?.total_fb ?? 0 });
+    setPendingBusinessReviews((bizRevRes.data?.pending ?? []).length);
   }, [workspace, api, isAdmin, canSeeTeamContent, mgrScope, viewAs, currentMonth]);
 
   const load = useCallback(async () => {
@@ -265,7 +308,7 @@ export default function DashboardScreen() {
     const [appRes, dash, notif, me, feedRes, , , membersRes] = await Promise.all([
       api.workspace.getApp(workspace.id),
       api.dashboard.getMyDashboard(workspace.id),
-      api.notifications.unreadCount(),
+      api.notifications.unreadCount(workspace.id),
       api.me.getProfile(),
       api.feed.list(workspace.id),
       loadMyExtras(workspace.id),
@@ -275,7 +318,7 @@ export default function DashboardScreen() {
     const appData = appRes.data?.app ?? appRes.data;
     if (appData && appData.is_active === false) { setWorkspace(null); return; }
     setData(dash.data);
-    setUnread(notif.data.count ?? 0);
+    applyUnread(notif.data.count ?? 0);
     const first = me.data?.firstName ?? me.data?.first_name ?? '';
     const last = me.data?.lastName ?? me.data?.last_name ?? '';
     setUserName(`${first} ${last}`.trim() || first);
@@ -285,11 +328,24 @@ export default function DashboardScreen() {
     setMyPhotoUrl(myMember?.photo_url ?? null);
     const items = feedRes.data?.items ?? feedRes.data ?? [];
     setFeed(Array.isArray(items) ? items.slice(0, 3) : []);
-  }, [workspace, api, setWorkspace, loadMyExtras, loadTeamData]);
+  }, [workspace, api, setWorkspace, loadMyExtras, loadTeamData, applyUnread]);
 
   useEffect(() => { run(load); }, [load]);
 
   useEffect(() => { if (dashView === 'Team') loadTeamData(); }, [mgrScope, viewAs]);
+
+  // Matches web's 30s poll (NotificationBell.jsx) — mobile previously only
+  // ever refreshed the unread count on load/refocus, so a notification that
+  // arrived while the app just sat open on the Dashboard was never noticed
+  // until the user left and came back.
+  useEffect(() => {
+    if (!workspace) return;
+    const appId = workspace.id;
+    const id = setInterval(() => {
+      api.notifications.unreadCount(appId).then((r) => applyUnread(r.data.count ?? 0)).catch(() => {});
+    }, 30000);
+    return () => clearInterval(id);
+  }, [workspace, api, applyUnread]);
 
   const onWish = useCallback(async (userId: number, type: 'birthday' | 'work_anniversary') => {
     if (!workspace) return;
@@ -303,10 +359,10 @@ export default function DashboardScreen() {
 
   useFocusEffect(useCallback(() => {
     if (!workspace) return;
-    api.notifications.unreadCount()
-      .then((r) => setUnread(r.data.count ?? 0))
+    api.notifications.unreadCount(workspace.id)
+      .then((r) => applyUnread(r.data.count ?? 0))
       .catch(() => {});
-  }, [workspace, api]));
+  }, [workspace, api, applyUnread]));
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -318,13 +374,7 @@ export default function DashboardScreen() {
   if (loadError) return <LoadError onRetry={() => run(load)} />;
 
   const tasks = data?.tasks;
-  const total = tasks?.total ?? 0;
-  const done = tasks?.done ?? 0;
-  const inProgress = tasks?.in_progress ?? 0;
-  const overdue = tasks?.overdue ?? 0;
   const todayMins = data?.hours?.today?.minutes ?? 0;
-  const weekMins = data?.hours?.this_week?.minutes ?? 0;
-  const monthMins = data?.hours?.this_month?.minutes ?? 0;
   const displayName = userName || 'there';
   const now = new Date();
   const dateLabel = `${DAY_NAMES[now.getDay()]} · ${now.getDate()} ${MONTH_SHORT[now.getMonth()]}`;
@@ -340,8 +390,7 @@ export default function DashboardScreen() {
   }));
 
   const workloadSorted = [...members]
-    .sort((a, b) => getMemberWorkloadHrs(b) - getMemberWorkloadHrs(a))
-    .slice(0, 6);
+    .sort((a, b) => getMemberWorkloadHrs(b) - getMemberWorkloadHrs(a));
   const workloadMax = Math.max(...workloadSorted.map(getMemberWorkloadHrs), minHoursPerWeek);
 
   const taskTotal = tt?.team_tasks?.total ?? 0;
@@ -354,6 +403,11 @@ export default function DashboardScreen() {
       <View style={s.topBar}>
         <Logo size={54} width={170} />
         <View style={s.topRight}>
+          {/* Sun/moon matches the icon ProfileScreen's Dark Mode row already
+              uses — a quick-access twin of that same toggle, not a new one. */}
+          <TouchableOpacity style={s.iconBtn} onPress={toggleTheme}>
+            <Ionicons name={isDark ? 'moon' : 'sunny-outline'} size={20} color={colors.primary} />
+          </TouchableOpacity>
           <TouchableOpacity style={s.iconBtn} onPress={() => navigation.navigate('Notifications')}>
             <Ionicons name="notifications-outline" size={20} color={colors.primary} />
             {unread > 0 && <View style={s.notifDot} />}
@@ -418,77 +472,67 @@ export default function DashboardScreen() {
               </View>
             </View>
 
-            {/* This week logged card */}
-            <View style={s.loggedCard}>
-              <Text style={s.loggedLabel}>THIS WEEK · LOGGED</Text>
-              <Text style={s.loggedHours}>{formatDuration(weekMins)}</Text>
-              <Text style={s.loggedSub}>{total} tasks · {done} completed · {inProgress} in progress</Text>
-              <View style={s.loggedBtns}>
-                <TouchableOpacity style={s.logBtn} onPress={() => navigation.navigate('TasksTab')}>
-                  <Ionicons name="checkmark-circle-outline" size={14} color={colors.primary} />
-                  <Text style={s.logBtnTxt}>My Tasks</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[s.logBtn, s.logBtnTeal]} onPress={() => navigation.navigate('PerformanceTab', { screen: 'TaskReports' })}>
-                  <Ionicons name="bar-chart-outline" size={14} color={colors.secondary} />
-                  <Text style={[s.logBtnTxt, { color: colors.secondary }]}>Task Report</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {/* 2×2 Stats grid */}
-            <View style={s.statsGrid}>
-              <View style={[s.statCell, s.statCellBR]}>
-                <Text style={s.statPeriod}>TODAY</Text>
-                <Text style={s.statNum}>{formatDuration(todayMins)}</Text>
-                <Text style={s.statSub}>logged</Text>
-              </View>
-              <View style={[s.statCell, s.statCellB]}>
-                <Text style={s.statPeriod}>THIS WEEK</Text>
-                <Text style={[s.statNum, { color: colors.primary }]}>{formatDuration(weekMins)}</Text>
-                <Text style={s.statSub}>logged</Text>
-              </View>
-              <View style={[s.statCell, s.statCellR]}>
-                <Text style={s.statPeriod}>THIS MONTH</Text>
-                <Text style={[s.statNum, { color: colors.secondary }]}>{formatDuration(monthMins)}</Text>
-                <Text style={s.statSub}>logged</Text>
-              </View>
-              <View style={s.statCell}>
-                <Text style={s.statPeriod}>TASKS</Text>
-                <Text style={[s.statNum, { color: overdue > 0 ? colors.danger : colors.success }]}>
-                  {overdue > 0 ? overdue : done}
-                </Text>
-                <Text style={s.statSub}>{overdue > 0 ? 'overdue' : 'done'}</Text>
-              </View>
-            </View>
-
             {/* Today's Summary */}
             <View style={s.sectionCard}>
               <Text style={s.sectionHead}>TODAY'S SUMMARY</Text>
               <View style={s.todayGrid}>
-                <View style={s.todayCell}>
-                  <Text style={s.todayVal}>{tasks?.completed_today ?? 0}</Text>
+                <View style={s.todayTile}>
+                  <View style={s.todayTopRow}>
+                    <View style={[s.todayIconBox, { backgroundColor: colors.success + '1A' }]}>
+                      <Ionicons name="checkmark-done" size={16} color={colors.success} />
+                    </View>
+                    <Text style={s.todayVal}>{tasks?.completed_today ?? 0}</Text>
+                  </View>
                   <Text style={s.todayLbl}>Tasks Done</Text>
                 </View>
-                <View style={s.todayCell}>
-                  <Text style={s.todayVal}>{formatDuration(todayMins)}</Text>
+                <View style={s.todayTile}>
+                  <View style={s.todayTopRow}>
+                    <View style={[s.todayIconBox, { backgroundColor: colors.primary + '1A' }]}>
+                      <Ionicons name="time-outline" size={16} color={colors.primary} />
+                    </View>
+                    <Text style={s.todayVal}>{formatDuration(todayMins)}</Text>
+                  </View>
                   <Text style={s.todayLbl}>
                     Hours Logged{tasks?.today_planned_minutes ? ` / ${formatDuration(tasks.today_planned_minutes)}` : ''}
                   </Text>
                 </View>
-                <View style={s.todayCell}>
-                  <Text style={s.todayVal}>{tasks?.due_today ?? 0}</Text>
+                <View style={s.todayTile}>
+                  <View style={s.todayTopRow}>
+                    <View style={[s.todayIconBox, { backgroundColor: colors.secondary + '1A' }]}>
+                      <Ionicons name="calendar-outline" size={16} color={colors.secondary} />
+                    </View>
+                    <Text style={s.todayVal}>{tasks?.due_today ?? 0}</Text>
+                  </View>
                   <Text style={s.todayLbl}>Due Today</Text>
                 </View>
-                <View style={s.todayCell}>
+                <View style={s.todayTile}>
                   {(() => {
                     const otr = tasks?.today_on_time_pct ?? null;
                     const color = otr == null ? colors.textMuted : otr >= 80 ? colors.success : otr >= 50 ? colors.warning : colors.danger;
-                    return <Text style={[s.todayVal, { color }]}>{otr != null ? `${otr}%` : '—'}</Text>;
+                    return (
+                      <View style={s.todayTopRow}>
+                        <View style={[s.todayIconBox, { backgroundColor: color + '1A' }]}>
+                          <Ionicons name="trending-up-outline" size={16} color={color} />
+                        </View>
+                        <Text style={[s.todayVal, { color }]}>{otr != null ? `${otr}%` : '—'}</Text>
+                      </View>
+                    );
                   })()}
                   <Text style={s.todayLbl}>On-Time Rate</Text>
                 </View>
               </View>
             </View>
+
+            {/* Hours Logged Trend */}
+            <HoursTrendWidget
+              daily={data?.daily_trend ?? []}
+              weekly={data?.weekly_trend ?? []}
+              monthly={data?.monthly_trend ?? []}
+              colors={colors}
+            />
+
+            {/* GLOS Leaderboard */}
+            <LeaderboardWidget title="GLOS LEADERBOARD" entries={leaderboard} meId={data?.user?.id} colors={colors} />
 
             {/* Business Review Calendar */}
             {workspace && (
@@ -528,7 +572,10 @@ export default function DashboardScreen() {
             {/* My Performance Reviews */}
             {(data?.my_pending_reviews ?? []).length > 0 && (
               <View style={s.sectionCard}>
-                <Text style={s.sectionHead}>MY PERFORMANCE REVIEWS</Text>
+                <TouchableOpacity style={s.sectionHeadRow} onPress={() => navigation.navigate('PerformanceTab')}>
+                  <Text style={s.sectionHead}>MY PERFORMANCE REVIEWS</Text>
+                  <Ionicons name="chevron-forward" size={16} color={colors.gray400} />
+                </TouchableOpacity>
                 {(data!.my_pending_reviews!).slice(0, 2).map((r) => {
                   const stage = r.status === 'pending_self'
                     ? { label: 'Self Review Pending', color: colors.warning }
@@ -552,14 +599,6 @@ export default function DashboardScreen() {
               </View>
             )}
 
-            {/* Hours Logged Trend */}
-            <HoursTrendWidget
-              daily={data?.daily_trend ?? []}
-              weekly={data?.weekly_trend ?? []}
-              monthly={data?.monthly_trend ?? []}
-              colors={colors}
-            />
-
             {/* My Projects */}
             {myProjects.length > 0 && (
               <View style={s.sectionCard}>
@@ -571,7 +610,7 @@ export default function DashboardScreen() {
                     <TouchableOpacity
                       key={p.id}
                       style={s.projRow}
-                      onPress={() => navigation.navigate('MoreTab', { screen: 'ProjectDetail', params: { projectId: p.id, appId: workspace!.id } })}
+                      onPress={() => goToMore('ProjectDetail', { projectId: p.id, appId: workspace!.id })}
                     >
                       <View style={{ flex: 1 }}>
                         <View style={s.projNameRow}>
@@ -589,22 +628,30 @@ export default function DashboardScreen() {
               </View>
             )}
 
-            {/* GLOS Leaderboard */}
-            <LeaderboardWidget title="GLOS LEADERBOARD" entries={leaderboard} meId={data?.user?.id} colors={colors} />
-
             {/* My Routines */}
             {myRoutines.length > 0 && (
               <View style={s.sectionCard}>
                 <Text style={s.sectionHead}>MY ROUTINES</Text>
                 {(() => {
-                  const eff = myRoutines.length
-                    ? Math.round((myRoutines.filter((r) => r.status === 'completed').length / myRoutines.length) * 100)
-                    : 0;
-                  const onTrack = myRoutines.filter((r) => r.status === 'completed').length;
+                  // Matches web's MyDashboard.jsx exactly: efficiency is the
+                  // backend's overall_efficiency (average of each routine's
+                  // combined_pct — task-completion-weighted), not a recount of
+                  // how many routines happen to be status==='completed'. The
+                  // two can disagree a lot — a routine can be in-progress with
+                  // a partial combined_pct while its status is still
+                  // 'incomplete'/'pending', which the old count-based formula
+                  // here silently dropped to 0 instead of counting partially.
+                  const eff = myRoutinesEfficiency;
+                  const effColor = eff == null ? colors.textMuted : eff >= 80 ? colors.success : eff >= 50 ? colors.warning : colors.danger;
+                  // 'on_track' is a distinct status from 'completed' on web (see
+                  // MyDashboard.jsx's onTrack filter) — counting only
+                  // 'completed' here undercounted On Track / overcounted nothing
+                  // into Attention (on_track isn't in the attention list either way).
+                  const onTrack = myRoutines.filter((r) => r.status === 'completed' || (r.status as string) === 'on_track').length;
                   const needsAttn = myRoutines.filter((r) => ['pending', 'incomplete', 'not_started'].includes(r.status)).length;
                   return (
                     <View style={s.routineKpiRow}>
-                      <View style={s.routineKpiCell}><Text style={[s.routineKpiVal, { color: eff >= 80 ? colors.success : eff >= 50 ? colors.warning : colors.danger }]}>{eff}%</Text><Text style={s.routineKpiLbl}>Efficiency</Text></View>
+                      <View style={s.routineKpiCell}><Text style={[s.routineKpiVal, { color: effColor }]}>{eff != null ? `${eff}%` : '—'}</Text><Text style={s.routineKpiLbl}>Efficiency</Text></View>
                       <View style={s.routineKpiCell}><Text style={s.routineKpiVal}>{onTrack}</Text><Text style={s.routineKpiLbl}>On Track</Text></View>
                       <View style={s.routineKpiCell}><Text style={[s.routineKpiVal, needsAttn > 0 && { color: colors.danger }]}>{needsAttn}</Text><Text style={s.routineKpiLbl}>Attention</Text></View>
                       <View style={s.routineKpiCell}><Text style={s.routineKpiVal}>{myRoutines.length}</Text><Text style={s.routineKpiLbl}>Total</Text></View>
@@ -624,7 +671,7 @@ export default function DashboardScreen() {
                     </View>
                   );
                 })}
-                <TouchableOpacity onPress={() => navigation.navigate('MoreTab', { screen: 'Routines' })}>
+                <TouchableOpacity onPress={() => goToMore('Routines')}>
                   <Text style={s.viewAllLink}>View all →</Text>
                 </TouchableOpacity>
               </View>
@@ -665,14 +712,14 @@ export default function DashboardScreen() {
                 feed.map(item => {
                   const name = item.author_name ?? ([item.author?.first_name, item.author?.last_name].filter(Boolean).join(' ') || item.author?.email || 'User');
                   const type = item.post_type ?? item.type ?? 'post';
-                  const text = decodeHtml(item.content ?? item.body ?? '');
+                  const text = stripTags(stripNonContentElements(item.content ?? item.body ?? ''));
                   const isAppr = type === 'appreciation';
                   return (
                     <TouchableOpacity
                       key={item.id}
                       style={s.feedItem}
                       activeOpacity={0.75}
-                      onPress={() => navigation.navigate('FeedTab', { screen: 'PostDetail', params: { postId: item.id, appId: workspace!.id } })}
+                      onPress={() => navigation.navigate('FeedTab', { screen: 'PostDetail', params: { postId: item.id, appId: workspace!.id }, initial: false } as never)}
                     >
                       <View style={[s.feedAv, isAppr ? s.feedAvGreen : s.feedAvBlue]}>
                         <Text style={[s.feedAvTxt, { color: isAppr ? colors.success : colors.primary }]}>
@@ -719,10 +766,6 @@ export default function DashboardScreen() {
                   {tt?.manager_name ? ` · ${tt.manager_name}` : ''}
                 </Text>
               </View>
-              <TouchableOpacity style={s.teamHeadBtn} onPress={() => navigation.navigate('TasksTab')}>
-                <Ionicons name="list-outline" size={13} color={colors.primary} />
-                <Text style={s.teamHeadBtnTxt}>All Tasks</Text>
-              </TouchableOpacity>
             </View>
 
             {/* Scope switch — matches web TeamDashboard.jsx's Direct Reportees / Entire Team / All Members select.
@@ -733,20 +776,20 @@ export default function DashboardScreen() {
                 style={[s.scopeBtn, mgrScope === 'direct' && s.scopeBtnActive]}
                 onPress={() => { setMgrScope('direct'); setViewAs(null); }}
               >
-                <Text style={[s.scopeBtnTxt, mgrScope === 'direct' && s.scopeBtnTxtActive]}>Direct Reportees</Text>
+                <Text style={[s.scopeBtnTxt, mgrScope === 'direct' && s.scopeBtnTxtActive]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>Direct Reportees</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[s.scopeBtn, mgrScope === 'all' && s.scopeBtnActive]}
                 onPress={() => { setMgrScope('all'); setViewAs(null); }}
               >
-                <Text style={[s.scopeBtnTxt, mgrScope === 'all' && s.scopeBtnTxtActive]}>Entire Team</Text>
+                <Text style={[s.scopeBtnTxt, mgrScope === 'all' && s.scopeBtnTxtActive]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>Entire Team</Text>
               </TouchableOpacity>
               {isAdmin && (
                 <TouchableOpacity
                   style={[s.scopeBtn, mgrScope === 'admin' && s.scopeBtnActive]}
                   onPress={() => { setMgrScope('admin'); setViewAs(null); }}
                 >
-                  <Text style={[s.scopeBtnTxt, mgrScope === 'admin' && s.scopeBtnTxtActive]}>All Members</Text>
+                  <Text style={[s.scopeBtnTxt, mgrScope === 'admin' && s.scopeBtnTxtActive]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>All Members</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -763,34 +806,75 @@ export default function DashboardScreen() {
               </ScrollView>
             )}
 
-            {/* 3 KPI cards */}
+            {/* KPI cards — one line, matching web's hero-stat row exactly:
+                Members, Overall Progress (= Completion), On-Time Completion,
+                Business Review (only when there's actually a queue). Mobile
+                previously showed "Productivity" here, which duplicated
+                Completion's own calculation client-side instead of surfacing
+                the distinct on-time metric the backend already returns. */}
             <View style={s.kpiRow}>
-              <View style={[s.kpiCard, { borderTopColor: colors.primary }]}>
-                <Text style={s.kpiLabel}>PRODUCTIVITY</Text>
-                <Text style={[s.kpiValue, { color: colors.primary }]}>
-                  {tt?.team_productivity != null ? `${tt.team_productivity}%` : '—'}
-                </Text>
-                <Text style={s.kpiSub}>team avg</Text>
-              </View>
               <View style={[s.kpiCard, { borderTopColor: colors.success }]}>
-                <Text style={s.kpiLabel}>MEMBERS</Text>
+                <View style={s.kpiHeadRow}>
+                  <Text style={s.kpiLabel} numberOfLines={1}>MEMBERS</Text>
+                  <View style={[s.kpiIconWrap, { backgroundColor: colors.success + '22' }]}>
+                    <Ionicons name="people-outline" size={12} color={colors.success} />
+                  </View>
+                </View>
                 <Text style={[s.kpiValue, { color: colors.success }]}>
                   {tt?.member_count ?? '—'}
                 </Text>
                 <Text style={s.kpiSub}>active</Text>
               </View>
               <View style={[s.kpiCard, { borderTopColor: colors.secondary }]}>
-                <Text style={s.kpiLabel}>COMPLETION</Text>
+                <View style={s.kpiHeadRow}>
+                  <Text style={s.kpiLabel} numberOfLines={1}>COMPLETION</Text>
+                  <View style={[s.kpiIconWrap, { backgroundColor: colors.secondary + '22' }]}>
+                    <Ionicons name="checkmark-circle-outline" size={12} color={colors.secondary} />
+                  </View>
+                </View>
                 <Text style={[s.kpiValue, { color: colors.secondary }]}>
                   {taskTotal > 0 ? `${completionPct}%` : '—'}
                 </Text>
                 <Text style={s.kpiSub}>{taskCompleted} tasks</Text>
               </View>
+              <View style={[s.kpiCard, { borderTopColor: colors.primary }]}>
+                <View style={s.kpiHeadRow}>
+                  <Text style={s.kpiLabel} numberOfLines={1}>ON-TIME</Text>
+                  <View style={[s.kpiIconWrap, { backgroundColor: colors.primary + '22' }]}>
+                    <Ionicons name="speedometer-outline" size={12} color={colors.primary} />
+                  </View>
+                </View>
+                <Text style={[s.kpiValue, { color: colors.primary }]}>
+                  {tt?.ontime_completion != null ? `${tt.ontime_completion}%` : '—'}
+                </Text>
+                <Text style={s.kpiSub}>on time</Text>
+              </View>
+              {pendingBusinessReviews > 0 && (
+                <TouchableOpacity
+                  style={[s.kpiCard, { borderTopColor: '#d97706' }]}
+                  onPress={() => goToMore('BusinessReviewsList')}
+                >
+                  <View style={s.kpiHeadRow}>
+                    <Text style={s.kpiLabel} numberOfLines={1}>BUSINESS REVIEW</Text>
+                    <View style={[s.kpiIconWrap, { backgroundColor: '#d9770622' }]}>
+                      <Ionicons name="bar-chart-outline" size={12} color="#d97706" />
+                    </View>
+                  </View>
+                  <Text style={[s.kpiValue, { color: '#d97706' }]}>{pendingBusinessReviews}</Text>
+                  <Text style={s.kpiSub}>pending</Text>
+                </TouchableOpacity>
+              )}
             </View>
 
             {/* Task breakdown */}
             <View style={s.breakCard}>
-              <Text style={s.breakTitle}>TASK STATUS</Text>
+              <View style={s.breakTitleRow}>
+                <Text style={[s.breakTitle, { marginBottom: 0 }]}>TASK STATUS</Text>
+                <TouchableOpacity style={s.teamHeadBtn} onPress={() => navigation.navigate('TasksTab')}>
+                  <Ionicons name="list-outline" size={13} color={colors.primary} />
+                  <Text style={s.teamHeadBtnTxt}>View All</Text>
+                </TouchableOpacity>
+              </View>
               <View style={s.breakRow}>
                 <Text style={s.breakLabel}>Total</Text>
                 <Text style={[s.breakVal, { color: colors.textPrimary }]}>{tt?.team_tasks?.total ?? 0}</Text>
@@ -822,29 +906,54 @@ export default function DashboardScreen() {
             {workloadSorted.length > 0 && (
               <View style={s.sectionCard}>
                 <Text style={s.sectionHead}>TEAM WORKLOAD{minHoursPerWeek ? ` (min ${minHoursPerWeek}h/week)` : ''}</Text>
-                {workloadSorted.map((m, idx) => {
-                  const name = getMemberName(m);
-                  const hrs = getMemberWorkloadHrs(m);
-                  const pct = workloadMax > 0 ? hrs / workloadMax : 0;
-                  const barColor = hrs >= minHoursPerWeek ? colors.danger : hrs >= minHoursPerWeek * 0.2 ? colors.warning : colors.success;
-                  return (
-                    <View key={m.user_id ?? m.user?.id ?? idx} style={s.workloadRow}>
-                      <Text style={s.workloadName} numberOfLines={1}>{name}</Text>
-                      <View style={s.workloadBarBg}>
-                        <View style={[s.workloadBarFill, { width: `${Math.round(pct * 100)}%` as any, backgroundColor: barColor }]} />
+                {/* Fixed maxHeight (not flex/flexShrink) so this scrolls within
+                    its own box once the team is bigger than ~10 people, instead
+                    of just growing the page — nestedScrollEnabled lets the inner
+                    scroll win over the outer page ScrollView on Android. */}
+                <ScrollView style={s.workloadScroll} nestedScrollEnabled showsVerticalScrollIndicator={false}>
+                  {workloadSorted.map((m, idx) => {
+                    const name = getMemberName(m);
+                    const hrs = getMemberWorkloadHrs(m);
+                    const pct = workloadMax > 0 ? hrs / workloadMax : 0;
+                    const barColor = hrs >= minHoursPerWeek ? colors.danger : hrs >= minHoursPerWeek * 0.2 ? colors.warning : colors.success;
+                    return (
+                      <View key={m.user_id ?? m.user?.id ?? idx} style={s.workloadRow}>
+                        <Text style={s.workloadName} numberOfLines={1}>{name}</Text>
+                        <View style={s.workloadBarBg}>
+                          <View style={[s.workloadBarFill, { width: `${Math.round(pct * 100)}%` as any, backgroundColor: barColor }]} />
+                        </View>
+                        <Text style={s.workloadCount} numberOfLines={1}>{formatDuration(Math.round(hrs * 60))}</Text>
                       </View>
-                      <Text style={s.workloadCount}>{hrs.toFixed(1)}h</Text>
-                    </View>
-                  );
-                })}
+                    );
+                  })}
+                </ScrollView>
               </View>
             )}
 
             {/* Team Activity by employee */}
-            <TeamActivityTableWidget appId={workspace!.id} isAdmin={isAdmin} scope={mgrScope} viewAs={viewAs} colors={colors} />
+            <TeamActivityTableWidget
+              appId={workspace!.id}
+              isAdmin={isAdmin}
+              scope={mgrScope}
+              viewAs={viewAs}
+              colors={colors}
+              minHoursPerDay={teamData?.min_hours_per_day ?? 0}
+              minHoursPerWeek={teamData?.min_hours_per_week ?? 0}
+            />
+
+            {/* Business Reviews — per-manager daily/weekly/monthly check-in rollup */}
+            {data?.user?.id != null && (
+              <BusinessReviewsTableWidget
+                appId={workspace!.id}
+                mgrScope={mgrScope}
+                viewAs={viewAs}
+                meId={data.user.id}
+                colors={colors}
+              />
+            )}
 
             {/* Routine Analysis */}
-            <TeamRoutineAnalysisWidget reportees={teamRoutines} colors={colors} />
+            <TeamRoutineAnalysisWidget reportees={teamRoutines} colors={colors} onViewAllRoutines={() => goToMore('Routines')} />
 
             {/* Appreciations & Feedback */}
             <AppreciationsFeedbackWidget members={apprMembers} totalAppr={apprTotals.total_appr} totalFb={apprTotals.total_fb} colors={colors} />
@@ -854,41 +963,18 @@ export default function DashboardScreen() {
               <BusinessReviewCalendarWidget appId={workspace!.id} mode="team" meId={data.user.id} colors={colors} />
             )}
 
-            {/* Recent Team Activity */}
-            {(tt?.team_activity ?? []).length > 0 && (
-              <View style={s.sectionCard}>
-                <Text style={s.sectionHead}>RECENT ACTIVITY</Text>
-                {(tt!.team_activity!).slice(0, 6).map((a, idx) => (
-                  <View key={idx} style={s.activityRow}>
-                    <View style={s.activityAv}>
-                      <Text style={s.activityAvTxt}>{initials(a.actor_name)}</Text>
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={s.activityText} numberOfLines={2}>
-                        <Text style={s.activityBold}>{a.actor_name}</Text>
-                        {a.action ? ` ${a.action}` : ''}
-                        {a.item ? ` ${a.item}` : ''}
-                      </Text>
-                      <Text style={s.activityTime}>{timeAgo(a.ts)}</Text>
-                    </View>
-                    {a.tag ? (
-                      <View style={s.activityTag}>
-                        <Text style={s.activityTagTxt}>{a.tag}</Text>
-                      </View>
-                    ) : null}
-                  </View>
-                ))}
-              </View>
-            )}
-
             {/* Team Leaderboard — ranked by GLOS score within the current scope */}
             <LeaderboardWidget title="TEAM LEADERBOARD" entries={teamLeaderboard} meId={data?.user?.id} colors={colors} />
 
-            {/* Team Mood */}
+            {/* Team Mood — thresholds/emoji match web's MoodGauge exactly
+                (>=8 great/green, >=6 good/amber, else needs attention/red). */}
             {tt?.team_mood != null && (
               <View style={s.moodCard}>
                 <Text style={s.sectionHead}>TEAM MOOD</Text>
                 <View style={s.moodBody}>
+                  <View style={[s.moodEmojiWrap, { backgroundColor: getMoodColor(tt.team_mood, colors) + '18' }]}>
+                    <Text style={s.moodEmoji}>{getMoodEmoji(tt.team_mood)}</Text>
+                  </View>
                   <Text style={s.moodScore}>
                     {tt.team_mood}
                     <Text style={s.moodBase}>/10</Text>
@@ -896,10 +982,12 @@ export default function DashboardScreen() {
                   <View style={s.moodBarBg}>
                     <View style={[s.moodBarFill, {
                       width: `${tt.team_mood * 10}%` as any,
-                      backgroundColor: tt.team_mood >= 7 ? colors.success : tt.team_mood >= 4 ? colors.secondary : colors.danger,
+                      backgroundColor: getMoodColor(tt.team_mood, colors),
                     }]} />
                   </View>
-                  <Text style={s.moodLabel}>{getMoodLabel(tt.team_mood)}</Text>
+                  <Text style={[s.moodLabel, { color: getMoodColor(tt.team_mood, colors) }]}>
+                    {getMoodLabel(tt.team_mood)}
+                  </Text>
                 </View>
               </View>
             )}
@@ -1017,16 +1105,22 @@ function makeStyles(c: AppColors) {
     viewAsChipTxt: { fontSize: 12, fontWeight: '600', color: c.textSecondary },
     viewAsChipTxtActive: { color: '#fff' },
 
-    // KPI cards row
-    kpiRow: { flexDirection: 'row', gap: 8, marginHorizontal: 16, marginTop: 14 },
+    // KPI cards — one line of up to 4, matching web's single hero-stat row
+    // (previously wrapped into a 2x2 grid, which read as two separate rows).
+    kpiRow: { flexDirection: 'row', gap: 6, marginHorizontal: 16, marginTop: 14 },
     kpiCard: {
       flex: 1, backgroundColor: c.surface, borderRadius: 12,
-      borderWidth: 1, borderColor: c.border, padding: 12,
+      borderWidth: 1, borderColor: c.border, padding: 8,
       borderTopWidth: 3,
     },
-    kpiLabel: { fontSize: 9, fontWeight: '700', color: c.textMuted, letterSpacing: 0.8, marginBottom: 6 },
-    kpiValue: { fontSize: 22, fontWeight: '800', letterSpacing: -0.5 },
-    kpiSub: { fontSize: 10, color: c.textSecondary, marginTop: 2 },
+    kpiHeadRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 4 },
+    kpiIconWrap: { width: 18, height: 18, borderRadius: 5, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+    // flexShrink:1 lets the label truncate instead of wrapping to a second
+    // line or overflowing the card on narrower screens (RN's default
+    // flexShrink is 0, so this needs to be explicit).
+    kpiLabel: { flexShrink: 1, fontSize: 8, fontWeight: '700', color: c.textMuted, letterSpacing: 0.4 },
+    kpiValue: { fontSize: 18, fontWeight: '800', letterSpacing: -0.5, marginTop: 5 },
+    kpiSub: { fontSize: 9, color: c.textSecondary, marginTop: 1 },
 
     // Task breakdown
     breakCard: {
@@ -1035,6 +1129,7 @@ function makeStyles(c: AppColors) {
       borderWidth: 1, borderColor: c.border, padding: 16,
     },
     breakTitle: { fontSize: 10, fontWeight: '700', color: c.textMuted, letterSpacing: 1, marginBottom: 12 },
+    breakTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
     breakRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 5 },
     breakDivider: { height: 1, backgroundColor: c.border, marginVertical: 6 },
     breakDot: { width: 8, height: 8, borderRadius: 4 },
@@ -1048,32 +1143,22 @@ function makeStyles(c: AppColors) {
       borderWidth: 1, borderColor: c.border, padding: 16,
     },
     sectionHead: { fontSize: 10, fontWeight: '700', color: c.textMuted, letterSpacing: 1, marginBottom: 12 },
+    sectionHeadRow: {
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+      marginBottom: 0,
+    },
 
     // Workload bars
+    workloadScroll: { maxHeight: 260 },
     workloadRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
-    workloadName: { width: 80, fontSize: 12, fontWeight: '600', color: c.textPrimary },
-    workloadBarBg: { flex: 1, height: 8, backgroundColor: c.gray100, borderRadius: 4, overflow: 'hidden' },
+    // flexShrink:1 matters here — RN defaults flexShrink to 0 (unlike web
+    // CSS), so a plain fixed width never yields space back on narrower
+    // screens, and can force the bar toward zero width instead of shrinking
+    // the label to fit.
+    workloadName: { width: 130, flexShrink: 1, fontSize: 12, fontWeight: '600', color: c.textPrimary },
+    workloadBarBg: { flex: 1, minWidth: 24, height: 8, backgroundColor: c.gray100, borderRadius: 4, overflow: 'hidden' },
     workloadBarFill: { height: 8, borderRadius: 4 },
-    workloadCount: { width: 28, fontSize: 12, fontWeight: '700', color: c.textSecondary, textAlign: 'right' },
-
-    // Activity feed
-    activityRow: {
-      flexDirection: 'row', alignItems: 'flex-start', gap: 10,
-      paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: c.border,
-    },
-    activityAv: {
-      width: 32, height: 32, borderRadius: 10,
-      backgroundColor: c.primaryLight, alignItems: 'center', justifyContent: 'center',
-    },
-    activityAvTxt: { fontSize: 11, fontWeight: '900', color: c.primary },
-    activityText: { fontSize: 12, color: c.textSecondary, lineHeight: 17, flex: 1 },
-    activityBold: { fontWeight: '700', color: c.textPrimary },
-    activityTime: { fontSize: 10, color: c.textMuted, marginTop: 2 },
-    activityTag: {
-      backgroundColor: c.primaryLight, paddingHorizontal: 7, paddingVertical: 2,
-      borderRadius: 8, alignSelf: 'center',
-    },
-    activityTagTxt: { fontSize: 10, fontWeight: '700', color: c.primary },
+    workloadCount: { width: 66, flexShrink: 1, fontSize: 12, fontWeight: '700', color: c.textSecondary, textAlign: 'right' },
 
     // Leaderboard
     lbCard: { alignItems: 'center', width: 80 },
@@ -1094,6 +1179,11 @@ function makeStyles(c: AppColors) {
       borderWidth: 1, borderColor: c.border, padding: 16,
     },
     moodBody: { alignItems: 'center', paddingVertical: 8 },
+    moodEmojiWrap: {
+      width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center',
+      marginBottom: 8,
+    },
+    moodEmoji: { fontSize: 34 },
     moodScore: { fontSize: 40, fontWeight: '800', color: c.textPrimary, letterSpacing: -1 },
     moodBase: { fontSize: 16, fontWeight: '400', color: c.textMuted },
     moodBarBg: {
@@ -1133,7 +1223,15 @@ function makeStyles(c: AppColors) {
 
     // Today's Summary
     todayGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-    todayCell: { width: '47%' },
+    todayTile: {
+      width: '47%', backgroundColor: c.background, borderRadius: 12,
+      borderWidth: 1, borderColor: c.border, padding: 12,
+    },
+    todayTopRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
+    todayIconBox: {
+      width: 28, height: 28, borderRadius: 14,
+      alignItems: 'center', justifyContent: 'center',
+    },
     todayVal: { fontSize: 20, fontWeight: '800', color: c.textPrimary, letterSpacing: -0.5 },
     todayLbl: { fontSize: 10, color: c.textMuted, marginTop: 2 },
 

@@ -14,6 +14,7 @@ import Input from '../../components/common/Input';
 import Button from '../../components/common/Button';
 import Avatar from '../../components/common/Avatar';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
+import LoadError from '../../components/common/LoadError';
 import MemberPickerModal, { PickOption } from '../../components/common/MemberPickerModal';
 
 type Rt = RouteProp<PerformanceStackParamList, 'CreateAppraisal'>;
@@ -40,6 +41,7 @@ export default function CreateAppraisalScreen() {
   const insets = useSafeAreaInsets();
 
   const [dataLoading, setDataLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const [employeeId, setEmployeeId] = useState<number | null>(null);
@@ -54,6 +56,7 @@ export default function CreateAppraisalScreen() {
 
   const load = useCallback(async () => {
     setDataLoading(true);
+    setLoadError(false);
     try {
       const [membersRes, cyclesRes] = await Promise.all([
         api.workspace.getMembers(appId),
@@ -65,6 +68,7 @@ export default function CreateAppraisalScreen() {
       setCycles(cycleRows.map((c: any) => ({ id: c.id, name: `${c.cycle_name} (${c.year})` })));
     } catch (err) {
       showAlert('Could not load form data', apiErrorMessage(err));
+      setLoadError(true);
     } finally {
       setDataLoading(false);
     }
@@ -95,9 +99,10 @@ export default function CreateAppraisalScreen() {
   };
 
   if (dataLoading) return <LoadingSpinner />;
+  if (loadError) return <LoadError onRetry={load} />;
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <View style={[s.container, { paddingTop: insets.top }]}>
         <ScreenHeader
           title="Trigger Appraisal"

@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
-  RefreshControl, Switch, Linking, Alert,
+  RefreshControl, Switch, Linking, Alert, Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -59,20 +59,17 @@ export default function ProfileScreen() {
   const [roleTitle, setRoleTitle] = useState<string | null>(null);
   const [goals, setGoals] = useState<any[]>([]);
   const [appraisals, setAppraisals] = useState<any[]>([]);
-  const [unread, setUnread] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const { loading, loadError, run } = useLoadWithTimeout();
 
   const load = useCallback(async () => {
-    const [me, notif, ...perf] = await Promise.all([
+    const [me, ...perf] = await Promise.all([
       api.me.getProfile(),
-      api.notifications.unreadCount(),
       workspace ? api.performance.getGoals(workspace.id) : Promise.resolve({ data: { goals: [] } }),
       workspace ? api.performance.getAppraisals(workspace.id) : Promise.resolve({ data: { appraisals: [] } }),
       workspace ? api.dashboard.getMyDashboard(workspace.id) : Promise.resolve({ data: { roles: [] } }),
     ]);
     setProfile(me.data);
-    setUnread(notif.data.count ?? 0);
     const gData = perf[0].data;
     setGoals(Array.isArray(gData) ? gData : (gData?.items ?? []));
     const aData = perf[1].data;
@@ -109,11 +106,15 @@ export default function ProfileScreen() {
         {/* Hero Card */}
         <View style={s.heroCard}>
           <View style={s.heroBannerAccent} />
-          <View style={s.avatarCircle}>
-            <Text style={s.avatarText}>
-              {fullName.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)}
-            </Text>
-          </View>
+          {profile?.photoUrl ? (
+            <Image source={{ uri: profile.photoUrl }} style={s.avatarCircle} />
+          ) : (
+            <View style={s.avatarCircle}>
+              <Text style={s.avatarText}>
+                {fullName.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)}
+              </Text>
+            </View>
+          )}
           <View style={{ flex: 1 }}>
             <Text style={s.heroName}>{fullName}</Text>
             {roleTitle ? (
@@ -144,6 +145,13 @@ export default function ProfileScreen() {
             colors={colors}
             s={s}
           />
+          <MenuRow
+            icon="shield-checkmark-outline"
+            label="Manage Email & Security"
+            onPress={() => navigation.navigate('AccountSecurity')}
+            colors={colors}
+            s={s}
+          />
         </SectionCard>
 
         {/* Appearance */}
@@ -160,27 +168,6 @@ export default function ProfileScreen() {
                 trackColor={{ false: colors.gray200, true: colors.primary }}
                 thumbColor="#ffffff"
               />
-            }
-          />
-        </SectionCard>
-
-        {/* Activity */}
-        <SectionCard title="ACTIVITY" s={s}>
-          <MenuRow
-            icon="notifications-outline"
-            label="Notifications"
-            onPress={() => navigation.navigate('Notifications')}
-            colors={colors}
-            s={s}
-            right={
-              <View style={s.menuRight}>
-                {unread > 0 && (
-                  <View style={s.unreadBadge}>
-                    <Text style={s.unreadText}>{unread > 9 ? '9+' : unread}</Text>
-                  </View>
-                )}
-                <Ionicons name="chevron-forward" size={16} color={colors.gray300} />
-              </View>
             }
           />
         </SectionCard>
@@ -212,15 +199,17 @@ export default function ProfileScreen() {
             onPress={() =>
               Alert.alert(
                 'Delete Account',
-                'This will send a request to permanently delete your account and all associated data. Do you want to continue?',
+                'Your Glos account is provisioned and managed by your organisation\'s admin, so it can\'t be deleted directly from this app.\n\n' +
+                  'To request deletion of your account and all associated data (profile, tasks, messages, appraisals, and other records), email our support team at crm@greatleap.tech from your registered email address. We will confirm your identity and process the deletion.\n\n' +
+                  'Tap "Email Support" to open a pre-filled request.',
                 [
                   { text: 'Cancel', style: 'cancel' },
                   {
-                    text: 'Send Request',
+                    text: 'Email Support',
                     style: 'destructive',
                     onPress: () =>
                       Linking.openURL(
-                        'mailto:support@glosonline.com?subject=Account%20Deletion%20Request&body=Please%20delete%20my%20account%20and%20all%20associated%20data.%0A%0AEmail%3A%20' +
+                        'mailto:crm@greatleap.tech?subject=Account%20Deletion%20Request&body=Please%20delete%20my%20account%20and%20all%20associated%20data.%0A%0AEmail%3A%20' +
                           encodeURIComponent(profile?.email ?? '')
                       ),
                   },
@@ -233,7 +222,7 @@ export default function ProfileScreen() {
           />
         </SectionCard>
 
-        <Text style={s.version}>GreatLeap Mobile v1.0.0</Text>
+        <Text style={s.version}>Glos v1.0.0</Text>
       </ScrollView>
     </View>
   );
@@ -300,12 +289,6 @@ function makeStyles(c: AppColors) {
     menuIcon: { width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
     menuLabel: { flex: 1, fontSize: 14, fontWeight: '500', color: c.textPrimary },
     menuValue: { fontSize: 13, color: c.textSecondary, marginRight: 4 },
-    menuRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-    unreadBadge: {
-      backgroundColor: c.danger, minWidth: 20, height: 20,
-      borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4,
-    },
-    unreadText: { fontSize: 11, color: '#ffffff', fontWeight: '700' },
     version: { fontSize: 12, color: c.gray400, textAlign: 'center', marginTop: 8 },
   });
 }

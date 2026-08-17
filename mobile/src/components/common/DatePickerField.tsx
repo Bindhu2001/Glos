@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import {
   View, Text, TouchableOpacity, Modal, Platform,
-  StyleSheet, TouchableWithoutFeedback,
+  StyleSheet, TouchableWithoutFeedback, StyleProp, ViewStyle,
 } from 'react-native';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
@@ -15,6 +15,7 @@ interface Props {
   placeholder?: string;
   minDate?: Date;
   maxDate?: Date;
+  containerStyle?: StyleProp<ViewStyle>;
 }
 
 function toDate(str: string): Date {
@@ -29,7 +30,7 @@ function toStr(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-export default function DatePickerField({ label, value, onChange, placeholder = 'Select date', minDate, maxDate }: Props) {
+export default function DatePickerField({ label, value, onChange, placeholder = 'Select date', minDate, maxDate, containerStyle }: Props) {
   const { colors } = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
   const [show, setShow] = useState(false);
@@ -48,7 +49,7 @@ export default function DatePickerField({ label, value, onChange, placeholder = 
 
   if (Platform.OS === 'android') {
     return (
-      <View style={s.container}>
+      <View style={[s.container, containerStyle]}>
         {label && <Text style={s.label}>{label}</Text>}
         <TouchableOpacity style={s.trigger} onPress={() => setShow(true)} activeOpacity={0.7}>
           <Text style={[s.triggerText, !value && s.placeholder]}>
@@ -71,7 +72,7 @@ export default function DatePickerField({ label, value, onChange, placeholder = 
   }
 
   return (
-    <View style={s.container}>
+    <View style={[s.container, containerStyle]}>
       {label && <Text style={s.label}>{label}</Text>}
       <TouchableOpacity style={s.trigger} onPress={() => setShow(true)} activeOpacity={0.7}>
         <Text style={[s.triggerText, !value && s.placeholder]}>
@@ -80,7 +81,7 @@ export default function DatePickerField({ label, value, onChange, placeholder = 
         <Ionicons name="calendar-outline" size={18} color={colors.gray400} />
       </TouchableOpacity>
 
-      <Modal visible={show} transparent animationType="slide">
+      <Modal visible={show} transparent animationType="slide" onRequestClose={() => setShow(false)}>
         <TouchableWithoutFeedback onPress={() => setShow(false)}>
           <View style={s.overlay} />
         </TouchableWithoutFeedback>

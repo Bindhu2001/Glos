@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useApi } from '../../hooks/useApi';
+import { useWorkspace } from '../../contexts/WorkspaceContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { AppColors } from '../../utils/colors';
 import { formatRelative } from '../../utils/format';
@@ -35,10 +36,28 @@ const TYPE_ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
   mention_task_comment: 'checkmark-circle-outline',
   mention_feed_comment: 'chatbubble-outline',
   mention_feed_post: 'newspaper-outline',
+  feed_post: 'newspaper-outline',
+  task_assigned: 'clipboard-outline',
+  task_commented: 'chatbubble-outline',
+  task_reassigned: 'swap-horizontal-outline',
+  task_overdue: 'alert-circle-outline',
+  appreciation: 'ribbon-outline',
+  feedback_received: 'bulb-outline',
+  wish: 'gift-outline',
+  review_started: 'create-outline',
+  review_submitted: 'paper-plane-outline',
+  review_rejected: 'arrow-undo-outline',
+  review_approved: 'checkmark-done-circle-outline',
+  project_join_request: 'people-outline',
+  project_join_accepted: 'checkmark-circle-outline',
+  project_join_rejected: 'close-circle-outline',
+  project_commented: 'chatbox-outline',
+  checkin_comment: 'document-text-outline',
 };
 
 export default function NotificationsScreen() {
   const api = useApi();
+  const { workspace } = useWorkspace();
   const { colors } = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
@@ -48,10 +67,15 @@ export default function NotificationsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const { loading, loadError, run } = useLoadWithTimeout();
 
+  // Scoped to the workspace the user is currently in — without app_id the
+  // backend returns notifications across every workspace the user belongs
+  // to, which reads as noise (and mis-routes on tap) in a single-workspace
+  // mobile view.
   const load = useCallback(async () => {
-    const r = await api.notifications.list({ limit: 50 });
+    if (!workspace) return;
+    const r = await api.notifications.list({ limit: 50, app_id: workspace.id });
     setNotifications(r.data?.items ?? []);
-  }, [api]);
+  }, [api, workspace]);
 
   useEffect(() => { run(load); }, [load]);
 
@@ -60,6 +84,15 @@ export default function NotificationsScreen() {
     await run(load, true);
     setRefreshing(false);
   };
+
+  // Matches qa-production/frontend's NotificationBell.jsx routing table exactly —
+  // entity_id's meaning varies per type (e.g. for mention_feed_comment it's the
+  // *comment* id, not the post id), so — same as web — feed types land on the
+  // Feed tab generally rather than guessing a specific post to deep-link to.
+  const TASK_TYPES = ['mention_task_comment', 'task_assigned', 'task_commented', 'task_reassigned', 'task_overdue'];
+  const FEED_TYPES = ['mention_feed_comment', 'mention_feed_post', 'feed_post', 'appreciation', 'feedback_received', 'wish'];
+  const PERF_TYPES = ['review_started', 'review_rejected', 'review_approved'];
+  const PROJECT_TYPES = ['project_join_request', 'project_join_accepted', 'project_join_rejected', 'project_commented'];
 
   const handleTap = async (item: Notif) => {
     if (!item.read_at) {
@@ -71,30 +104,34 @@ export default function NotificationsScreen() {
       } catch {}
     }
 
-    if (item.type === 'mention_task_comment' && item.task_id && item.app_id) {
+    if (!item.app_id) return;
+
+    if (TASK_TYPES.includes(item.type) && item.task_id) {
       navigation.navigate('Main', {
         screen: 'TasksTab',
-        params: { screen: 'TaskDetail', params: { taskId: item.task_id, appId: item.app_id } },
-      });
-    } else if (
-      (item.type === 'mention_feed_comment' || item.type === 'mention_feed_post') &&
-      item.app_id && item.entity_id
-    ) {
+        params: { screen: 'TaskDetail', params: { taskId: item.task_id, appId: item.app_id }, initial: false },
+      } as never);
+    } else if (FEED_TYPES.includes(item.type)) {
+      const initialTab = item.type === 'feedback_received' ? 'feedback'
+        : item.type === 'appreciation' ? 'appreciations'
+        : 'feed';
       navigation.navigate('Main', {
         screen: 'FeedTab',
-        params: { screen: 'PostDetail', params: { postId: item.entity_id, appId: item.app_id } },
-      });
-    } else if (
-      (item.type === 'mention_feed_comment' || item.type === 'mention_feed_post') &&
-      item.app_id
-    ) {
-      navigation.navigate('Main', { screen: 'FeedTab' });
+        params: { screen: 'FeedList', params: { initialTab }, initial: false },
+      } as never);
+    } else if (PERF_TYPES.includes(item.type)) {
+      navigation.navigate('Main', { screen: 'PerformanceTab' } as never);
+    } else if (PROJECT_TYPES.includes(item.type)) {
+      navigation.navigate('Main', {
+        screen: 'MoreTab',
+        params: { screen: 'ProjectsList' },
+      } as never);
     }
   };
 
   const markAllRead = async () => {
     try {
-      await api.notifications.markAllRead();
+      await api.notifications.markAllRead(workspace?.id);
       setNotifications((prev) => prev.map((n) => ({ ...n, read_at: new Date().toISOString() })));
     } catch {}
   };
@@ -145,9 +182,6 @@ export default function NotificationsScreen() {
               <Text style={[s.notifTitle, !item.read_at && s.unreadText]} numberOfLines={1}>
                 {item.title}
               </Text>
-              {item.preview && (
-                <Text style={s.preview} numberOfLines={2}>{item.preview}</Text>
-              )}
               <Text style={s.time}>{formatRelative(item.created_at)}</Text>
             </View>
             {!item.read_at && <View style={s.dot} />}

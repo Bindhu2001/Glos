@@ -33,6 +33,13 @@ const MENU_ITEMS = [
     desc: 'Manage client accounts and contacts',
     color: '#059669',
   },
+  {
+    screen: 'MyOrganisation' as const,
+    icon: 'business-outline' as const,
+    label: 'Organisation',
+    desc: 'View organisation details',
+    color: '#7c3aed',
+  },
 ];
 
 export default function AdminHomeScreen() {

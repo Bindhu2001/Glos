@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, ActivityIndicator, RefreshControl } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -6,10 +6,12 @@ import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useWorkspace } from '../../contexts/WorkspaceContext';
+import { useHasTeam } from '../../contexts/HasTeamContext';
 import { useApi } from '../../hooks/useApi';
 import { AppColors } from '../../utils/colors';
 import { MoreStackParamList } from '../../navigation/types';
 import { apiErrorMessage } from '../../utils/apiError';
+import { showAlert } from '../../components/common/AlertModal';
 import LoadError from '../../components/common/LoadError';
 
 type Nav = NativeStackNavigationProp<MoreStackParamList, 'ProjectsList'>;
@@ -28,6 +30,7 @@ export default function ProjectsListScreen() {
   const navigation = useNavigation<Nav>();
   const { colors } = useTheme();
   const { workspace } = useWorkspace();
+  const { isAdmin } = useHasTeam();
   const api = useApi();
   const insets = useSafeAreaInsets();
   const s = useMemo(() => makeStyles(colors), [colors]);
@@ -36,24 +39,50 @@ export default function ProjectsListScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [meId, setMeId] = useState<number | null>(null);
+  const [toggling, setToggling] = useState<number | null>(null);
+
+  const hasLoadedRef = useRef(false);
 
   const load = useCallback(async (isRefresh = false) => {
     if (!workspace?.id) return;
-    if (!isRefresh) setLoading(true);
+    if (!isRefresh && !hasLoadedRef.current) setLoading(true);
     try {
-      const res = await api.projects.list(workspace.id);
+      const [res, meRes] = await Promise.all([
+        api.projects.list(workspace.id),
+        api.me.getProfile(),
+      ]);
       setProjects(res.data?.items ?? res.data ?? []);
+      setMeId(meRes.data?.id ?? meRes.data?.user?.id ?? null);
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, 'Could not load projects.'));
     } finally {
       setLoading(false);
       setRefreshing(false);
+      hasLoadedRef.current = true;
     }
   }, [workspace?.id]);
 
-  useEffect(() => { load(); }, [load]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  const isOwnerOfProject = (p: any) => meId != null && p.owner_user_id === meId;
+
+  const toggleComplete = async (p: any) => {
+    if (!isAdmin && !isOwnerOfProject(p)) {
+      showAlert('Not allowed', "You're not the project owner or admin.");
+      return;
+    }
+    setToggling(p.id);
+    try {
+      await api.projects.update(workspace!.id, p.id, { is_completed: p.is_completed ? 0 : 1 });
+      await load(true);
+    } catch (err) {
+      showAlert('Could not update project', apiErrorMessage(err));
+    } finally {
+      setToggling(null);
+    }
+  };
 
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
@@ -85,6 +114,8 @@ export default function ProjectsListScreen() {
           ) : (
             projects.map((p) => {
               const statusColor = STATUS_COLORS[p.computed_status] ?? '#6b7280';
+              const isDone = p.computed_status === 'completed';
+              const isTogglingThis = toggling === p.id;
               return (
                 <TouchableOpacity
                   key={p.id}
@@ -92,6 +123,22 @@ export default function ProjectsListScreen() {
                   activeOpacity={0.7}
                   onPress={() => navigation.navigate('ProjectDetail', { projectId: p.id, appId: workspace!.id })}
                 >
+                  {/* Complete toggle — visible to everyone (matches WhatsApp-style
+                      affordance on mobile) but only owner/admin can actually flip
+                      it; anyone else gets a clear "not allowed" alert instead of a
+                      dead tap or a confusing 403 from the API. */}
+                  <TouchableOpacity
+                    style={[s.completeCircle, isDone && s.completeCircleDone]}
+                    onPress={() => toggleComplete(p)}
+                    disabled={isTogglingThis}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    {isTogglingThis ? (
+                      <ActivityIndicator size="small" color={isDone ? '#fff' : colors.primary} />
+                    ) : isDone ? (
+                      <Ionicons name="checkmark" size={14} color="#fff" />
+                    ) : null}
+                  </TouchableOpacity>
                   <View style={s.iconBox}>
                     <Ionicons name="folder-open-outline" size={20} color="#0891b2" />
                   </View>
@@ -136,6 +183,11 @@ function makeStyles(c: AppColors) {
       backgroundColor: c.surface, borderRadius: 14, padding: 14,
       borderWidth: 1, borderColor: c.border,
     },
+    completeCircle: {
+      width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: c.border,
+      alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+    },
+    completeCircleDone: { backgroundColor: '#4ade80', borderColor: '#4ade80' },
     iconBox: { width: 40, height: 40, borderRadius: 10, backgroundColor: '#0891b214', alignItems: 'center', justifyContent: 'center' },
     cardBody: { flex: 1, gap: 4 },
     cardTitle: { fontSize: 14, fontWeight: '700', color: c.textPrimary },

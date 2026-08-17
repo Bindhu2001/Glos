@@ -3,7 +3,6 @@
     "name": "Glos",
     "slug": "glos",
     "scheme": "com.greatleap.glos",
-    "privacy": "public",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -15,7 +14,11 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.greatleap.mobile"
+      "bundleIdentifier": "com.greatleap.mobile",
+      "buildNumber": "1",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -23,32 +26,40 @@
         "backgroundColor": "#1a56db"
       },
       "package": "com.greatleap.glos",
-      "versionCode": 3,
-      "softwareKeyboardLayoutMode": "resize",
-      "compileSdkVersion": 35,
-      "targetSdkVersion": 35,
-      "minSdkVersion": 21
+      "versionCode": 4,
+      "softwareKeyboardLayoutMode": "resize"
     },
     "plugins": [
       "expo-secure-store",
       [
         "expo-image-picker",
         {
-          "photosPermission": "Allow $(PRODUCT_NAME) to access your photos to upload a logo."
+          "photosPermission": "Allow $(PRODUCT_NAME) to access your photos to update your profile picture."
         }
       ],
       [
         "expo-build-properties",
         {
           "android": {
-            "kotlinVersion": "2.0.21"
+            "kotlinVersion": "2.0.21",
+            "compileSdkVersion": 35,
+            "targetSdkVersion": 35,
+            "minSdkVersion": 24
           }
         }
       ],
       "@react-native-community/datetimepicker",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone to record voice messages."
+        }
+      ],
+      "expo-asset",
+      "expo-video"
     ],
-    "privacyPolicyUrl": "https://mypayrollmaster.online/Glos-privacypolicy.html",
+    "privacyPolicyUrl": "https://glosonline.com/privacy-policy.html",
     "owner": "athiraks",
     "extra": {
       "eas": {

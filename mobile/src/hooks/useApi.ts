@@ -5,6 +5,7 @@ import { createApiClient } from '../api/client';
 import { showAlert } from '../components/common/AlertModal';
 import { useWorkspace } from '../contexts/WorkspaceContext';
 import {
+  attachmentsApi,
   workspaceApi,
   meApi,
   invitationsApi,
@@ -26,6 +27,7 @@ import {
   contractsApi,
   routinesApi,
   businessReviewsApi,
+  taskPlannerApi,
   chatApi,
 } from '../api';
 
@@ -83,13 +85,41 @@ export function useApi() {
 
   const inflightTokenRef = useRef<Promise<string> | null>(null);
 
+  // Clerk's getToken() silently refreshes the session token over the network
+  // when the cached one has expired — and that refresh call has no timeout of
+  // its own. If it ever stalls (flaky connection, Clerk having a slow moment),
+  // every api.* call built on top hangs right along with it: mkClient() never
+  // resolves, so the actual HTTP request (which DOES have client.ts's 15s
+  // timeout) never even starts. The only thing that eventually notices is
+  // useLoadWithTimeout's unrelated 20s ceiling — so screens sat on a spinner
+  // for a full 20s before falling back to a generic "check your connection"
+  // message that had nothing to do with the network. Racing getToken() against
+  // its own timeout here means a stuck refresh fails in ~8s with a real error
+  // that the normal retry-with-fresh-token path (client.ts) or the caller's
+  // own catch can react to immediately, instead of hanging silently.
+  const TOKEN_TIMEOUT_MS = 8000;
+  function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+    return Promise.race([
+      p,
+      new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out`)), ms)),
+    ]);
+  }
+
+  // Dedupes concurrent getToken() calls (several requests firing at once on
+  // mount), but must not hold onto the resolved token — Clerk session tokens
+  // are short-lived, and serving a stale one from a long-lived cache is what
+  // caused the "Invalid token" errors deep into a chat session.
   const getCachedToken = useCallback(async (): Promise<string> => {
     if (!inflightTokenRef.current) {
-      inflightTokenRef.current = getTokenRef.current()
+      inflightTokenRef.current = withTimeout(getTokenRef.current(), TOKEN_TIMEOUT_MS, 'getToken')
         .then(t => t ?? '')
-        .finally(() => { setTimeout(() => { inflightTokenRef.current = null; }, 45000); });
+        .finally(() => { inflightTokenRef.current = null; });
     }
     return inflightTokenRef.current;
+  }, []);
+
+  const getFreshToken = useCallback(async (): Promise<string> => {
+    return (await withTimeout(getTokenRef.current(), TOKEN_TIMEOUT_MS, 'getToken')) ?? '';
   }, []);
 
   const userRef = useRef(user);
@@ -106,13 +136,16 @@ export function useApi() {
         email: u?.primaryEmailAddress?.emailAddress ?? '',
         firstName: u?.firstName ?? '',
         lastName: u?.lastName ?? '',
+        photoUrl: u?.imageUrl ?? '',
       },
+      getFreshToken,
     );
-  }, [getCachedToken]);
+  }, [getCachedToken, getFreshToken]);
 
   return useMemo(
     () => ({
       getClient: mkClient,
+      attachments: bindApiGroup(mkClient, attachmentsApi),
       workspace: {
         listApps: async () => {
           const client = await mkClient();
@@ -168,21 +201,21 @@ export function useApi() {
         },
       },
       notifications: {
-        list: async (params?: { unread?: boolean; limit?: number }) => {
+        list: async (params?: { unread?: boolean; limit?: number; app_id?: number }) => {
           const client = await mkClient();
           return notificationsApi(client).list(params);
         },
-        unreadCount: async () => {
+        unreadCount: async (appId?: number) => {
           const client = await mkClient();
-          return notificationsApi(client).unreadCount();
+          return notificationsApi(client).unreadCount(appId);
         },
         markRead: async (id: number) => {
           const client = await mkClient();
           return notificationsApi(client).markRead(id);
         },
-        markAllRead: async () => {
+        markAllRead: async (appId?: number) => {
           const client = await mkClient();
-          return notificationsApi(client).markAllRead();
+          return notificationsApi(client).markAllRead(appId);
         },
       },
       dashboard: bindApiGroup(mkClient, dashboardApi),
@@ -190,6 +223,7 @@ export function useApi() {
       contracts: bindApiGroup(mkClient, contractsApi),
       routines: bindApiGroup(mkClient, routinesApi),
       businessReviews: bindApiGroup(mkClient, businessReviewsApi),
+      taskPlanner: bindApiGroup(mkClient, taskPlannerApi),
       chat: bindApiGroup(mkClient, chatApi),
       tasks: {
         list: async (appId: number, params?: Record<string, unknown>) => {
@@ -212,6 +246,10 @@ export function useApi() {
           const client = await mkClient();
           return tasksApi(client).delete(appId, taskId);
         },
+        getWorkload: async (appId: number, userId: number) => {
+          const client = await mkClient();
+          return tasksApi(client).getWorkload(appId, userId);
+        },
         startTimer: async (appId: number, taskId: number) => {
           const client = await mkClient();
           return tasksApi(client).startTimer(appId, taskId);
@@ -232,13 +270,25 @@ export function useApi() {
           const client = await mkClient();
           return tasksApi(client).getComments(appId, taskId);
         },
-        addComment: async (appId: number, taskId: number, body: string) => {
+        addComment: async (appId: number, taskId: number, body: string, attachments?: Record<string, unknown>[]) => {
           const client = await mkClient();
-          return tasksApi(client).addComment(appId, taskId, body);
+          return tasksApi(client).addComment(appId, taskId, body, attachments);
+        },
+        updateComment: async (appId: number, taskId: number, commentId: number, body: string) => {
+          const client = await mkClient();
+          return tasksApi(client).updateComment(appId, taskId, commentId, body);
         },
         deleteComment: async (appId: number, taskId: number, commentId: number) => {
           const client = await mkClient();
           return tasksApi(client).deleteComment(appId, taskId, commentId);
+        },
+        addDescriptionAttachment: async (appId: number, taskId: number, attachment: Record<string, unknown>) => {
+          const client = await mkClient();
+          return tasksApi(client).addDescriptionAttachment(appId, taskId, attachment);
+        },
+        removeDescriptionAttachment: async (appId: number, taskId: number, attachmentId: number) => {
+          const client = await mkClient();
+          return tasksApi(client).removeDescriptionAttachment(appId, taskId, attachmentId);
         },
         deleteChecklistItem: async (appId: number, taskId: number, itemId: number) => {
           const client = await mkClient();
@@ -286,6 +336,10 @@ export function useApi() {
           const client = await mkClient();
           return feedApi(client).create(appId, data);
         },
+        update: async (appId: number, postId: number, content: string) => {
+          const client = await mkClient();
+          return feedApi(client).update(appId, postId, content);
+        },
         delete: async (appId: number, postId: number) => {
           const client = await mkClient();
           return feedApi(client).delete(appId, postId);
@@ -310,7 +364,7 @@ export function useApi() {
           const client = await mkClient();
           return feedApi(client).pin(appId, postId);
         },
-        giveFeedback: async (appId: number, data: { to_user_id: number; feedback_text: string; is_anonymous?: boolean; cycle_id?: number | null; type?: string }) => {
+        giveFeedback: async (appId: number, data: { to_user_ids: number[]; feedback_text: string; is_anonymous?: boolean; cycle_id?: number | null; type?: string }) => {
           const client = await mkClient();
           return feedApi(client).giveFeedback(appId, data);
         },
@@ -408,6 +462,10 @@ export function useApi() {
           const client = await mkClient();
           return rolesApi(client).listAreas(appId, roleId);
         },
+        listAssignmentsForUser: async (appId: number, userId: number) => {
+          const client = await mkClient();
+          return rolesApi(client).listAssignmentsForUser(appId, userId);
+        },
       },
       departments: {
         list: async (appId: number) => {
@@ -416,9 +474,9 @@ export function useApi() {
         },
       },
       policies: {
-        list: async (appId: number) => {
+        list: async (appId: number, params?: Record<string, unknown>) => {
           const client = await mkClient();
-          return policiesApi(client).list(appId);
+          return policiesApi(client).list(appId, params);
         },
         get: async (appId: number, policyId: number) => {
           const client = await mkClient();

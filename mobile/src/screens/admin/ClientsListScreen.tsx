@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, ActivityIndicator, RefreshControl, TextInput } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -30,9 +30,11 @@ export default function ClientsListScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const hasLoadedRef = useRef(false);
+
   const load = useCallback(async (isRefresh = false) => {
     if (!workspace?.id) return;
-    if (!isRefresh) setLoading(true);
+    if (!isRefresh && !hasLoadedRef.current) setLoading(true);
     try {
       const res = await api.contracts.listClients(workspace.id, {});
       setClients(res.data ?? []);
@@ -42,10 +44,10 @@ export default function ClientsListScreen() {
     } finally {
       setLoading(false);
       setRefreshing(false);
+      hasLoadedRef.current = true;
     }
   }, [workspace?.id]);
 
-  useEffect(() => { load(); }, [load]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const filtered = clients.filter((c) => {

@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { AppColors } from '../../../utils/colors';
 
 interface RoutineStat {
@@ -23,7 +23,13 @@ function barColor(pct: number) {
   return '#dc2626';
 }
 
-export default function TeamRoutineAnalysisWidget({ reportees, colors }: { reportees: Reportee[]; colors: AppColors }) {
+export default function TeamRoutineAnalysisWidget({
+  reportees, colors, onViewAllRoutines,
+}: {
+  reportees: Reportee[];
+  colors: AppColors;
+  onViewAllRoutines?: () => void;
+}) {
   const s = useMemo(() => makeStyles(colors), [colors]);
   const members = reportees.filter((r) => !r.is_manager);
   if (members.length === 0) return null;
@@ -49,7 +55,14 @@ export default function TeamRoutineAnalysisWidget({ reportees, colors }: { repor
 
   return (
     <View style={s.card}>
-      <Text style={s.headTitle}>ROUTINE ANALYSIS</Text>
+      <View style={s.headRow}>
+        <Text style={s.headTitle}>ROUTINE ANALYSIS</Text>
+        {onViewAllRoutines && (
+          <TouchableOpacity onPress={onViewAllRoutines} hitSlop={8}>
+            <Text style={s.viewAllTxt}>View All Routines →</Text>
+          </TouchableOpacity>
+        )}
+      </View>
       <View style={s.statsRow}>
         <View style={s.statCell}><Text style={s.statVal}>{reportees.length}</Text><Text style={s.statLbl}>Members</Text></View>
         <View style={s.statCell}><Text style={s.statVal}>{totalRoutines}</Text><Text style={s.statLbl}>Routines</Text></View>
@@ -57,18 +70,22 @@ export default function TeamRoutineAnalysisWidget({ reportees, colors }: { repor
         <View style={s.statCell}><Text style={[s.statVal, needsAttention > 0 && { color: colors.danger }]}>{needsAttention}</Text><Text style={s.statLbl}>Attention</Text></View>
       </View>
 
-      {reportees.map((r) => {
-        const pct = r.overall_efficiency ?? 0;
-        return (
-          <View key={r.user.id} style={s.memberRow}>
-            <Text style={s.memberName} numberOfLines={1}>{name(r.user)}{r.is_manager ? ' (You)' : ''}</Text>
-            <View style={s.memberBarBg}>
-              <View style={[s.memberBarFill, { width: `${Math.min(pct, 100)}%` as any, backgroundColor: barColor(pct) }]} />
+      {/* Fixed maxHeight so this scrolls within its own box (~10 rows) once
+          the team is large, instead of growing the whole page. */}
+      <ScrollView style={s.memberScroll} nestedScrollEnabled showsVerticalScrollIndicator={false}>
+        {reportees.map((r) => {
+          const pct = r.overall_efficiency ?? 0;
+          return (
+            <View key={r.user.id} style={s.memberRow}>
+              <Text style={s.memberName} numberOfLines={1}>{name(r.user)}{r.is_manager ? ' (You)' : ''}</Text>
+              <View style={s.memberBarBg}>
+                <View style={[s.memberBarFill, { width: `${Math.min(pct, 100)}%` as any, backgroundColor: barColor(pct) }]} />
+              </View>
+              <Text style={s.memberPct} numberOfLines={1}>{r.overall_efficiency != null ? `${pct}%` : '—'}</Text>
             </View>
-            <Text style={s.memberPct}>{r.overall_efficiency != null ? `${pct}%` : '—'}</Text>
-          </View>
-        );
-      })}
+          );
+        })}
+      </ScrollView>
 
       {(top || bottom) && (
         <View style={s.highlightRow}>
@@ -95,9 +112,16 @@ export default function TeamRoutineAnalysisWidget({ reportees, colors }: { repor
           {mostMissed.map(([desc, count]) => (
             <View key={desc} style={s.missedRow}>
               <Text style={s.missedDesc} numberOfLines={1}>{desc}</Text>
-              <Text style={s.missedCount}>{count}×</Text>
+              <TouchableOpacity onPress={onViewAllRoutines} disabled={!onViewAllRoutines} hitSlop={6}>
+                <Text style={s.missedCount}>{count} member{count !== 1 ? 's' : ''}</Text>
+              </TouchableOpacity>
             </View>
           ))}
+          {onViewAllRoutines && (
+            <TouchableOpacity onPress={onViewAllRoutines} hitSlop={8}>
+              <Text style={s.viewAllMissedTxt}>View All Missed Routines →</Text>
+            </TouchableOpacity>
+          )}
         </View>
       )}
     </View>
@@ -107,16 +131,23 @@ export default function TeamRoutineAnalysisWidget({ reportees, colors }: { repor
 function makeStyles(c: AppColors) {
   return StyleSheet.create({
     card: { marginHorizontal: 16, marginTop: 12, backgroundColor: c.surface, borderRadius: 14, borderWidth: 1, borderColor: c.border, padding: 16 },
-    headTitle: { fontSize: 10, fontWeight: '700', color: c.textMuted, letterSpacing: 1, marginBottom: 12 },
+    headRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 12 },
+    headTitle: { fontSize: 10, fontWeight: '700', color: c.textMuted, letterSpacing: 1 },
+    viewAllTxt: { fontSize: 11, fontWeight: '700', color: c.primary },
     statsRow: { flexDirection: 'row', marginBottom: 14 },
     statCell: { flex: 1, alignItems: 'center' },
     statVal: { fontSize: 16, fontWeight: '800', color: c.textPrimary },
     statLbl: { fontSize: 9, color: c.textMuted, marginTop: 2 },
+    memberScroll: { maxHeight: 260 },
     memberRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
-    memberName: { width: 90, fontSize: 11, fontWeight: '600', color: c.textPrimary },
-    memberBarBg: { flex: 1, height: 7, backgroundColor: c.gray100, borderRadius: 4, overflow: 'hidden' },
+    // flexShrink:1 matters here — RN defaults flexShrink to 0 (unlike web
+    // CSS), so a plain fixed width never yields space back on narrower
+    // screens, and can force the bar toward zero width instead of shrinking
+    // the label to fit.
+    memberName: { width: 130, flexShrink: 1, fontSize: 11, fontWeight: '600', color: c.textPrimary },
+    memberBarBg: { flex: 1, minWidth: 24, height: 7, backgroundColor: c.gray100, borderRadius: 4, overflow: 'hidden' },
     memberBarFill: { height: 7, borderRadius: 4 },
-    memberPct: { width: 34, fontSize: 11, fontWeight: '700', color: c.textSecondary, textAlign: 'right' },
+    memberPct: { width: 40, flexShrink: 1, fontSize: 11, fontWeight: '700', color: c.textSecondary, textAlign: 'right' },
     highlightRow: { flexDirection: 'row', gap: 8, marginTop: 10 },
     highlightCard: { flex: 1, borderRadius: 10, padding: 10 },
     highlightLbl: { fontSize: 9, fontWeight: '700', color: c.textMuted, textTransform: 'uppercase' },
@@ -126,6 +157,7 @@ function makeStyles(c: AppColors) {
     missedTitle: { fontSize: 11, fontWeight: '700', color: c.textSecondary, marginBottom: 6 },
     missedRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 },
     missedDesc: { flex: 1, fontSize: 11, color: c.textPrimary },
-    missedCount: { fontSize: 11, fontWeight: '700', color: c.danger },
+    missedCount: { fontSize: 11, fontWeight: '600', color: c.primary },
+    viewAllMissedTxt: { fontSize: 11, fontWeight: '700', color: c.primary, marginTop: 10, textAlign: 'center' },
   });
 }

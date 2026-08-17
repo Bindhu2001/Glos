@@ -8,6 +8,7 @@ import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useApi } from '../../hooks/useApi';
 import { useWorkspace } from '../../contexts/WorkspaceContext';
+import { useHasTeam } from '../../contexts/HasTeamContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { AppColors } from '../../utils/colors';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
@@ -77,6 +78,13 @@ const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
   cancelled:   { bg: 'rgba(107,114,128,0.12)', text: '#6b7280' },
 };
 
+// Matches TasksScreen.tsx's status vocabulary — this screen was showing the
+// same statuses as raw snake_case ("done", "in progress") instead.
+const STATUS_LABELS: Record<string, string> = {
+  open: 'Not Started', in_progress: 'In Progress', blocked: 'Blocked',
+  done: 'Completed', cancelled: 'Cancelled',
+};
+
 const PRIORITY_COLORS: Record<string, { bg: string; text: string }> = {
   low:    { bg: 'rgba(107,114,128,0.15)', text: '#9ca3af' },
   medium: { bg: 'rgba(245,158,11,0.15)',  text: '#f59e0b' },
@@ -112,12 +120,13 @@ export default function TaskReportsScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
 
-  const isAdmin = workspace?.role === 'super_admin' || workspace?.role === 'admin';
+  // Matches web's TaskReports.jsx `isMultiUser = isAdmin || isManager` — managers
+  // with reportees get the same team member filter/visibility as admins.
+  const { canSeeTeamContent } = useHasTeam();
   const now = new Date();
 
   const [tab, setTab] = useState<Tab>('hours');
   const [members, setMembers] = useState<Member[]>([]);
-  const [meId, setMeId] = useState<number | null>(null);
   const { loading, loadError, run } = useLoadWithTimeout();
   const [refreshing, setRefreshing] = useState(false);
 
@@ -133,9 +142,11 @@ export default function TaskReportsScreen() {
   const [statusFilter, setStatusFilter] = useState('');
   const [priorityFilter, setPriorityFilter] = useState('');
   const [areaFilter, setAreaFilter] = useState('');
+  const [assigneeFilter, setAssigneeFilter] = useState<number[]>([]);
   const [showStatusPicker, setShowStatusPicker] = useState(false);
   const [showPriorityPicker, setShowPriorityPicker] = useState(false);
   const [showAreaPicker, setShowAreaPicker] = useState(false);
+  const [showAssigneePicker, setShowAssigneePicker] = useState(false);
 
   const monthStr = useMemo(
     () => `${year}-${String(month + 1).padStart(2, '0')}`,
@@ -150,37 +161,29 @@ export default function TaskReportsScreen() {
     } catch {}
   }, [workspace, api]);
 
-  const loadHours = useCallback(async (overrideMeId?: number | null) => {
+  // No swallow here (unlike loadMembers above, which is just supplementary
+  // name resolution) — these two back the screen's actual Hours/Details tabs,
+  // so a real failure must reach init()/run() below and show a retry instead
+  // of leaving both tabs silently empty.
+  const loadHours = useCallback(async () => {
     if (!workspace) return;
-    try {
-      const params: { month: string; user_id?: number } = { month: monthStr };
-      if (isAdmin) {
-        if (selectedUserId !== null) params.user_id = selectedUserId;
-      } else {
-        const id = overrideMeId ?? meId;
-        if (id !== null) params.user_id = id;
-      }
-      const r = await api.tasks.timeLogReport(workspace.id, params);
-      setHoursItems(r.data?.items ?? r.data ?? []);
-    } catch {}
-  }, [workspace, api, monthStr, selectedUserId, isAdmin, meId]);
+    // The backend already scopes rows by role (admin: all, manager: subordinates,
+    // member: self) — it has no `user_id` filter param, so the member picker
+    // selection is applied client-side below, same as web's `filterMembers`.
+    const r = await api.tasks.timeLogReport(workspace.id, { month: monthStr });
+    setHoursItems(r.data?.items ?? r.data ?? []);
+  }, [workspace, api, monthStr]);
 
   const loadDetails = useCallback(async () => {
     if (!workspace) return;
-    try {
-      const r = await api.tasks.detailsReport(workspace.id);
-      setDetailsItems(r.data?.items ?? r.data ?? []);
-    } catch {}
+    const r = await api.tasks.detailsReport(workspace.id);
+    setDetailsItems(r.data?.items ?? r.data ?? []);
   }, [workspace, api]);
 
   const isFirstMount = useRef(true);
 
   const init = useCallback(async () => {
-    let resolvedMeId: number | null = null;
-    const r = await api.me.getProfile();
-    resolvedMeId = r.data?.id ?? r.data?.user?.id ?? null;
-    setMeId(resolvedMeId);
-    await Promise.all([loadMembers(), loadHours(resolvedMeId), loadDetails()]);
+    await Promise.all([loadMembers(), loadHours(), loadDetails()]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -188,14 +191,21 @@ export default function TaskReportsScreen() {
 
   useEffect(() => {
     if (isFirstMount.current) { isFirstMount.current = false; return; }
-    loadHours();
-  }, [monthStr, selectedUserId]); // eslint-disable-line react-hooks/exhaustive-deps
+    // Swallowed — quiet background refresh on month change; the screen
+    // already has data on it, same reasoning as other refocus/background
+    // reloads elsewhere in the app.
+    loadHours().catch(() => {});
+  }, [monthStr]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onRefresh = async () => {
     setRefreshing(true);
-    if (tab === 'hours') await loadHours();
-    else await loadDetails();
-    setRefreshing(false);
+    try {
+      if (tab === 'hours') await loadHours();
+      else await loadDetails();
+    } catch {
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const shiftMonth = (delta: number) => {
@@ -204,10 +214,20 @@ export default function TaskReportsScreen() {
     setMonth(d.getMonth());
   };
 
+  // Client-side member filter (mirrors web's `filteredItems`/`filterMembers`) —
+  // the backend has no user_id param for this endpoint, so filtering by the
+  // selected team member happens here rather than via the API call.
+  const filteredHoursItems = useMemo(() => {
+    if (canSeeTeamContent && selectedUserId !== null) {
+      return hoursItems.filter((r) => r.logger_user_id === selectedUserId);
+    }
+    return hoursItems;
+  }, [hoursItems, canSeeTeamContent, selectedUserId]);
+
   // Group hours rows by task
   const hoursGroups = useMemo((): HoursTaskGroup[] => {
     const map = new Map<number, HoursTaskGroup>();
-    for (const row of hoursItems) {
+    for (const row of filteredHoursItems) {
       const g = map.get(row.task_id);
       if (g) {
         g.rows.push(row);
@@ -225,7 +245,7 @@ export default function TaskReportsScreen() {
       }
     }
     return Array.from(map.values());
-  }, [hoursItems]);
+  }, [filteredHoursItems]);
 
   const grandTotalMinutes = useMemo(
     () => hoursGroups.reduce((sum, g) => sum + g.total_minutes, 0),
@@ -241,6 +261,7 @@ export default function TaskReportsScreen() {
           if (areaFilter === '_none') return !t.area_name;
           if (t.area_name !== areaFilter) return false;
         }
+        if (assigneeFilter.length > 0 && !assigneeFilter.includes(t.assigned_to_user_id ?? -1)) return false;
         return true;
       })
       .sort((a, b) => {
@@ -248,7 +269,7 @@ export default function TaskReportsScreen() {
         const bt = b.created_at ? new Date(b.created_at).getTime() : 0;
         return bt - at;
       });
-  }, [detailsItems, statusFilter, priorityFilter, areaFilter]);
+  }, [detailsItems, statusFilter, priorityFilter, areaFilter, assigneeFilter]);
 
   const areas = useMemo(() => {
     const seen = new Set<string>();
@@ -277,9 +298,9 @@ export default function TaskReportsScreen() {
   if (loadError) return <LoadError onRetry={() => run(init)} />;
 
   return (
-    <View style={[s.container, { paddingTop: insets.top }]}>
+    <View style={s.container}>
       {/* Header */}
-      <View style={s.header}>
+      <View style={[s.header, { paddingTop: insets.top + 14 }]}>
         <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={8}>
           <Ionicons name="arrow-back" size={22} color={colors.textPrimary} />
         </TouchableOpacity>
@@ -328,8 +349,8 @@ export default function TaskReportsScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* Admin member selector */}
-          {isAdmin && (
+          {/* Team member selector — shown for admins and managers (web's isMultiUser) */}
+          {canSeeTeamContent && (
             <TouchableOpacity style={s.filterRow} onPress={() => setShowUserPicker(true)}>
               <Ionicons name="person-outline" size={15} color={colors.primary} />
               <Text style={s.filterRowText}>{selectedMemberName}</Text>
@@ -339,24 +360,24 @@ export default function TaskReportsScreen() {
 
           {/* Summary cards */}
           <View style={s.summaryRow}>
-            <View style={s.summaryCard}>
-              <Text style={s.summaryVal}>{hoursGroups.length}</Text>
+            <View style={[s.summaryCard, { backgroundColor: colors.primary + '14', borderColor: colors.primary + '33' }]}>
+              <Text style={[s.summaryVal, { color: colors.primary }]}>{hoursGroups.length}</Text>
               <Text style={s.summaryLbl}>Tasks</Text>
             </View>
-            <View style={[s.summaryCard, { borderColor: colors.secondary + '44' }]}>
+            <View style={[s.summaryCard, { backgroundColor: colors.secondary + '14', borderColor: colors.secondary + '33' }]}>
               <Text style={[s.summaryVal, { color: colors.secondary }]}>{fmt(grandTotalMinutes)}</Text>
               <Text style={s.summaryLbl}>Total Hours</Text>
             </View>
-            {isAdmin && selectedUserId === null && (
-              <View style={[s.summaryCard, { borderColor: colors.primary + '44' }]}>
-                <Text style={[s.summaryVal, { color: colors.primary }]}>
+            {canSeeTeamContent && selectedUserId === null && (
+              <View style={[s.summaryCard, { backgroundColor: colors.warning + '14', borderColor: colors.warning + '33' }]}>
+                <Text style={[s.summaryVal, { color: colors.warning }]}>
                   {new Set(hoursItems.map(r => r.logger_user_id)).size}
                 </Text>
                 <Text style={s.summaryLbl}>Members</Text>
               </View>
             )}
-            <View style={s.summaryCard}>
-              <Text style={[s.summaryVal, { fontSize: 13 }]}>{MONTH_NAMES[month]} {String(year).slice(2)}</Text>
+            <View style={[s.summaryCard, { backgroundColor: colors.success + '14', borderColor: colors.success + '33' }]}>
+              <Text style={[s.summaryVal, { fontSize: 13, color: colors.success }]}>{MONTH_NAMES[month]} {String(year).slice(2)}</Text>
               <Text style={s.summaryLbl}>Period</Text>
             </View>
           </View>
@@ -377,7 +398,7 @@ export default function TaskReportsScreen() {
                 {hoursGroups.map(group => {
                   const sc = STATUS_COLORS[group.status] ?? STATUS_COLORS.open;
                   return (
-                    <View key={group.task_id} style={s.hoursCard}>
+                    <View key={group.task_id} style={[s.hoursCard, { borderLeftColor: sc.text }]}>
                       <View style={s.hoursCardHeader}>
                         <View style={{ flex: 1 }}>
                           <Text style={s.hoursTaskNum}>
@@ -388,7 +409,7 @@ export default function TaskReportsScreen() {
                         <View style={{ alignItems: 'flex-end', gap: 4 }}>
                           <View style={[s.badge, { backgroundColor: sc.bg }]}>
                             <Text style={[s.badgeText, { color: sc.text }]}>
-                              {(group.status ?? '').replace(/_/g, ' ')}
+                              {STATUS_LABELS[group.status] ?? (group.status ?? '').replace(/_/g, ' ')}
                             </Text>
                           </View>
                           <Text style={[s.hoursTotal, { color: colors.secondary }]}>
@@ -405,7 +426,7 @@ export default function TaskReportsScreen() {
                             <View style={{ flex: 1 }}>
                               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                                 <Text style={s.hoursUserName}>{name}</Text>
-                                {isAdmin && selectedUserId === null && isCurrent && (
+                                {canSeeTeamContent && selectedUserId === null && isCurrent && (
                                   <View style={s.currentBadge}>
                                     <Text style={[s.currentBadgeText, { color: colors.success }]}>current</Text>
                                   </View>
@@ -448,13 +469,30 @@ export default function TaskReportsScreen() {
       {tab === 'details' && (
         <>
           {/* Filters */}
-          <View style={s.filtersRow}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.filtersScroll} contentContainerStyle={s.filtersRow}>
+            {canSeeTeamContent && (
+              <TouchableOpacity
+                style={[s.filterChip, assigneeFilter.length > 0 ? s.filterChipActive : null]}
+                onPress={() => setShowAssigneePicker(true)}
+              >
+                <Text
+                  style={[s.filterChipText, assigneeFilter.length > 0 ? s.filterChipTextActive : null]}
+                  numberOfLines={1}
+                >
+                  {assigneeFilter.length === 0 ? 'Assignee'
+                    : assigneeFilter.length === 1 ? memberName(members, assigneeFilter[0])
+                    : `${assigneeFilter.length} Assignees`}
+                </Text>
+                <Ionicons name="chevron-down" size={12} color={assigneeFilter.length > 0 ? colors.primary : colors.gray400} />
+              </TouchableOpacity>
+            )}
+
             <TouchableOpacity
               style={[s.filterChip, statusFilter ? s.filterChipActive : null]}
               onPress={() => setShowStatusPicker(true)}
             >
               <Text style={[s.filterChipText, statusFilter ? s.filterChipTextActive : null]}>
-                {statusFilter ? statusFilter.replace(/_/g, ' ') : 'Status'}
+                {statusFilter ? (STATUS_LABELS[statusFilter] ?? statusFilter.replace(/_/g, ' ')) : 'Status'}
               </Text>
               <Ionicons name="chevron-down" size={12} color={statusFilter ? colors.primary : colors.gray400} />
             </TouchableOpacity>
@@ -482,29 +520,29 @@ export default function TaskReportsScreen() {
               <Ionicons name="chevron-down" size={12} color={areaFilter ? colors.primary : colors.gray400} />
             </TouchableOpacity>
 
-            {(statusFilter || priorityFilter || areaFilter) && (
+            {(statusFilter || priorityFilter || areaFilter || assigneeFilter.length > 0) && (
               <TouchableOpacity
                 hitSlop={8}
-                onPress={() => { setStatusFilter(''); setPriorityFilter(''); setAreaFilter(''); }}
+                onPress={() => { setStatusFilter(''); setPriorityFilter(''); setAreaFilter(''); setAssigneeFilter([]); }}
               >
                 <Ionicons name="close-circle" size={22} color={colors.danger} />
               </TouchableOpacity>
             )}
-          </View>
+          </ScrollView>
 
           {/* Summary cards */}
           <View style={s.summaryRow}>
-            <View style={s.summaryCard}>
-              <Text style={s.summaryVal}>{filteredDetails.length}</Text>
+            <View style={[s.summaryCard, { backgroundColor: colors.primary + '14', borderColor: colors.primary + '33' }]}>
+              <Text style={[s.summaryVal, { color: colors.primary }]}>{filteredDetails.length}</Text>
               <Text style={s.summaryLbl}>Total Tasks</Text>
             </View>
-            <View style={[s.summaryCard, { borderColor: colors.success + '44' }]}>
+            <View style={[s.summaryCard, { backgroundColor: colors.success + '14', borderColor: colors.success + '33' }]}>
               <Text style={[s.summaryVal, { color: colors.success }]}>{detailsCompletedCount}</Text>
               <Text style={s.summaryLbl}>Completed</Text>
             </View>
-            <View style={[s.summaryCard, { borderColor: colors.secondary + '44' }]}>
+            <View style={[s.summaryCard, { backgroundColor: colors.secondary + '14', borderColor: colors.secondary + '33' }]}>
               <Text style={[s.summaryVal, { color: colors.secondary }]}>
-                {detailsTotalHours > 0 ? `${detailsTotalHours.toFixed(1)}h` : '—'}
+                {detailsTotalHours > 0 ? fmt(Math.round(detailsTotalHours * 60)) : '—'}
               </Text>
               <Text style={s.summaryLbl}>Total Hours</Text>
             </View>
@@ -534,7 +572,7 @@ export default function TaskReportsScreen() {
                 return (
                   <TouchableOpacity
                     key={task.id}
-                    style={s.detailCard}
+                    style={[s.detailCard, { borderLeftColor: sc.text }]}
                     activeOpacity={0.85}
                     onPress={() => {
                       if (!workspace?.id) return;
@@ -542,7 +580,8 @@ export default function TaskReportsScreen() {
                         navigation.getParent()?.navigate('TasksTab', {
                           screen: 'TaskDetail',
                           params: { taskId: task.id, appId: workspace.id },
-                        });
+                          initial: false,
+                        } as never);
                       } catch {}
                     }}
                   >
@@ -553,7 +592,7 @@ export default function TaskReportsScreen() {
                       </Text>
                       <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap', flex: 1, justifyContent: 'flex-end' }}>
                         <View style={[s.badge, { backgroundColor: sc.bg }]}>
-                          <Text style={[s.badgeText, { color: sc.text }]}>{(task.status ?? '').replace(/_/g, ' ')}</Text>
+                          <Text style={[s.badgeText, { color: sc.text }]}>{STATUS_LABELS[task.status] ?? (task.status ?? '').replace(/_/g, ' ')}</Text>
                         </View>
                         {pc && (
                           <View style={[s.badge, { backgroundColor: pc.bg }]}>
@@ -609,14 +648,14 @@ export default function TaskReportsScreen() {
                       {task.estimated_hours != null && Number(task.estimated_hours) > 0 && (
                         <View style={s.metaPill}>
                           <Text style={s.metaPillLabel}>Est.</Text>
-                          <Text style={s.metaPillVal}>{Number(task.estimated_hours).toFixed(1)}h</Text>
+                          <Text style={s.metaPillVal}>{fmt(Math.round(Number(task.estimated_hours) * 60))}</Text>
                         </View>
                       )}
                       {task.total_hours != null && Number(task.total_hours) > 0 && (
                         <View style={[s.metaPill, { borderColor: colors.secondary + '44' }]}>
                           <Text style={s.metaPillLabel}>Logged</Text>
                           <Text style={[s.metaPillVal, { color: colors.secondary }]}>
-                            {Number(task.total_hours).toFixed(1)}h
+                            {fmt(Math.round(Number(task.total_hours) * 60))}
                           </Text>
                         </View>
                       )}
@@ -648,9 +687,9 @@ export default function TaskReportsScreen() {
       {/* ── Modals ─────────────────────────────────────── */}
 
       {/* Member picker */}
-      <Modal visible={showUserPicker} transparent animationType="slide">
+      <Modal visible={showUserPicker} transparent animationType="slide" onRequestClose={() => setShowUserPicker(false)}>
         <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setShowUserPicker(false)}>
-          <View style={s.modalSheet}>
+          <View style={[s.modalSheet, { paddingBottom: insets.bottom + 16 }]}>
             <View style={s.modalHeader}>
               <Text style={s.modalTitle}>Select Member</Text>
               <TouchableOpacity onPress={() => setShowUserPicker(false)}>
@@ -671,7 +710,7 @@ export default function TaskReportsScreen() {
                       setShowUserPicker(false);
                     }}
                   >
-                    <Text style={[s.pickerRowText, sel && s.pickerRowTextSel]}>{name}</Text>
+                    <Text style={[s.pickerRowText, sel && s.pickerRowTextSel]} numberOfLines={1}>{name}</Text>
                     {sel && <Ionicons name="checkmark" size={18} color={colors.primary} />}
                   </TouchableOpacity>
                 );
@@ -682,9 +721,9 @@ export default function TaskReportsScreen() {
       </Modal>
 
       {/* Status picker */}
-      <Modal visible={showStatusPicker} transparent animationType="slide">
+      <Modal visible={showStatusPicker} transparent animationType="slide" onRequestClose={() => setShowStatusPicker(false)}>
         <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setShowStatusPicker(false)}>
-          <View style={s.modalSheet}>
+          <View style={[s.modalSheet, { paddingBottom: insets.bottom + 16 }]}>
             <View style={s.modalHeader}>
               <Text style={s.modalTitle}>Filter by Status</Text>
               <TouchableOpacity onPress={() => setShowStatusPicker(false)}>
@@ -698,7 +737,7 @@ export default function TaskReportsScreen() {
                 onPress={() => { setStatusFilter(opt); setShowStatusPicker(false); }}
               >
                 <Text style={[s.pickerRowText, statusFilter === opt && s.pickerRowTextSel]}>
-                  {opt ? opt.replace(/_/g, ' ') : 'All Statuses'}
+                  {opt ? (STATUS_LABELS[opt] ?? opt.replace(/_/g, ' ')) : 'All Statuses'}
                 </Text>
                 {statusFilter === opt && <Ionicons name="checkmark" size={18} color={colors.primary} />}
               </TouchableOpacity>
@@ -708,9 +747,9 @@ export default function TaskReportsScreen() {
       </Modal>
 
       {/* Priority picker */}
-      <Modal visible={showPriorityPicker} transparent animationType="slide">
+      <Modal visible={showPriorityPicker} transparent animationType="slide" onRequestClose={() => setShowPriorityPicker(false)}>
         <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setShowPriorityPicker(false)}>
-          <View style={s.modalSheet}>
+          <View style={[s.modalSheet, { paddingBottom: insets.bottom + 16 }]}>
             <View style={s.modalHeader}>
               <Text style={s.modalTitle}>Filter by Priority</Text>
               <TouchableOpacity onPress={() => setShowPriorityPicker(false)}>
@@ -734,9 +773,9 @@ export default function TaskReportsScreen() {
       </Modal>
 
       {/* Area picker */}
-      <Modal visible={showAreaPicker} transparent animationType="slide">
+      <Modal visible={showAreaPicker} transparent animationType="slide" onRequestClose={() => setShowAreaPicker(false)}>
         <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setShowAreaPicker(false)}>
-          <View style={s.modalSheet}>
+          <View style={[s.modalSheet, { paddingBottom: insets.bottom + 16 }]}>
             <View style={s.modalHeader}>
               <Text style={s.modalTitle}>Filter by Area</Text>
               <TouchableOpacity onPress={() => setShowAreaPicker(false)}>
@@ -761,6 +800,38 @@ export default function TaskReportsScreen() {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {/* Assignee picker (multi-select) */}
+      <Modal visible={showAssigneePicker} transparent animationType="slide" onRequestClose={() => setShowAssigneePicker(false)}>
+        <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setShowAssigneePicker(false)}>
+          <View style={[s.modalSheet, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={s.modalHeader}>
+              <Text style={s.modalTitle}>Filter by Assignee</Text>
+              <TouchableOpacity onPress={() => setShowAssigneePicker(false)}>
+                <Ionicons name="close" size={22} color={colors.textPrimary} />
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={members}
+              keyExtractor={item => String(item.user_id)}
+              renderItem={({ item }) => {
+                const sel = assigneeFilter.includes(item.user_id);
+                return (
+                  <TouchableOpacity
+                    style={[s.pickerRow, sel && s.pickerRowSel]}
+                    onPress={() => setAssigneeFilter(prev =>
+                      sel ? prev.filter(id => id !== item.user_id) : [...prev, item.user_id]
+                    )}
+                  >
+                    <Text style={[s.pickerRowText, sel && s.pickerRowTextSel]} numberOfLines={1}>{memberName(members, item.user_id)}</Text>
+                    {sel && <Ionicons name="checkmark" size={18} color={colors.primary} />}
+                  </TouchableOpacity>
+                );
+              }}
+            />
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }
@@ -770,8 +841,8 @@ function makeStyles(c: AppColors) {
     container: { flex: 1, backgroundColor: c.background },
     header: {
       flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-      backgroundColor: c.surface, paddingHorizontal: 20, paddingVertical: 14,
-      borderBottomWidth: 1, borderBottomColor: c.border,
+      paddingHorizontal: 20, paddingBottom: 14,
+      backgroundColor: c.surface, borderBottomWidth: 1, borderBottomColor: c.border,
     },
     title: { fontSize: 18, fontWeight: '700', color: c.textPrimary },
 
@@ -816,7 +887,7 @@ function makeStyles(c: AppColors) {
     // Hours tab
     hoursCard: {
       backgroundColor: c.surface, marginHorizontal: 12, marginTop: 10,
-      borderRadius: 12, padding: 14, borderWidth: 1, borderColor: c.border,
+      borderRadius: 12, padding: 14, borderWidth: 1, borderColor: c.border, borderLeftWidth: 4,
     },
     hoursCardHeader: { flexDirection: 'row', gap: 8, marginBottom: 8 },
     hoursTaskNum: { fontSize: 11, color: c.textMuted, fontWeight: '600', marginBottom: 2 },
@@ -846,10 +917,10 @@ function makeStyles(c: AppColors) {
     grandTotalValue: { fontSize: 20, fontWeight: '800' },
 
     // Details tab
+    filtersScroll: { flexGrow: 0, flexShrink: 0, backgroundColor: c.surface, borderBottomWidth: 1, borderBottomColor: c.border },
     filtersRow: {
       flexDirection: 'row', alignItems: 'center', gap: 8,
       paddingHorizontal: 12, paddingVertical: 8,
-      backgroundColor: c.surface, borderBottomWidth: 1, borderBottomColor: c.border,
     },
     filterChip: {
       flexDirection: 'row', alignItems: 'center', gap: 4,
@@ -862,7 +933,7 @@ function makeStyles(c: AppColors) {
 
     detailCard: {
       backgroundColor: c.surface, marginHorizontal: 12, marginTop: 10,
-      borderRadius: 12, padding: 14, borderWidth: 1, borderColor: c.border,
+      borderRadius: 12, padding: 14, borderWidth: 1, borderColor: c.border, borderLeftWidth: 4,
     },
     detailTop: { flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 8 },
     detailNum: { fontSize: 11, color: c.textMuted, fontWeight: '600' },
@@ -909,7 +980,7 @@ function makeStyles(c: AppColors) {
       borderBottomWidth: 1, borderBottomColor: c.border,
     },
     pickerRowSel: { backgroundColor: c.primaryLight },
-    pickerRowText: { fontSize: 14, color: c.textPrimary, textTransform: 'capitalize' },
+    pickerRowText: { fontSize: 14, color: c.textPrimary, textTransform: 'capitalize', flex: 1 },
     pickerRowTextSel: { fontWeight: '700', color: c.primary },
   });
 }

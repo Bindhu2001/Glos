@@ -35,6 +35,7 @@ interface Task {
   area_name?: string;
   total_logged_minutes?: number;
   estimated_minutes?: number;
+  timer_started_at?: string | null;
 }
 
 interface Props {
@@ -49,6 +50,7 @@ export default function TaskCard({ task, onPress }: Props) {
   const statusColor = StatusColors[task.status] ?? StatusColors.open;
   const dl = deadlineLabel(task.due_on);
   const isDone = task.status === 'done';
+  const timerRunning = !!task.timer_started_at;
 
   const taskRef = `TASK-${String(task.id).padStart(4, '0')}`;
 
@@ -106,6 +108,12 @@ export default function TaskCard({ task, onPress }: Props) {
 
         {/* Badges row */}
         <View style={s.badgesRow}>
+          {timerRunning && (
+            <View style={s.runningBadge}>
+              <Ionicons name="time" size={10} color={colors.primary} />
+              <Text style={s.runningBadgeText}>Running</Text>
+            </View>
+          )}
           <View style={[s.badge, { backgroundColor: statusColor.bg }]}>
             <Text style={[s.badgeText, { color: statusColor.text }]}>
               {STATUS_LABELS[task.status] ?? task.status}
@@ -151,5 +159,11 @@ function makeStyles(c: AppColors) {
     badgesRow: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
     badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
     badgeText: { fontSize: 11, fontWeight: '700' },
+    runningBadge: {
+      flexDirection: 'row', alignItems: 'center', gap: 3,
+      paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6,
+      backgroundColor: c.primaryLight, borderWidth: 1, borderColor: c.primary + '4d',
+    },
+    runningBadgeText: { fontSize: 11, fontWeight: '700', color: c.primary, letterSpacing: 0.3 },
   });
 }
