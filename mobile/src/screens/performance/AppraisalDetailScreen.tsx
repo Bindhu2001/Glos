@@ -96,6 +96,11 @@ export default function AppraisalDetailScreen() {
   const [potentialAssessment, setPotentialAssessment] = useState('');
   const [recommendation, setRecommendation] = useState('');
   const [recommendationNotes, setRecommendationNotes] = useState('');
+  // Sends the appraisal back to the employee to edit and resubmit, instead
+  // of a recommendation that always advances to the final approver.
+  const [managerRejecting, setManagerRejecting] = useState(false);
+  const [managerRejectReason, setManagerRejectReason] = useState('');
+  const [rejectingManager, setRejectingManager] = useState(false);
 
   // Final decision — reject_target is required by the backend whenever
   // decision is 'rejected' (determines whether it bounces back to the
@@ -229,6 +234,19 @@ export default function AppraisalDetailScreen() {
     } catch {
       Alert.alert('Error', 'Failed to save draft');
     } finally { setSavingDraft(false); }
+  };
+
+  const handleManagerReject = async () => {
+    if (!managerRejectReason.trim()) { Alert.alert('Required', 'Please add a reason for sending this back.'); return; }
+    setRejectingManager(true);
+    try {
+      await api.performance.managerReject(appId, appraisalId, { rejection_reason: managerRejectReason.trim() });
+      Alert.alert('Sent Back', 'This appraisal has been sent back to the employee.', [
+        { text: 'OK', onPress: () => navigation.goBack() },
+      ]);
+    } catch {
+      Alert.alert('Error', 'Failed to send back to employee');
+    } finally { setRejectingManager(false); }
   };
 
   const handleFinalDecision = async (d: 'approved' | 'rejected') => {
@@ -432,6 +450,27 @@ export default function AppraisalDetailScreen() {
                   {submitting ? <ActivityIndicator color="#fff" /> : <Text style={s.submitBtnText}>Submit Manager Review</Text>}
                 </TouchableOpacity>
               </View>
+
+              {managerRejecting ? (
+                <View style={s.reviewSection}>
+                  <Text style={s.fieldLabel}>Reason for sending back *</Text>
+                  <TextInput style={[s.input, s.inputMulti]} value={managerRejectReason} onChangeText={setManagerRejectReason}
+                    placeholder="What needs to change before resubmitting?" placeholderTextColor={colors.gray400} multiline numberOfLines={3} />
+                  <View style={s.finalBtns}>
+                    <TouchableOpacity style={s.draftBtn} onPress={() => { setManagerRejecting(false); setManagerRejectReason(''); }} disabled={rejectingManager}>
+                      <Text style={s.draftBtnText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[s.rejectBtn, (rejectingManager || !managerRejectReason.trim()) && s.submitBtnDisabled]} onPress={handleManagerReject} disabled={rejectingManager}>
+                      {rejectingManager ? <ActivityIndicator color={colors.danger} /> : <><Ionicons name="arrow-undo" size={16} color={colors.danger} /><Text style={s.rejectBtnText}>Send Back</Text></>}
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                <TouchableOpacity style={s.sendBackLink} onPress={() => setManagerRejecting(true)} disabled={submitting || savingDraft}>
+                  <Ionicons name="arrow-undo-outline" size={14} color={colors.danger} />
+                  <Text style={s.sendBackLinkText}>Send back to employee instead</Text>
+                </TouchableOpacity>
+              )}
             </>
           )}
 
@@ -566,6 +605,9 @@ function makeStyles(c: AppColors) {
     },
     draftBtnText:       { fontSize: 14, fontWeight: '700', color: c.primary },
     submitBtnFlex:      { flex: 1, marginTop: 0 },
+    sendBackLink:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 14, paddingVertical: 8 },
+    sendBackLinkText:   { fontSize: 13, fontWeight: '600', color: c.danger },
+    reviewSection:      { marginTop: 8, paddingTop: 16, borderTopWidth: 1, borderTopColor: c.border },
     sectionTitle:       { fontSize: 16, fontWeight: '700', color: c.textPrimary, marginTop: 8, marginBottom: 12 },
     fieldLabel:         { fontSize: 13, fontWeight: '600', color: c.textSecondary, marginBottom: 6, marginTop: 12 },
     input:              {

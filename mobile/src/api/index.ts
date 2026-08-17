@@ -403,6 +403,8 @@ export const performanceApi = (client: AxiosInstance) => ({
     client.post(`/apps/${appId}/hr/appraisals/${appraisalId}/manager-response`, data),
   saveManagerResponseDraft: (appId: number, appraisalId: number, data: Record<string, unknown>) =>
     client.post(`/apps/${appId}/hr/appraisals/${appraisalId}/manager-response/save-draft`, data),
+  managerReject: (appId: number, appraisalId: number, data: { rejection_reason: string }) =>
+    client.post(`/apps/${appId}/hr/appraisals/${appraisalId}/manager-reject`, data),
   submitFinalDecision: (appId: number, appraisalId: number, data: Record<string, unknown>) =>
     client.post(`/apps/${appId}/hr/appraisals/${appraisalId}/final-decision`, data),
   saveFinalDecisionDraft: (appId: number, appraisalId: number, data: Record<string, unknown>) =>
