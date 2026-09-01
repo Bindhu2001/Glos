@@ -1,5 +1,6 @@
 package expo.modules.notifactions
 
+import android.app.Notification
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.ComponentName
@@ -265,22 +266,43 @@ class ChatActionReceiver : BroadcastReceiver() {
     }
   }
 
-  /** Finds the just-posted chat notification and adds Reply/Mark-as-read to it. Returns whether it found one to patch. */
+  /**
+   * Finds the just-posted chat notification and adds Reply/Mark-as-read to
+   * it. Returns whether it found one to patch.
+   *
+   * Rebuilds from scratch (copying title/text/tap-intent/channel off the
+   * framework Notification object directly) rather than
+   * NotificationCompat.Builder.recoverBuilder — that method isn't present in
+   * the androidx.core version this project resolves.
+   */
   private fun patchInActions(context: Context, info: ChatNotifInfo): Boolean {
     val tag = info.tag ?: return false
     try {
       val active = NotificationManagerCompat.from(context).activeNotifications
       val match = active.firstOrNull { it.tag == tag && it.id == EXPO_NOTIFY_ID } ?: return false
+      val existing = match.notification
 
       @Suppress("DEPRECATION")
-      val icon = match.notification.icon.takeIf { it != 0 } ?: context.applicationInfo.icon
+      val icon = existing.icon.takeIf { it != 0 } ?: context.applicationInfo.icon
+      val channelId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) existing.channelId else null
+      val title = existing.extras?.getCharSequence(Notification.EXTRA_TITLE)
+      val text = existing.extras?.getCharSequence(Notification.EXTRA_TEXT)
+
       val replyIntent = selfActionPendingIntent(context, REPLY_ACTION, info.appId, info.convId, tag, withRemoteInput = true)
       val markReadIntent = selfActionPendingIntent(context, MARK_READ_ACTION, info.appId, info.convId, tag, withRemoteInput = false)
       val remoteInput = RemoteInput.Builder(SELF_TEXT_KEY)
         .setLabel("Type a message...")
         .build()
 
-      val builder = NotificationCompat.Builder.recoverBuilder(context, match.notification)
+      val builder = (if (channelId != null) NotificationCompat.Builder(context, channelId) else NotificationCompat.Builder(context))
+        .setSmallIcon(icon)
+        .setContentTitle(title)
+        .setContentText(text)
+        .setStyle(NotificationCompat.BigTextStyle().bigText(text ?: ""))
+        .setContentIntent(existing.contentIntent)
+        .setDeleteIntent(existing.deleteIntent)
+        .setAutoCancel((existing.flags and Notification.FLAG_AUTO_CANCEL) != 0)
+        .setPriority(NotificationCompat.PRIORITY_HIGH)
         .addAction(
           NotificationCompat.Action.Builder(icon, "Reply", replyIntent)
             .addRemoteInput(remoteInput)
