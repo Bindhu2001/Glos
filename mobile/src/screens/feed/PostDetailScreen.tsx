@@ -19,35 +19,18 @@ import LoadingSpinner from '../../components/common/LoadingSpinner';
 import LoadError from '../../components/common/LoadError';
 import { useLoadWithTimeout } from '../../hooks/useLoadWithTimeout';
 import PostContentView from '../../components/feed/PostContentView';
+import MentionCommentInput from '../../components/common/MentionCommentInput';
 import AttachmentList from '../../components/common/AttachmentList';
 import { stripTags, stripNonContentElements } from '../../utils/postContent';
 import { stripMentionTokens } from '../../utils/mentions';
+import { BADGE_META } from '../../utils/badges';
+import {
+  RecipientNamesInline, RecipientsModal, toRecipients, recipientName as uname, Recipient,
+} from '../../components/feed/RecipientNames';
 
 type Route = RouteProp<FeedStackParamList, 'PostDetail'>;
 
 const REACTIONS = ['❤️', '👍', '🎉', '👏', '🔥'];
-
-const BADGE_META: Record<string, { emoji: string; label: string }> = {
-  teamwork:        { emoji: '🤝', label: 'Teamwork' },
-  innovation:      { emoji: '💡', label: 'Innovation' },
-  leadership:      { emoji: '🌟', label: 'Leadership' },
-  excellence:      { emoji: '🏆', label: 'Excellence' },
-  mentorship:      { emoji: '🎓', label: 'Mentorship' },
-  customer_focus:  { emoji: '💛', label: 'Customer Focus' },
-  problem_solving: { emoji: '🔧', label: 'Problem Solving' },
-};
-
-function uname(u: any): string {
-  if (!u) return 'Someone';
-  return [u.first_name, u.last_name].filter(Boolean).join(' ') || u.email || 'Someone';
-}
-function namesWithMore(toUsers: any[] | undefined, singleUser: any): string {
-  const list = (toUsers && toUsers.length ? toUsers : [singleUser]).filter(Boolean);
-  if (list.length === 0) return 'Someone';
-  if (list.length === 1) return uname(list[0]);
-  if (list.length === 2) return `${uname(list[0])} & ${uname(list[1])}`;
-  return `${uname(list[0])}, ${uname(list[1])} & +${list.length - 2} more`;
-}
 
 export default function PostDetailScreen() {
   const route = useRoute<Route>();
@@ -67,8 +50,8 @@ export default function PostDetailScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [commentText, setCommentText] = useState('');
   const [saving, setSaving] = useState(false);
-  const [myReaction, setMyReaction] = useState<string | null>(null);
   const [meId, setMeId] = useState<number | null>(null);
+  const [recipientsModal, setRecipientsModal] = useState<Recipient[] | null>(null);
   const { loading, loadError, run } = useLoadWithTimeout();
 
   const load = useCallback(async () => {
@@ -97,12 +80,23 @@ export default function PostDetailScreen() {
     setRefreshing(false);
   };
 
+  // Backend toggles a single (post, user, emoji) row independently — a user
+  // can hold several simultaneous reactions on one post (matches web's
+  // Feed.jsx handleReact / FeedScreen's own handleReact, fixed the same way).
+  // `myReaction` used to be a lone value never even initialized from the
+  // fetched post, so a post you'd already reacted to on the Feed list showed
+  // as unreacted here until tapped again, and reaction_count never moved
+  // with the tap since it was tracked separately from the toggle.
   const handleReact = async (emoji: string) => {
-    const toggling = myReaction === emoji;
-    setMyReaction(toggling ? null : emoji);
-    if (!toggling) {
-      try { await api.feed.addReaction(appId, postId, emoji); } catch {}
-    }
+    setPost((prev: any) => {
+      if (!prev) return prev;
+      const myReactions: string[] = prev.my_reactions ?? [];
+      const alreadyReacted = myReactions.includes(emoji);
+      const newMyReactions = alreadyReacted ? myReactions.filter((e: string) => e !== emoji) : [...myReactions, emoji];
+      const newCount = Math.max(0, (prev.reaction_count ?? 0) + (alreadyReacted ? -1 : 1));
+      return { ...prev, my_reactions: newMyReactions, reaction_count: newCount };
+    });
+    try { await api.feed.addReaction(appId, postId, emoji); } catch {}
   };
 
   const handleVote = async (optionIds: number[]) => {
@@ -173,11 +167,11 @@ export default function PostDetailScreen() {
   const fbText = post.feedback?.feedback_text ?? '';
   const fbPreview = stripMentionTokens(stripTags(stripNonContentElements(fbText)));
   const fbFromName = post.feedback?.is_anonymous ? null : uname(post.feedback?.from_user);
-  const fbToName = namesWithMore(post.feedback?.to_users, post.feedback?.to_user);
+  const fbToRecipients = toRecipients(post.feedback?.to_users, null, post.feedback?.to_user);
 
   const apprMeta = BADGE_META[post.appreciation?.badge ?? ''];
   const apprFromName = uname(post.appreciation?.from_user);
-  const apprToName = namesWithMore(post.appreciation?.to_users, post.appreciation?.to_user);
+  const apprToRecipients = toRecipients(post.appreciation?.to_users, null, post.appreciation?.to_user);
 
   const myVotes: number[] = post.poll?.my_votes ?? [];
   const totalVotes: number = post.poll?.total_votes ?? 0;
@@ -207,7 +201,10 @@ export default function PostDetailScreen() {
         showBack
         onBack={handleBack}
         right={canEdit ? (
-          <TouchableOpacity onPress={() => navigation.navigate('CreatePost', { appId, postId: post.id, initialContent: post.content })}>
+          <TouchableOpacity onPress={() => navigation.navigate('CreatePost', {
+            appId, postId: post.id, initialContent: post.content,
+            initialPostType: post.post_type, initialPoll: post.post_type === 'poll' ? post.poll : undefined,
+          })}>
             <Ionicons name="create-outline" size={22} color={colors.primary} />
           </TouchableOpacity>
         ) : undefined}
@@ -233,7 +230,12 @@ export default function PostDetailScreen() {
               <Text style={s.letterFromLine}>
                 {fbFromName ? <Text style={s.letterBold}>{fbFromName}</Text> : <Text style={s.letterAnon}>Anonymous feedback</Text>}
                 {' gave feedback to '}
-                <Text style={s.letterBold}>{fbToName}</Text>
+                <RecipientNamesInline
+                  recipients={fbToRecipients}
+                  textStyle={s.letterBold}
+                  linkStyle={s.recipientLink}
+                  onExpand={setRecipientsModal}
+                />
                 <Text style={s.postTime}>  ·  {formatRelative(post.created_at)}</Text>
               </Text>
               {!!fbPreview && <PostContentView content={fbText} colors={colors} textStyle={s.postContent} />}
@@ -247,11 +249,16 @@ export default function PostDetailScreen() {
                 {apprMeta ? `${apprMeta.emoji} ` : ''}
                 <Text style={s.letterBold}>{apprFromName}</Text>
                 {' → '}
-                <Text style={s.letterBold}>{apprToName}</Text>
+                <RecipientNamesInline
+                  recipients={apprToRecipients}
+                  textStyle={s.letterBold}
+                  linkStyle={s.recipientLink}
+                  onExpand={setRecipientsModal}
+                />
                 <Text style={s.postTime}>  ·  {formatRelative(post.created_at)}</Text>
               </Text>
               {!!post.appreciation.message && (
-                <Text style={[s.postContent, { fontStyle: 'italic' }]}>"{post.appreciation.message}"</Text>
+                <Text style={[s.postContent, { fontStyle: 'italic' }]}>"{stripTags(stripNonContentElements(post.appreciation.message))}"</Text>
               )}
               {!!post.attachments?.length && (
                 <AttachmentList attachments={post.attachments} imageMaxWidth={240} imageMaxHeight={180} />
@@ -259,6 +266,9 @@ export default function PostDetailScreen() {
             </View>
           ) : postType === 'poll' && post.poll ? (
             <View style={s.letterBlock}>
+              {/* post.content doubles as an optional note/context field on a
+                  poll post — was never rendered here. */}
+              {!!post.content && <PostContentView content={post.content} colors={colors} textStyle={[s.postContent, { marginBottom: 8 }]} />}
               <Text style={s.pollQuestion}>{post.poll.question}</Text>
               {post.poll.options.map((opt: any) => {
                 const pct = totalVotes > 0 ? Math.round((opt.votes / totalVotes) * 100) : 0;
@@ -279,6 +289,9 @@ export default function PostDetailScreen() {
               <Text style={s.postTime}>
                 {totalVotes} {totalVotes === 1 ? 'vote' : 'votes'}{post.poll.allow_multiple ? ' · Multiple choice' : ''}
               </Text>
+              {!!post.attachments?.length && (
+                <AttachmentList attachments={post.attachments} imageMaxWidth={240} imageMaxHeight={180} />
+              )}
             </View>
           ) : (
             <>
@@ -293,7 +306,7 @@ export default function PostDetailScreen() {
           {postType !== 'feedback' && (
             <View style={s.reactionsRow}>
               {REACTIONS.map((emoji) => {
-                const selected = myReaction === emoji;
+                const selected = (post.my_reactions ?? []).includes(emoji);
                 return (
                   <TouchableOpacity
                     key={emoji}
@@ -341,19 +354,20 @@ export default function PostDetailScreen() {
           tabBarStyle already reserves the device's bottom safe area below it. */}
       {postType !== 'feedback' && (
         <View style={[s.inputBar, { paddingBottom: 8 }]}>
-          <TextInput
-            style={s.inputField}
-            placeholder="Write a comment..."
-            placeholderTextColor={colors.gray400}
+          <MentionCommentInput
+            appId={appId}
             value={commentText}
             onChangeText={setCommentText}
-            multiline
+            placeholder="Write a comment..."
+            style={s.inputField}
+            showEmojiPicker={false}
           />
           <TouchableOpacity onPress={handleComment} style={s.sendBtn} disabled={saving}>
             {saving ? <ActivityIndicator size="small" color="#ffffff" /> : <Ionicons name="send" size={18} color="#ffffff" />}
           </TouchableOpacity>
         </View>
       )}
+      <RecipientsModal recipients={recipientsModal} onClose={() => setRecipientsModal(null)} />
     </View>
     </KeyboardAvoidingView>
   );
@@ -376,6 +390,7 @@ function makeStyles(c: AppColors) {
     letterBlock: { marginBottom: 14, gap: 8 },
     letterFromLine: { fontSize: 14, color: c.textSecondary, lineHeight: 20 },
     letterBold: { fontWeight: '700', color: c.textPrimary },
+    recipientLink: { fontWeight: '700', color: c.primary, textDecorationLine: 'underline' },
     letterAnon: { fontStyle: 'italic', color: c.textMuted },
     pollQuestion: { fontSize: 17, fontWeight: '700', color: c.textPrimary, marginBottom: 4 },
     pollOption: {

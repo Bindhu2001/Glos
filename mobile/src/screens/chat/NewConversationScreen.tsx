@@ -35,6 +35,11 @@ export default function NewConversationScreen() {
   const [selected, setSelected] = useState<number[]>([]);
   const [groupName, setGroupName] = useState('');
   const [creating, setCreating] = useState(false);
+  // Matches web's explicit Direct/Group toggle in NewConvModal — mobile used
+  // to infer type purely from selection count, so picking exactly one other
+  // person always produced an unnamed direct chat with no way to force a
+  // genuine named group of 2.
+  const [forceGroup, setForceGroup] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -56,7 +61,7 @@ export default function NewConversationScreen() {
     setSelected((prev) => (prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]));
   };
 
-  const isGroup = selected.length > 1;
+  const isGroup = forceGroup || selected.length > 1;
 
   const create = async () => {
     if (selected.length === 0) return;
@@ -87,6 +92,13 @@ export default function NewConversationScreen() {
         <Text style={s.title}>New Conversation</Text>
         <View style={{ width: 36 }} />
       </View>
+
+      {selected.length === 1 && (
+        <TouchableOpacity style={s.groupToggleRow} onPress={() => setForceGroup((v) => !v)}>
+          <Ionicons name={forceGroup ? 'checkbox' : 'square-outline'} size={20} color={forceGroup ? colors.primary : colors.gray400} />
+          <Text style={s.groupToggleTxt}>Create as a named group instead of a direct chat</Text>
+        </TouchableOpacity>
+      )}
 
       {isGroup && (
         <TextInput
@@ -148,6 +160,8 @@ function makeStyles(c: AppColors) {
       margin: 16, marginBottom: 0, backgroundColor: c.surface, borderRadius: 10, borderWidth: 1, borderColor: c.border,
       paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, color: c.textPrimary,
     },
+    groupToggleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 16, marginTop: 14 },
+    groupToggleTxt: { flex: 1, fontSize: 13, color: c.textSecondary, fontWeight: '500' },
     list: { padding: 16, gap: 4 },
     emptyText: { textAlign: 'center', marginTop: 40, fontSize: 13, color: c.textMuted },
     row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10 },

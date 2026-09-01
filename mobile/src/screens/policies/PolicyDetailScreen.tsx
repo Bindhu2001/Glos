@@ -16,6 +16,7 @@ import { apiErrorMessage } from '../../utils/apiError';
 import { showAlert } from '../../components/common/AlertModal';
 import LoadError from '../../components/common/LoadError';
 import DatePickerField from '../../components/common/DatePickerField';
+import { formatExact } from '../../utils/format';
 import TableBuilderModal from '../../components/feed/TableBuilderModal';
 import PostContentView from '../../components/feed/PostContentView';
 import { parsePostContent, tableToHtml, detectPastedTable } from '../../utils/postContent';
@@ -211,7 +212,17 @@ export default function PolicyDetailScreen() {
             <View style={s.metaField}>
               <DatePickerField label="Effective from" value={effectiveFrom} onChange={setEffectiveFrom} />
             </View>
+            {!!policy.updated_at && (
+              <View style={s.metaField}>
+                <Text style={s.metaLabel}>Last updated</Text>
+                <Text style={s.metaValue}>{formatExact(policy.updated_at)}</Text>
+              </View>
+            )}
           </View>
+        )}
+
+        {!isAdmin && !!policy.updated_at && (
+          <Text style={s.lastUpdatedText}>Last updated {formatExact(policy.updated_at)}</Text>
         )}
 
         <Text style={s.sectionHead}>POLICY TEXT</Text>
@@ -373,6 +384,7 @@ function makeStyles(c: AppColors) {
 
     titleInput: { fontSize: 20, fontWeight: '800', color: c.textPrimary, paddingVertical: 6, marginBottom: 12 },
     titleReadonly: { fontSize: 20, fontWeight: '800', color: c.textPrimary, marginBottom: 12 },
+    lastUpdatedText: { fontSize: 12, color: c.textMuted, marginTop: -6, marginBottom: 16 },
 
     metaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 16 },
     metaField: { width: '47%' },

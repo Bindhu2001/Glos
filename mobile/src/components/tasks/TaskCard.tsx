@@ -27,12 +27,16 @@ function deadlineLabel(due_on: string | undefined): { text: string; color: strin
 
 interface Task {
   id: number;
+  task_number?: string | null;
   title: string;
   status: string;
   priority: string;
   due_on?: string;
   assignee_name?: string;
   area_name?: string;
+  project_name?: string | null;
+  agreement_name?: string | null;
+  agreement_number?: string | null;
   total_logged_minutes?: number;
   estimated_minutes?: number;
   timer_started_at?: string | null;
@@ -52,7 +56,20 @@ export default function TaskCard({ task, onPress }: Props) {
   const isDone = task.status === 'done';
   const timerRunning = !!task.timer_started_at;
 
-  const taskRef = `TASK-${String(task.id).padStart(4, '0')}`;
+  // task_number is the server's real sequential identifier (matches web
+  // exactly) — the id-based fallback below is a last resort for the rare
+  // case an older row somehow has none, not the primary source, since a
+  // task's database id and its sequential task number can diverge.
+  const taskRef = task.task_number || `#${task.id}`;
+
+  // Matches web's task-list "area" chip (deb719a9): a project or agreement
+  // name takes the slot ahead of the raw area, with its own icon.
+  const contextLabel = task.project_name || task.agreement_name || task.agreement_number || task.area_name;
+  const contextIcon: React.ComponentProps<typeof Ionicons>['name'] = task.project_name
+    ? 'folder-open-outline'
+    : (task.agreement_name || task.agreement_number)
+      ? 'document-text-outline'
+      : 'grid-outline';
 
   return (
     <TouchableOpacity style={s.card} onPress={onPress} activeOpacity={0.8}>
@@ -73,13 +90,13 @@ export default function TaskCard({ task, onPress }: Props) {
           {task.title}
         </Text>
 
-        {/* Meta row: area · assignee */}
-        {(task.area_name || task.assignee_name) && (
+        {/* Meta row: project/agreement/area · assignee */}
+        {(contextLabel || task.assignee_name) && (
           <View style={s.metaRow}>
-            {task.area_name && (
+            {contextLabel && (
               <View style={s.metaItem}>
-                <Ionicons name="grid-outline" size={11} color={colors.gray400} />
-                <Text style={s.metaText}>{task.area_name}</Text>
+                <Ionicons name={contextIcon} size={11} color={colors.gray400} />
+                <Text style={s.metaText}>{contextLabel}</Text>
               </View>
             )}
             {task.assignee_name && (
@@ -121,7 +138,7 @@ export default function TaskCard({ task, onPress }: Props) {
           </View>
           <View style={[s.badge, { backgroundColor: priorityColor.bg }]}>
             <Text style={[s.badgeText, { color: priorityColor.text }]}>
-              {task.priority.charAt(0).toUpperCase() + task.priority.slice(1)}
+              {task.priority ? task.priority.charAt(0).toUpperCase() + task.priority.slice(1) : '—'}
             </Text>
           </View>
         </View>

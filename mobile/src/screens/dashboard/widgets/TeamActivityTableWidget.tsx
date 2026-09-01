@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Modal, FlatList } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { AppColors } from '../../../utils/colors';
 import { useApi } from '../../../hooks/useApi';
@@ -19,7 +19,7 @@ interface ActivityMember {
   on_time_pct: number | null;
 }
 
-type Period = 'today' | 'yesterday' | 'week' | 'last_week';
+type Period = 'today' | 'yesterday' | 'week' | 'last_week' | 'month';
 
 const PERIODS: { key: Period; label: string }[] = [
   { key: 'today', label: 'Today' },
@@ -27,6 +27,19 @@ const PERIODS: { key: Period; label: string }[] = [
   { key: 'week', label: 'This Week' },
   { key: 'last_week', label: 'Last Week' },
 ];
+
+// Matches web's TeamDashboard.jsx last12MonthOptions().
+function buildMonthOptions() {
+  const opts: { value: string; label: string }[] = [];
+  const now = new Date();
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const label = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    opts.push({ value, label });
+  }
+  return opts;
+}
 
 // Row avatar colors — cycles by user_id, matches web's stable per-user hash
 // (qa-production's avatarColor()) closely enough without importing its logic.
@@ -57,10 +70,17 @@ export default function TeamActivityTableWidget({
 }) {
   const api = useApi();
   const s = useMemo(() => makeStyles(colors), [colors]);
+  const monthOptions = useMemo(buildMonthOptions, []);
   // Matches web's TeamDashboard.jsx activityPeriod default ('today') — mobile
   // was defaulting to the whole month instead.
   const [period, setPeriod] = useState<Period>('today');
+  const [month, setMonth] = useState(monthOptions[0].value);
+  const [monthPickerOpen, setMonthPickerOpen] = useState(false);
   const [search, setSearch] = useState('');
+  const [roleFilter, setRoleFilter] = useState<string | null>(null);
+  const [deptFilter, setDeptFilter] = useState<string | null>(null);
+  const [roleFilterOpen, setRoleFilterOpen] = useState(false);
+  const [deptFilterOpen, setDeptFilterOpen] = useState(false);
   const [members, setMembers] = useState<ActivityMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -68,7 +88,9 @@ export default function TeamActivityTableWidget({
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.dashboard.getManagerActivityByMember(appId, { period, scope, view_as: viewAs ?? undefined });
+      const params: Record<string, unknown> = { period, scope, view_as: viewAs ?? undefined };
+      if (period === 'month') params.month = month;
+      const res = await api.dashboard.getManagerActivityByMember(appId, params);
       setMembers(res.data?.members ?? []);
       setError(false);
     } catch {
@@ -77,15 +99,29 @@ export default function TeamActivityTableWidget({
     } finally {
       setLoading(false);
     }
-  }, [appId, scope, viewAs, period]);
+  }, [appId, scope, viewAs, period, month]);
 
   useEffect(() => { load(); }, [load]);
 
   // Matches web's TeamDashboard.jsx `filtered` — summary totals and the table
-  // both reflect the search box, not the full unfiltered member list.
-  const filteredMembers = search.trim()
-    ? members.filter((m) => m.name.toLowerCase().includes(search.trim().toLowerCase()))
-    : members;
+  // reflect the search box and the Role/Department filters, not the full
+  // unfiltered member list. Role/Dept options and filtering are both
+  // client-side over the already-fetched list, matching web (FilterSelect
+  // options are derived from memberActivity itself, not a separate endpoint).
+  const allRoles = useMemo(
+    () => Array.from(new Set(members.map((m) => m.role).filter((r): r is string => !!r))).sort(),
+    [members]
+  );
+  const allDepts = useMemo(
+    () => Array.from(new Set(members.map((m) => m.department).filter((d): d is string => !!d))).sort(),
+    [members]
+  );
+  const filteredMembers = members.filter((m) => {
+    if (search.trim() && !m.name.toLowerCase().includes(search.trim().toLowerCase())) return false;
+    if (roleFilter && m.role !== roleFilter) return false;
+    if (deptFilter && m.department !== deptFilter) return false;
+    return true;
+  });
 
   const totalCreated = filteredMembers.reduce((a, m) => a + (m.created ?? 0), 0);
   const totalCompleted = filteredMembers.reduce((a, m) => a + (m.completed ?? 0), 0);
@@ -122,7 +158,34 @@ export default function TeamActivityTableWidget({
             <Text style={[s.periodTxt, period === p.key && s.periodTxtActive]}>{p.label}</Text>
           </TouchableOpacity>
         ))}
+        <TouchableOpacity
+          style={[s.periodBtn, period === 'month' && s.periodBtnActive]}
+          onPress={() => { setPeriod('month'); setMonthPickerOpen(true); }}
+        >
+          <Text style={[s.periodTxt, period === 'month' && s.periodTxtActive]} numberOfLines={1}>
+            {period === 'month' && month !== monthOptions[0].value
+              ? monthOptions.find((o) => o.value === month)?.label.replace(/\s\d{4}$/, '') ?? 'Month'
+              : 'Month'}
+          </Text>
+          <Ionicons name="chevron-down" size={11} color={period === 'month' ? '#fff' : colors.textSecondary} />
+        </TouchableOpacity>
       </ScrollView>
+      {(allRoles.length > 0 || allDepts.length > 0) && (
+        <View style={s.filterRow}>
+          {allRoles.length > 0 && (
+            <TouchableOpacity style={s.filterBtn} onPress={() => setRoleFilterOpen(true)}>
+              <Text style={s.filterBtnTxt} numberOfLines={1}>{roleFilter ?? 'All Roles'}</Text>
+              <Ionicons name="chevron-down" size={12} color={colors.textSecondary} />
+            </TouchableOpacity>
+          )}
+          {allDepts.length > 0 && (
+            <TouchableOpacity style={s.filterBtn} onPress={() => setDeptFilterOpen(true)}>
+              <Text style={s.filterBtnTxt} numberOfLines={1}>{deptFilter ?? 'All Departments'}</Text>
+              <Ionicons name="chevron-down" size={12} color={colors.textSecondary} />
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
       <View style={s.kpiRow}>
         <View style={s.kpiCell}>
           <Ionicons name="clipboard-outline" size={14} color={colors.primary} />
@@ -215,7 +278,88 @@ export default function TeamActivityTableWidget({
           </View>
         </ScrollView>
       )}
+
+      <Modal visible={monthPickerOpen} transparent animationType="fade" onRequestClose={() => setMonthPickerOpen(false)}>
+        <TouchableOpacity style={s.modalBackdrop} activeOpacity={1} onPress={() => setMonthPickerOpen(false)}>
+          <View style={s.pickerModalCard}>
+            <Text style={s.pickerModalTitle}>Select Month</Text>
+            <FlatList
+              data={monthOptions}
+              keyExtractor={(o) => o.value}
+              style={{ maxHeight: 340 }}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[s.pickerOption, item.value === month && s.pickerOptionActive]}
+                  onPress={() => { setMonth(item.value); setMonthPickerOpen(false); }}
+                >
+                  <Text style={[s.pickerOptionTxt, item.value === month && s.pickerOptionTxtActive]}>{item.label}</Text>
+                  {item.value === month && <Ionicons name="checkmark" size={16} color={colors.primary} />}
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      <FilterPickerModal
+        visible={roleFilterOpen}
+        title="Filter by Role"
+        options={allRoles}
+        value={roleFilter}
+        onSelect={(v) => { setRoleFilter(v); setRoleFilterOpen(false); }}
+        onClose={() => setRoleFilterOpen(false)}
+        s={s}
+        colors={colors}
+      />
+      <FilterPickerModal
+        visible={deptFilterOpen}
+        title="Filter by Department"
+        options={allDepts}
+        value={deptFilter}
+        onSelect={(v) => { setDeptFilter(v); setDeptFilterOpen(false); }}
+        onClose={() => setDeptFilterOpen(false)}
+        s={s}
+        colors={colors}
+      />
     </View>
+  );
+}
+
+function FilterPickerModal({
+  visible, title, options, value, onSelect, onClose, s, colors,
+}: {
+  visible: boolean;
+  title: string;
+  options: string[];
+  value: string | null;
+  onSelect: (v: string | null) => void;
+  onClose: () => void;
+  s: ReturnType<typeof makeStyles>;
+  colors: AppColors;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <TouchableOpacity style={s.modalBackdrop} activeOpacity={1} onPress={onClose}>
+        <View style={s.pickerModalCard}>
+          <Text style={s.pickerModalTitle}>{title}</Text>
+          <FlatList
+            data={['__all__', ...options]}
+            keyExtractor={(o) => o}
+            style={{ maxHeight: 340 }}
+            renderItem={({ item }) => {
+              const isAll = item === '__all__';
+              const active = isAll ? value == null : value === item;
+              return (
+                <TouchableOpacity style={[s.pickerOption, active && s.pickerOptionActive]} onPress={() => onSelect(isAll ? null : item)}>
+                  <Text style={[s.pickerOptionTxt, active && s.pickerOptionTxtActive]}>{isAll ? 'All' : item}</Text>
+                  {active && <Ionicons name="checkmark" size={16} color={colors.primary} />}
+                </TouchableOpacity>
+              );
+            }}
+          />
+        </View>
+      </TouchableOpacity>
+    </Modal>
   );
 }
 
@@ -235,6 +379,20 @@ function makeStyles(c: AppColors) {
     periodBtnActive: { backgroundColor: c.primary, borderColor: c.primary },
     periodTxt: { fontSize: 10.5, fontWeight: '700', color: c.textSecondary },
     periodTxtActive: { color: '#fff' },
+    filterRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
+    filterBtn: {
+      flexDirection: 'row', alignItems: 'center', gap: 4, maxWidth: 150,
+      backgroundColor: c.gray50, borderWidth: 1, borderColor: c.border, borderRadius: 8,
+      paddingHorizontal: 10, paddingVertical: 6,
+    },
+    filterBtnTxt: { fontSize: 11, fontWeight: '600', color: c.textSecondary, flexShrink: 1 },
+    modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 24 },
+    pickerModalCard: { backgroundColor: c.surface, borderRadius: 16, padding: 12, borderWidth: 1, borderColor: c.border },
+    pickerModalTitle: { fontSize: 15, fontWeight: '700', color: c.textPrimary, padding: 10 },
+    pickerOption: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingVertical: 12, borderRadius: 10 },
+    pickerOptionActive: { backgroundColor: c.primaryLight },
+    pickerOptionTxt: { fontSize: 14, color: c.textPrimary },
+    pickerOptionTxtActive: { fontWeight: '700', color: c.primary },
     kpiRow: { flexDirection: 'row', marginBottom: 12 },
     kpiCell: { flex: 1, alignItems: 'center', gap: 3 },
     kpiVal: { fontSize: 15, fontWeight: '800', color: c.textPrimary },

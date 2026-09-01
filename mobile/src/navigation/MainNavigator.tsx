@@ -41,12 +41,14 @@ import MoreHomeScreen from '../screens/more/MoreHomeScreen';
 import ProjectsListScreen from '../screens/projects/ProjectsListScreen';
 import ProjectDetailScreen from '../screens/projects/ProjectDetailScreen';
 import CreateEditProjectScreen from '../screens/projects/CreateEditProjectScreen';
+import ProjectFinancialsScreen from '../screens/projects/ProjectFinancialsScreen';
 import AgreementsListScreen from '../screens/contracts/AgreementsListScreen';
 import AgreementDetailScreen from '../screens/contracts/AgreementDetailScreen';
 import CreateEditAgreementScreen from '../screens/contracts/CreateEditAgreementScreen';
 import ServicesListScreen from '../screens/contracts/ServicesListScreen';
 import CreateEditServiceScreen from '../screens/contracts/CreateEditServiceScreen';
 import ComplianceBoardScreen from '../screens/contracts/ComplianceBoardScreen';
+import ComplianceTasksScreen from '../screens/contracts/ComplianceTasksScreen';
 import OtherReportsScreen from '../screens/reports/OtherReportsScreen';
 import RoutinesScreen from '../screens/routines/RoutinesScreen';
 import BusinessReviewsListScreen from '../screens/businessReviews/BusinessReviewsListScreen';
@@ -136,12 +138,16 @@ function MoreNavigator() {
       <MoreStack.Screen name="ProjectsList" component={ProjectsListScreen} />
       <MoreStack.Screen name="ProjectDetail" component={ProjectDetailScreen} />
       <MoreStack.Screen name="CreateEditProject" component={CreateEditProjectScreen} />
+      <MoreStack.Screen name="ProjectFinancials" component={ProjectFinancialsScreen} />
       <MoreStack.Screen name="AgreementsList" component={AgreementsListScreen} />
       <MoreStack.Screen name="AgreementDetail" component={AgreementDetailScreen} />
       <MoreStack.Screen name="CreateEditAgreement" component={CreateEditAgreementScreen} />
       <MoreStack.Screen name="ServicesList" component={ServicesListScreen} />
       <MoreStack.Screen name="CreateEditService" component={CreateEditServiceScreen} />
       <MoreStack.Screen name="ComplianceBoard" component={ComplianceBoardScreen} />
+      <MoreStack.Screen name="ComplianceTasks" component={ComplianceTasksScreen} />
+      <MoreStack.Screen name="CreateTask" component={CreateTaskScreen} />
+      <MoreStack.Screen name="TaskDetail" component={TaskDetailScreen} />
       <MoreStack.Screen name="Routines" component={RoutinesScreen} />
       <MoreStack.Screen name="BusinessReviewsList" component={BusinessReviewsListScreen} />
       <MoreStack.Screen name="BusinessReviewDetail" component={BusinessReviewDetailScreen} />

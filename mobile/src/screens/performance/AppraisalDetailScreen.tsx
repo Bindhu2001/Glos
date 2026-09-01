@@ -12,8 +12,10 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { AppColors } from '../../utils/colors';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import LoadError from '../../components/common/LoadError';
+import { showAlert } from '../../components/common/AlertModal';
 import { useLoadWithTimeout } from '../../hooks/useLoadWithTimeout';
 import { PerformanceStackParamList } from '../../navigation/types';
+import { formatExact } from '../../utils/format';
 
 type RouteProps = RouteProp<PerformanceStackParamList, 'AppraisalDetail'>;
 
@@ -57,6 +59,293 @@ const RECOMMENDATION_OPTIONS = [
   { value: 'not_recommend', label: 'Not Recommend' },
   { value: 'conditional', label: 'Conditional' },
 ];
+const RECOMMENDATION_LABELS: Record<string, string> = {
+  recommend: 'Recommend', not_recommend: 'Not Recommend', conditional: 'Conditional',
+};
+
+const EVENT_META: Record<string, { label: string; color: string }> = {
+  created:                    { label: 'Appraisal Created',                       color: '#3498db' },
+  employee_submitted:         { label: 'Employee Reflection Submitted',           color: '#3498db' },
+  manager_submitted:          { label: 'Manager Review Submitted',                color: '#9b59b6' },
+  manager_rejected:           { label: 'Sent Back to Employee by Manager',        color: '#e74c3c' },
+  final_approved:             { label: 'Final Decision — Approved',               color: '#27ae60' },
+  final_rejected_to_manager:  { label: 'Sent Back to Manager by Final Approver',  color: '#e74c3c' },
+  final_rejected_to_employee: { label: 'Sent Back to Employee by Final Approver', color: '#e74c3c' },
+};
+const CURRENT_STAGE_META: Record<string, { label: string; color: string }> = {
+  pending_employee: { label: 'Employee Reflection', color: '#f39c12' },
+  pending_manager:  { label: 'Manager Review',       color: '#3498db' },
+  pending_approver: { label: 'Final Approval',       color: '#3498db' },
+};
+
+function personName(u: any): string {
+  if (!u) return '';
+  return [u.first_name, u.last_name].filter(Boolean).join(' ') || u.email || '';
+}
+
+interface TimelineStep {
+  key: string; label: string; at: string | null; by: string | null;
+  detail: string | null; color: string; done: boolean; current: boolean;
+}
+
+function eventDetail(a: any, e: any): string | null {
+  if (e.event_type === 'created') {
+    return `${REASON_LABELS[a.reason] ?? a.reason}${e.note ? ` — ${e.note}` : ''}`;
+  }
+  if (e.event_type === 'manager_submitted' && e.note) {
+    return RECOMMENDATION_LABELS[e.note] ?? e.note;
+  }
+  return e.note ?? null;
+}
+
+// Full, append-only history — every round trip of a reject-and-resubmit loop
+// shows as its own entry, since appraisal_events is never overwritten.
+function buildEventTimelineSteps(a: any): TimelineStep[] {
+  const steps: TimelineStep[] = (a.events ?? []).map((e: any) => ({
+    key: `ev-${e.id}`,
+    label: EVENT_META[e.event_type]?.label ?? e.event_type,
+    at: e.created_at,
+    by: e.actor ? personName(e.actor) : null,
+    detail: eventDetail(a, e),
+    color: EVENT_META[e.event_type]?.color ?? '#9ca3af',
+    done: true,
+    current: false,
+  }));
+
+  const stage = CURRENT_STAGE_META[a.status];
+  if (stage) {
+    steps.push({ key: 'current-stage', label: stage.label, at: null, by: null, detail: null, color: stage.color, done: false, current: true });
+  } else if (a.status === 'completed') {
+    steps.push({ key: 'completed', label: 'Completed', at: a.final_decided_at ?? a.manager_submitted_at ?? null, by: null, detail: 'Appraisal finalized', color: '#27ae60', done: true, current: false });
+  }
+  return steps;
+}
+
+// Fallback for appraisals created before appraisal_events existed — derives
+// one step per stage from current-state columns (collapses reject/resubmit
+// loops onto the same step since only the latest pass is known).
+function buildTimelineSteps(a: any): TimelineStep[] {
+  const managerRejectedCurrent = a.rejected_by_stage === 'manager' && a.status === 'pending_employee';
+  const approverRejectedCurrent = a.rejected_by_stage === 'final_approver' && a.status === 'pending_employee';
+  const approverRejectedToManagerCurrent = a.rejected_by_stage === 'final_approver' && a.status === 'pending_manager';
+
+  const steps: TimelineStep[] = [
+    {
+      key: 'created', label: 'Appraisal Created', at: a.created_at, by: personName(a.triggered_by),
+      detail: `${REASON_LABELS[a.reason] ?? a.reason}${a.reason_notes ? ` — ${a.reason_notes}` : ''}`,
+      color: '#3498db', done: true, current: false,
+    },
+    {
+      key: 'employee', label: 'Employee Reflection', at: a.employee_submitted_at ?? null,
+      by: a.employee_submitted_at ? personName(a.employee) : null,
+      detail: (managerRejectedCurrent || approverRejectedCurrent)
+        ? `Sent back by ${approverRejectedCurrent ? 'the Final Approver' : 'the Manager'} — awaiting resubmission: ${a.rejection_reason ?? ''}`
+        : null,
+      color: (managerRejectedCurrent || approverRejectedCurrent) ? '#e74c3c' : '#3498db',
+      done: !!a.employee_submitted_at, current: a.status === 'pending_employee',
+    },
+    {
+      key: 'manager', label: 'Manager Review', at: a.manager_submitted_at ?? null,
+      by: a.manager_response?.submitted_by ? personName(a.manager_response.submitted_by) : null,
+      detail: approverRejectedToManagerCurrent
+        ? `Sent back by the Final Approver — awaiting re-review: ${a.rejection_reason ?? ''}`
+        : managerRejectedCurrent
+          ? `Sent back to employee: ${a.rejection_reason ?? ''}`
+          : (a.manager_response?.recommendation ? RECOMMENDATION_LABELS[a.manager_response.recommendation] : null),
+      color: (managerRejectedCurrent || approverRejectedToManagerCurrent) ? '#e74c3c' : '#9b59b6',
+      done: !!a.manager_submitted_at, current: a.status === 'pending_manager',
+    },
+    {
+      key: 'approver', label: 'Final Approval', at: a.final_decided_at ?? null,
+      by: a.final_decision?.submitted_by ? personName(a.final_decision.submitted_by) : null,
+      detail: a.final_decision?.decision_notes ?? null,
+      color: (approverRejectedCurrent || a.final_decision?.decision === 'rejected') ? '#e74c3c' : '#9b59b6',
+      done: !!a.final_decided_at, current: a.status === 'pending_approver',
+    },
+    {
+      key: 'completed', label: 'Completed',
+      at: a.status === 'completed' ? (a.final_decided_at ?? a.manager_submitted_at ?? null) : null,
+      by: null, detail: a.status === 'completed' ? 'Appraisal finalized' : null,
+      color: '#27ae60', done: a.status === 'completed', current: false,
+    },
+  ];
+  return steps;
+}
+
+const REVIEW_STATUS_LABELS: Record<string, string> = {
+  pending_self: 'Pending Self-Rating', pending_manager: 'Pending Manager Review',
+  pending_approver: 'Pending Final Approval', approved: 'Approved', rejected: 'Rejected',
+};
+const REVIEW_STATUS_COLORS: Record<string, string> = {
+  pending_self: '#f39c12', pending_manager: '#3498db', pending_approver: '#9b59b6',
+  approved: '#27ae60', rejected: '#e74c3c',
+};
+
+// Simple mean of the given ratings — used for Skills and Values.
+// Matches web's AppraisalDashboard `avg()` (2 decimals).
+function ratingAvg(ratings: any[]): string | null {
+  if (!ratings.length) return null;
+  return (ratings.reduce((sum, r) => sum + (r.rating || 0), 0) / ratings.length).toFixed(2);
+}
+
+// Goals are weighted by each goal's weightage over the review's TOTAL goal
+// weightage (every goal, rated or not) — matches web's AppraisalDashboard
+// `weightedAvg()` / the "Goals (Weighted Avg)" card. Pooling goals unweighted
+// like skills/values gives a different number for the same review.
+function goalWeightedAvg(ratings: any[], totalWeightage: number): string | null {
+  if (!ratings.length || !totalWeightage) return null;
+  const weighted = ratings.reduce((sum, r) => sum + (r.weightage || 0) * (r.rating || 0), 0);
+  return (weighted / totalWeightage).toFixed(2);
+}
+
+function Stars({ value, colors }: { value: string | number | null | undefined; colors: AppColors }) {
+  if (!value) return <Text style={{ color: colors.textMuted, fontSize: 12 }}>—</Text>;
+  const floored = Math.floor(Number(value));
+  return (
+    <Text style={{ fontSize: 13 }}>
+      <Text style={{ color: '#f1c40f' }}>{'★'.repeat(floored)}{'☆'.repeat(5 - floored)}</Text>
+      <Text style={{ color: colors.textSecondary, fontSize: 12 }}> ({value})</Text>
+    </Text>
+  );
+}
+
+// Ratings rows carry over as a draft when a stage is rejected back for
+// revision, so the row still exists even though it isn't the current,
+// finalized submission — only surface stars once that stage has actually
+// (re)submitted (matches web's CycleReviewSummary exactly).
+function ReviewRatingsSummary({ rs, colors, s, onOpen }: { rs: any; colors: AppColors; s: any; onOpen: () => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const cycle = rs.cycle ?? rs;
+  const review = rs.review ?? rs.performance_review ?? null;
+  const cycleName = `${cycle.cycle_name ?? `Cycle #${cycle.id}`}${cycle.year ? ` (${cycle.year})` : ''}`;
+
+  if (!review) {
+    return (
+      <View style={s.responseBlock}>
+        <Text style={s.responseLabel}>{cycleName}</Text>
+        <Text style={s.responseText}>No review found for this cycle</Text>
+      </View>
+    );
+  }
+
+  const ratings: any[] = rs.ratings ?? [];
+  const selfSubmitted = !['pending_self', 'rejected'].includes(review.status);
+  const managerSubmitted = !['pending_self', 'pending_manager', 'rejected'].includes(review.status);
+  const byRole = (type: string, role: string) => ratings.filter((r) => r.rating_type === type && r.rater_role === role);
+  // Goals use a weightage-weighted average (÷ total goal weightage); skills
+  // and values use a plain mean — matches web's CycleReviewSummary.
+  const catAvg = (type: string, role: string) => (
+    type === 'goal'
+      ? goalWeightedAvg(byRole('goal', role), rs.total_goal_weightage ?? 0)
+      : ratingAvg(byRole(type, role))
+  );
+
+  const categories = [
+    { key: 'goal', label: 'Goals', show: rs.has_goals, nameField: 'goal_name' },
+    { key: 'skill', label: 'Skills', show: rs.has_skills, nameField: 'skill_name' },
+    { key: 'value', label: 'Values', show: rs.has_values, nameField: 'value_name' },
+  ];
+
+  return (
+    <View style={s.responseBlock}>
+      <TouchableOpacity onPress={onOpen} disabled={!review.id}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Text style={s.responseLabel}>{cycleName}</Text>
+          <View style={{ backgroundColor: (REVIEW_STATUS_COLORS[review.status] ?? colors.gray400) + '22', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 }}>
+            <Text style={{ fontSize: 10, fontWeight: '700', color: REVIEW_STATUS_COLORS[review.status] ?? colors.textMuted }}>
+              {REVIEW_STATUS_LABELS[review.status] ?? review.status}
+            </Text>
+          </View>
+        </View>
+      </TouchableOpacity>
+
+      <View style={{ marginTop: 6, gap: 3 }}>
+        {categories.filter((c) => c.show).map((c) => (
+          <View key={c.key} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Text style={{ fontSize: 12, color: colors.textSecondary, width: 44 }}>{c.label}</Text>
+            <Text style={{ fontSize: 11, color: colors.textMuted }}>Self</Text>
+            <Stars value={selfSubmitted ? catAvg(c.key, 'self') : null} colors={colors} />
+            <Text style={{ fontSize: 11, color: colors.textMuted, marginLeft: 6 }}>Mgr</Text>
+            <Stars value={managerSubmitted ? catAvg(c.key, 'manager') : null} colors={colors} />
+          </View>
+        ))}
+      </View>
+
+      <TouchableOpacity onPress={() => setExpanded((v) => !v)} style={{ marginTop: 6 }}>
+        <Text style={{ fontSize: 12, fontWeight: '600', color: colors.primary }}>{expanded ? 'Hide details' : 'Details'}</Text>
+      </TouchableOpacity>
+
+      {expanded && !selfSubmitted && (
+        <Text style={{ marginTop: 8, fontSize: 12, color: colors.textMuted }}>Self review not started yet.</Text>
+      )}
+      {expanded && selfSubmitted && ratings.length > 0 && categories.filter((c) => c.show).map((c) => {
+        const typeRatings = ratings.filter((r) => r.rating_type === c.key);
+        const snapshotIds = [...new Set(typeRatings.map((r) => r.snapshot_id))];
+        return (
+          <View key={c.key} style={{ marginTop: 10 }}>
+            <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textPrimary, marginBottom: 4 }}>{c.label}</Text>
+            {snapshotIds.map((sid) => {
+              const group = typeRatings.filter((r) => r.snapshot_id === sid);
+              const name = group[0]?.[c.nameField] ?? `#${sid}`;
+              const self = group.find((r) => r.rater_role === 'self');
+              const mgr = group.find((r) => r.rater_role === 'manager');
+              return (
+                <View key={sid} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 5, borderBottomWidth: 1, borderBottomColor: colors.border }}>
+                  <Text style={{ flex: 1, fontSize: 12, color: colors.textPrimary }}>{name}</Text>
+                  <Stars value={selfSubmitted ? self?.rating : null} colors={colors} />
+                  <Stars value={managerSubmitted ? mgr?.rating : null} colors={colors} />
+                </View>
+              );
+            })}
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+function AppraisalTimeline({ a, colors, s }: { a: any; colors: AppColors; s: any }) {
+  const steps = (a.events && a.events.length) ? buildEventTimelineSteps(a) : buildTimelineSteps(a);
+  return (
+    <View style={{ paddingVertical: 4 }}>
+      {steps.map((step, i) => (
+        <View key={step.key} style={{ flexDirection: 'row', gap: 12 }}>
+          <View style={{ alignItems: 'center', width: 14 }}>
+            <View style={{
+              width: 12, height: 12, borderRadius: 6,
+              backgroundColor: step.done ? step.color : colors.surface,
+              borderWidth: step.done ? 0 : 2,
+              borderColor: step.current ? step.color : colors.border,
+            }} />
+            {i < steps.length - 1 && (
+              <View style={{ width: 2, flex: 1, minHeight: 34, backgroundColor: step.done ? step.color : colors.border, opacity: step.done ? 0.35 : 1, marginTop: 2 }} />
+            )}
+          </View>
+          <View style={{ flex: 1, paddingBottom: 20 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: step.done || step.current ? colors.textPrimary : colors.textMuted }}>
+                {step.label}
+              </Text>
+              {step.current && (
+                <Text style={{ fontSize: 11, fontWeight: '600', color: step.color }}>
+                  {step.done ? 'Awaiting resubmission' : 'In progress'}
+                </Text>
+              )}
+              {!step.current && step.at && <Text style={{ fontSize: 11, color: colors.textMuted }}>{formatExact(step.at)}</Text>}
+              {!step.current && !step.done && <Text style={{ fontSize: 11, color: colors.textMuted }}>Pending</Text>}
+            </View>
+            {step.by && <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>by {step.by}</Text>}
+            {step.detail && (
+              <Text style={{ fontSize: 12, color: step.color === '#e74c3c' ? '#e74c3c' : colors.textSecondary, marginTop: 4, lineHeight: 17, fontWeight: step.color === '#e74c3c' ? '500' : '400' }}>
+                {step.detail}
+              </Text>
+            )}
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
 
 export default function AppraisalDetailScreen() {
   const route = useRoute<RouteProps>();
@@ -75,11 +364,13 @@ export default function AppraisalDetailScreen() {
   const [managerResponse, setManagerResponse] = useState<any>(null);
   const [finalDecision, setFinalDecision] = useState<any>(null);
   const [reviewSummaries, setReviewSummaries] = useState<any[]>([]);
+  const [events, setEvents] = useState<any[]>([]);
   const [isEmployee, setIsEmployee] = useState(false);
   const [isManager, setIsManager] = useState(false);
   const [isFinalApprover, setIsFinalApprover] = useState(false);
   // Who's driving this appraisal — shown so it's clear who's being waited on,
   // matching web's Overview tab (previously mobile only showed the employee).
+  const [showTimeline, setShowTimeline] = useState(false);
   const [manager, setManager] = useState<any>(null);
   const [finalApprovers, setFinalApprovers] = useState<any[]>([]);
 
@@ -118,6 +409,7 @@ export default function AppraisalDetailScreen() {
     setManagerResponse(data.manager_response ?? null);
     setFinalDecision(data.final_decision ?? null);
     setReviewSummaries(data.review_summaries ?? []);
+    setEvents(data.events ?? []);
     setIsEmployee(!!data.is_employee);
     setIsManager(!!data.is_manager);
     setIsFinalApprover(!!data.is_final_approver);
@@ -150,7 +442,10 @@ export default function AppraisalDetailScreen() {
   useEffect(() => { run(load); }, [load]);
 
   const appraisalObj = appraisal ?? {};
-  const canEmployeeRespond = isEmployee && appraisalObj.status === 'pending_employee' && !employeeResponse;
+  // A saved draft still leaves the appraisal in 'pending_employee' — gating
+  // on `!employeeResponse` used to hide the form forever after the first
+  // Save Draft, since is_draft only flips to false on actual submission.
+  const canEmployeeRespond = isEmployee && appraisalObj.status === 'pending_employee';
   const canManagerRespond = isManager && appraisalObj.status === 'pending_manager';
   const canFinalDecide = isFinalApprover && appraisalObj.status === 'pending_approver';
 
@@ -159,8 +454,7 @@ export default function AppraisalDetailScreen() {
   // "what went well". Submitting with the others blank used to succeed
   // client-side and only fail once it hit the server.
   const employeeFieldsComplete = !!(thingsWentWell.trim() && couldBeBetter.trim() && nextTermAspirations.trim() && supportRequired.trim());
-  const handleEmployeeSubmit = async () => {
-    if (!employeeFieldsComplete) { Alert.alert('Required', 'Please fill in all fields before submitting.'); return; }
+  const doEmployeeSubmit = async () => {
     setSubmitting(true);
     try {
       await api.performance.submitEmployeeResponse(appId, appraisalId, {
@@ -175,6 +469,14 @@ export default function AppraisalDetailScreen() {
     } catch {
       Alert.alert('Error', 'Failed to submit response');
     } finally { setSubmitting(false); }
+  };
+  // Confirm before submitting — matches web's AppraisalDetail (window.confirm).
+  const handleEmployeeSubmit = () => {
+    if (!employeeFieldsComplete) { Alert.alert('Required', 'Please fill in all fields before submitting.'); return; }
+    showAlert('Submit reflection?', 'Submit your reflection for manager review?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Submit', onPress: doEmployeeSubmit },
+    ]);
   };
 
   const handleEmployeeSaveDraft = async () => {
@@ -199,8 +501,7 @@ export default function AppraisalDetailScreen() {
     recommendation && goalsFeedback.trim() && skillsFeedback.trim() &&
     valuesFeedback.trim() && potentialAssessment.trim() && recommendationNotes.trim()
   );
-  const handleManagerSubmit = async () => {
-    if (!managerFieldsComplete) { Alert.alert('Required', 'Please select a recommendation and fill in all feedback fields.'); return; }
+  const doManagerSubmit = async () => {
     setSubmitting(true);
     try {
       await api.performance.submitManagerResponse(appId, appraisalId, {
@@ -217,6 +518,13 @@ export default function AppraisalDetailScreen() {
     } catch {
       Alert.alert('Error', 'Failed to submit review');
     } finally { setSubmitting(false); }
+  };
+  const handleManagerSubmit = () => {
+    if (!managerFieldsComplete) { Alert.alert('Required', 'Please select a recommendation and fill in all feedback fields.'); return; }
+    showAlert('Submit manager review?', 'Submit your manager feedback for this appraisal?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Submit', onPress: doManagerSubmit },
+    ]);
   };
 
   const handleManagerSaveDraft = async () => {
@@ -236,8 +544,7 @@ export default function AppraisalDetailScreen() {
     } finally { setSavingDraft(false); }
   };
 
-  const handleManagerReject = async () => {
-    if (!managerRejectReason.trim()) { Alert.alert('Required', 'Please add a reason for sending this back.'); return; }
+  const doManagerReject = async () => {
     setRejectingManager(true);
     try {
       await api.performance.managerReject(appId, appraisalId, { rejection_reason: managerRejectReason.trim() });
@@ -248,10 +555,15 @@ export default function AppraisalDetailScreen() {
       Alert.alert('Error', 'Failed to send back to employee');
     } finally { setRejectingManager(false); }
   };
+  const handleManagerReject = () => {
+    if (!managerRejectReason.trim()) { Alert.alert('Required', 'Please add a reason for sending this back.'); return; }
+    showAlert('Send back to employee?', 'Send this appraisal back to the employee for revision?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Send Back', style: 'destructive', onPress: doManagerReject },
+    ]);
+  };
 
-  const handleFinalDecision = async (d: 'approved' | 'rejected') => {
-    if (!decisionNotes.trim()) { Alert.alert('Required', 'Please add decision notes.'); return; }
-    if (d === 'rejected' && !rejectTarget) { Alert.alert('Required', 'Choose whether to send this back to the manager or the employee.'); return; }
+  const doFinalDecision = async (d: 'approved' | 'rejected') => {
     setSubmitting(true);
     try {
       await api.performance.submitFinalDecision(appId, appraisalId, {
@@ -265,6 +577,21 @@ export default function AppraisalDetailScreen() {
     } catch {
       Alert.alert('Error', 'Failed to submit decision');
     } finally { setSubmitting(false); }
+  };
+  const handleFinalDecision = (d: 'approved' | 'rejected') => {
+    if (!decisionNotes.trim()) { Alert.alert('Required', 'Please add decision notes.'); return; }
+    if (d === 'rejected' && !rejectTarget) { Alert.alert('Required', 'Choose whether to send this back to the manager or the employee.'); return; }
+    if (d === 'approved') {
+      showAlert('Approve appraisal?', 'Approve this appraisal? This finalizes the decision.', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Approve', onPress: () => doFinalDecision('approved') },
+      ]);
+    } else {
+      showAlert('Send back?', `Send this appraisal back to the ${rejectTarget === 'manager' ? 'manager' : 'employee'} for revision?`, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Send Back', style: 'destructive', onPress: () => doFinalDecision('rejected') },
+      ]);
+    }
   };
 
   const handleFinalSaveDraft = async () => {
@@ -305,6 +632,22 @@ export default function AppraisalDetailScreen() {
 
         <ScrollView contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
 
+          {/* "Sent back by your Manager" is meaningless read back to the
+              manager who did the sending — once the employee resubmits and
+              it's their turn again, showing them a banner about their own
+              past action is just confusing. Matches web's guard exactly. */}
+          {appraisalObj.rejection_reason && !(isManager && appraisalObj.status === 'pending_manager' && appraisalObj.rejected_by_stage === 'manager') && (
+            <View style={s.rejectionBanner}>
+              <Text style={s.rejectionBannerTitle}>
+                {(appraisalObj.status === 'pending_employee' || appraisalObj.status === 'pending_manager') ? 'Sent back' : 'Previously sent back'} by{' '}
+                {appraisalObj.rejected_by_stage === 'final_approver' ? 'the Final Approver' : 'your Manager'}
+                {appraisalObj.status === 'pending_employee' ? ' — please edit and resubmit' : ''}
+                {appraisalObj.status === 'pending_manager' ? ' — please review again' : ''}
+              </Text>
+              <Text style={s.rejectionBannerBody}>{appraisalObj.rejection_reason}</Text>
+            </View>
+          )}
+
           {(manager || finalApprovers.length > 0) && (
             <View style={s.peopleRow}>
               {manager && (
@@ -324,32 +667,40 @@ export default function AppraisalDetailScreen() {
             </View>
           )}
 
-          {/* Linked performance reviews for this appraisal's included cycles */}
+          {/* Timeline — full history including every round trip of a
+              reject-and-resubmit loop (web's Timeline tab). Collapsed by
+              default on mobile so the action form stays reachable without
+              scrolling past it. */}
+          <TouchableOpacity style={s.timelineToggle} onPress={() => setShowTimeline((v) => !v)}>
+            <Text style={s.sectionTitle}>Timeline</Text>
+            <Ionicons name={showTimeline ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textSecondary} />
+          </TouchableOpacity>
+          {showTimeline && (
+            <AppraisalTimeline
+              a={{ ...appraisalObj, events, employee_response: employeeResponse, manager_response: managerResponse, final_decision: finalDecision }}
+              colors={colors}
+              s={s}
+            />
+          )}
+
+          {/* Linked performance reviews for this appraisal's included cycles —
+              goal/skill/value rating breakdown (matches web's Review Ratings
+              tab / CycleReviewSummary), not just status + final score. */}
           {reviewSummaries.length > 0 && (
             <>
-              <Text style={s.sectionTitle}>Linked Reviews</Text>
-              {reviewSummaries.map((rs: any, i: number) => {
-                const cycle = rs.cycle ?? rs;
-                const review = rs.review ?? rs.performance_review ?? null;
-                return (
-                  <TouchableOpacity
-                    key={rs.id ?? cycle.id ?? i}
-                    style={s.responseBlock}
-                    activeOpacity={review?.id ? 0.7 : 1}
-                    onPress={() => review?.id && navigation.navigate('ReviewDetail', { reviewId: review.id, appId })}
-                  >
-                    <Text style={s.responseLabel}>{cycle.cycle_name ?? `Cycle #${cycle.id ?? i + 1}`}{cycle.year ? ` (${cycle.year})` : ''}</Text>
-                    {review ? (
-                      <>
-                        <Text style={s.responseText}>Status: {(review.status ?? '').replace(/_/g, ' ') || '—'}</Text>
-                        {review.final_score != null && <Text style={s.responseText}>Final Score: {review.final_score}/5</Text>}
-                      </>
-                    ) : (
-                      <Text style={s.responseText}>No review found for this cycle</Text>
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
+              <Text style={s.sectionTitle}>Review Ratings</Text>
+              {reviewSummaries.map((rs: any, i: number) => (
+                <ReviewRatingsSummary
+                  key={rs.cycle?.id ?? i}
+                  rs={rs}
+                  colors={colors}
+                  s={s}
+                  onOpen={() => {
+                    const review = rs.review ?? rs.performance_review ?? null;
+                    if (review?.id) navigation.navigate('ReviewDetail', { reviewId: review.id, appId });
+                  }}
+                />
+              ))}
             </>
           )}
 
@@ -550,8 +901,11 @@ export default function AppraisalDetailScreen() {
             </>
           )}
 
-          {/* Existing final decision */}
-          {finalDecision && (
+          {/* Existing final decision — suppressed while the active decision
+              form above is showing, otherwise a stale decision from an
+              earlier reject-and-resubmit round duplicates it (matches web's
+              `!showFinalDecisionForm` guard on the final_view tab). */}
+          {finalDecision && !canFinalDecide && (
             <View style={{ marginTop: 16 }}>
               <Text style={s.sectionTitle}>Final Decision</Text>
               <View style={[s.decisionBadge, finalDecision.decision === 'approved' ? s.approvedBadge : s.rejectedBadge]}>
@@ -591,6 +945,12 @@ function makeStyles(c: AppColors) {
     headerTitle:        { fontSize: 17, fontWeight: '700', color: c.textPrimary, fontFamily: SERIF },
     headerSub:          { fontSize: 12, color: c.textSecondary, marginTop: 2 },
     content:            { padding: 16, paddingBottom: 48 },
+    rejectionBanner:    {
+      backgroundColor: '#e74c3c15', borderWidth: 1, borderColor: '#e74c3c40',
+      borderRadius: 8, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 16,
+    },
+    rejectionBannerTitle: { fontSize: 13, fontWeight: '700', color: '#e74c3c', marginBottom: 2 },
+    rejectionBannerBody:  { fontSize: 13, color: c.textSecondary },
     peopleRow:          { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
     peopleChip:         {
       backgroundColor: c.gray50, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8,
@@ -609,6 +969,7 @@ function makeStyles(c: AppColors) {
     sendBackLinkText:   { fontSize: 13, fontWeight: '600', color: c.danger },
     reviewSection:      { marginTop: 8, paddingTop: 16, borderTopWidth: 1, borderTopColor: c.border },
     sectionTitle:       { fontSize: 16, fontWeight: '700', color: c.textPrimary, marginTop: 8, marginBottom: 12 },
+    timelineToggle:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
     fieldLabel:         { fontSize: 13, fontWeight: '600', color: c.textSecondary, marginBottom: 6, marginTop: 12 },
     input:              {
       borderWidth: 1, borderColor: c.border, borderRadius: 10,

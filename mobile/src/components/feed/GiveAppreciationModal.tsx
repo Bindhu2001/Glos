@@ -11,16 +11,7 @@ import { AppColors } from '../../utils/colors';
 import Avatar from '../common/Avatar';
 import { showAlert } from '../common/AlertModal';
 import { guardedTextChange, CONTENT_MAX_LEN } from '../../utils/postContent';
-
-const BADGES = [
-  { key: 'teamwork', label: 'Teamwork', emoji: '🤝' },
-  { key: 'innovation', label: 'Innovation', emoji: '💡' },
-  { key: 'leadership', label: 'Leadership', emoji: '👑' },
-  { key: 'excellence', label: 'Excellence', emoji: '⭐' },
-  { key: 'mentorship', label: 'Mentorship', emoji: '🎓' },
-  { key: 'customer_focus', label: 'Customer', emoji: '🎯' },
-  { key: 'problem_solving', label: 'Problem Solving', emoji: '🔧' },
-];
+import { BADGES } from '../../utils/badges';
 
 interface Props {
   visible: boolean;

@@ -65,7 +65,10 @@ export default function CreateAppraisalScreen() {
       const memberRows: any[] = membersRes.data?.members ?? membersRes.data?.items ?? membersRes.data ?? [];
       setMembers(memberRows);
       const cycleRows: any[] = cyclesRes.data?.items ?? cyclesRes.data ?? [];
-      setCycles(cycleRows.map((c: any) => ({ id: c.id, name: `${c.cycle_name} (${c.year})` })));
+      // Matches web (AppraisalDashboard.jsx activeCycles) — only active cycles
+      // are valid to attach a new appraisal to; planned/closed ones aren't offered.
+      const activeCycles = cycleRows.filter((c: any) => c.status === 'active');
+      setCycles(activeCycles.map((c: any) => ({ id: c.id, name: `${c.cycle_name} (${c.year})` })));
     } catch (err) {
       showAlert('Could not load form data', apiErrorMessage(err));
       setLoadError(true);

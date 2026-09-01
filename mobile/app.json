@@ -17,7 +17,8 @@
       "bundleIdentifier": "com.greatleap.mobile",
       "buildNumber": "1",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": ["remote-notification"]
       }
     },
     "android": {
@@ -27,7 +28,8 @@
       },
       "package": "com.greatleap.glos",
       "versionCode": 4,
-      "softwareKeyboardLayoutMode": "resize"
+      "softwareKeyboardLayoutMode": "resize",
+      "googleServicesFile": "./google-services.json"
     },
     "plugins": [
       "expo-secure-store",
@@ -57,11 +59,18 @@
         }
       ],
       "expo-asset",
-      "expo-video"
+      "expo-video",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification_icon.png",
+          "color": "#1a56db"
+        }
+      ]
     ],
-    "privacyPolicyUrl": "https://glosonline.com/privacy-policy.html",
     "owner": "athiraks",
     "extra": {
+      "privacyPolicyUrl": "https://glosonline.com/privacy-policy.html",
       "eas": {
         "projectId": "04eaec98-29d5-4cb3-99dc-c4c4f80b9f3a"
       }

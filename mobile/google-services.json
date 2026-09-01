@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "219118158917",
+    "project_id": "glos-5c829",
+    "storage_bucket": "glos-5c829.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:219118158917:android:42f86c386db5b62ae40f2c",
+        "android_client_info": {
+          "package_name": "com.greatleap.glos"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDTNSrakcitJAloZX-XHg8K3Tu6v4HWwG8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

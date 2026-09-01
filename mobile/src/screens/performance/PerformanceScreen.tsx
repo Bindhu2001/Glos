@@ -71,6 +71,9 @@ interface Appraisal {
   reason?: string;
   created_at?: string;
   employee?: { first_name?: string; last_name?: string; email?: string };
+  // Hydrated field the API actually returns for the initiator — web's
+  // PerformanceHub reads a.triggered_by (not initiated_by/manager).
+  triggered_by?: { first_name?: string; last_name?: string; email?: string };
 }
 
 const REASON_LABELS: Record<string, string> = {
@@ -140,6 +143,8 @@ export default function PerformanceScreen() {
   const [teamLoading, setTeamLoading] = useState(false);
   const [managerAppraisals, setManagerAppraisals] = useState<Appraisal[]>([]);
   const [approverAppraisals, setApproverAppraisals] = useState<Appraisal[]>([]);
+  const [allAppraisals, setAllAppraisals] = useState<Appraisal[]>([]);
+  const [showAllAppraisals, setShowAllAppraisals] = useState(false);
   const [appreciations, setAppreciations] = useState<any[]>([]);
 
   const [search, setSearch] = useState('');
@@ -178,7 +183,7 @@ export default function PerformanceScreen() {
     let errorCount = 0;
     const guard = <T,>(p: Promise<T>): Promise<T | { data: any[] }> =>
       p.catch(() => { errorCount++; return { data: [] }; });
-    const [pendingRes, appraisalRes, goalsRes, reviewsRes, teamGoalsRes, teamReviewsRes, mgrAppraisalRes, approverAppraisalRes, apprRes] = await Promise.all([
+    const [pendingRes, appraisalRes, goalsRes, reviewsRes, teamGoalsRes, teamReviewsRes, mgrAppraisalRes, approverAppraisalRes, apprRes, allAppraisalRes] = await Promise.all([
       guard(api.performance.listPendingForMe(workspace.id)),
       guard(api.performance.getAppraisals(workspace.id, { my: true })),
       guard(api.performance.getGoals(workspace.id)),
@@ -188,8 +193,9 @@ export default function PerformanceScreen() {
       guard(api.performance.getAppraisals(workspace.id, { view: 'manage' })),
       guard(api.performance.getAppraisals(workspace.id, { view: 'pending_approver' })),
       guard(api.appreciations.listReceived(workspace.id)),
+      isAdmin ? guard(api.performance.getAppraisals(workspace.id, { view: 'all' })) : Promise.resolve({ data: [] }),
     ]);
-    if (errorCount === 9) throw new Error('Could not load performance data');
+    if (errorCount === 9 + (isAdmin ? 1 : 0)) throw new Error('Could not load performance data');
     const norm = (d: any) => Array.isArray(d) ? d : (Array.isArray(d?.items) ? d.items : []);
     setPendingReviews(norm(pendingRes.data));
     setPendingAppraisals(norm(appraisalRes.data));
@@ -200,7 +206,8 @@ export default function PerformanceScreen() {
     setManagerAppraisals(norm(mgrAppraisalRes.data));
     setApproverAppraisals(norm(approverAppraisalRes.data));
     setAppreciations(norm(apprRes.data));
-  }, [workspace, api]);
+    setAllAppraisals(norm(allAppraisalRes.data));
+  }, [workspace, api, isAdmin]);
 
   const loadTeam = useCallback(async () => {
     if (!workspace) return;
@@ -383,7 +390,7 @@ export default function PerformanceScreen() {
     (a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime()
   );
   const filteredAppraisals = q ? sortedPendingAppraisals.filter(a => appraisalTitle(a).toLowerCase().includes(q)) : sortedPendingAppraisals;
-  const filteredGoals = q ? goals.filter(g => g.goal_name.toLowerCase().includes(q)) : goals;
+  const filteredGoals = q ? goals.filter(g => (g.goal_name ?? '').toLowerCase().includes(q)) : goals;
   const isGoalEditLocked = (g: Goal) =>
     allReviews.some(r => r.role_id === g.role_id && ACTIVE_REVIEW_STATUSES.includes(r.status));
   const filteredReviews = q ? allReviews.filter(r => (r.cycle_name ?? '').toLowerCase().includes(q)) : allReviews;
@@ -837,6 +844,14 @@ export default function PerformanceScreen() {
                   <Text style={s.cardTitle}>{appraisalTitle(a)}</Text>
                   <StatusBadge status={a.status} />
                 </View>
+                {(a.reason || a.triggered_by) && (
+                  <Text style={s.cardMeta}>
+                    {[
+                      a.reason ? (REASON_LABELS[a.reason] ?? a.reason) : null,
+                      a.triggered_by ? `Initiated by ${uname(a.triggered_by)}` : null,
+                    ].filter(Boolean).join(' · ')}
+                  </Text>
+                )}
               </TouchableOpacity>
             ))}
 
@@ -871,6 +886,29 @@ export default function PerformanceScreen() {
                       <StatusBadge status={a.status} />
                     </View>
                     <Text style={s.cardHint}>Awaiting your approval</Text>
+                  </TouchableOpacity>
+                ))}
+              </>
+            )}
+
+            {isAdmin && allAppraisals.length > 0 && (
+              <>
+                <TouchableOpacity
+                  style={[s.sectionRow, { marginTop: 20 }]}
+                  onPress={() => setShowAllAppraisals((v) => !v)}
+                >
+                  <Text style={s.sectionLabel}>All Appraisals ({allAppraisals.length})</Text>
+                  <Ionicons name={showAllAppraisals ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textSecondary} />
+                </TouchableOpacity>
+                {showAllAppraisals && allAppraisals.map((a) => (
+                  <TouchableOpacity
+                    key={`all-${a.id}`} style={s.card} activeOpacity={0.7}
+                    onPress={() => navigation.navigate('AppraisalDetail', { appraisalId: a.id, appId: workspace?.id ?? 0 })}
+                  >
+                    <View style={s.cardRow}>
+                      <Text style={s.cardTitle}>{appraisalTitle(a)}</Text>
+                      <StatusBadge status={a.status} />
+                    </View>
                   </TouchableOpacity>
                 ))}
               </>

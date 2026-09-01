@@ -39,7 +39,12 @@ export default function ProjectDetailScreen() {
   const [newComment, setNewComment] = useState('');
   const [posting, setPosting] = useState(false);
   const [meId, setMeId] = useState<number | null>(null);
+  const [togglingInactive, setTogglingInactive] = useState(false);
+  const [feedModal, setFeedModal] = useState(false);
+  const [feedText, setFeedText] = useState('');
+  const [sendingFeed, setSendingFeed] = useState(false);
   const [addMsModal, setAddMsModal] = useState(false);
+  const [editingMsId, setEditingMsId] = useState<number | null>(null);
   const [msTitle, setMsTitle] = useState('');
   const [msStart, setMsStart] = useState('');
   const [msEnd, setMsEnd] = useState('');
@@ -118,10 +123,51 @@ export default function ProjectDetailScreen() {
     }
   };
 
+  // Matches web's Projects.jsx row actions: a project with real time-log
+  // history offers Set Inactive/Active instead of Delete, so its history
+  // stays intact rather than disappearing behind a soft-delete.
+  const toggleInactive = async () => {
+    setTogglingInactive(true);
+    try {
+      await api.projects.update(params.appId, params.projectId, { is_inactive: project.is_inactive ? 0 : 1 });
+      await load();
+    } catch (err) {
+      showAlert('Could not update project', apiErrorMessage(err));
+    } finally {
+      setTogglingInactive(false);
+    }
+  };
+
+  // Matches web's "📢 Feed" row action — posts an update to the feed,
+  // audience-scoped to just this project's members.
+  const sendFeedUpdate = async () => {
+    if (!feedText.trim()) return;
+    const memberIds: number[] = (project.member_user_ids ?? []).map(Number).filter(Boolean);
+    if (memberIds.length === 0) {
+      showAlert('No members', 'This project has no members to send a feed update to.');
+      return;
+    }
+    setSendingFeed(true);
+    try {
+      await api.feed.create(params.appId, {
+        content: feedText.trim(),
+        audience_type: 'users',
+        audience_ids: memberIds,
+      });
+      setFeedModal(false);
+      setFeedText('');
+      showAlert('Sent', `Feed update sent to ${memberIds.length} member${memberIds.length === 1 ? '' : 's'}.`);
+    } catch (err) {
+      showAlert('Could not send feed update', apiErrorMessage(err));
+    } finally {
+      setSendingFeed(false);
+    }
+  };
+
   const deleteProject = () => {
     showAlert(
       'Delete Project',
-      `Are you sure you want to delete "${project.name}"? This cannot be undone.`,
+      `Are you sure you want to delete "${project.name}"? It will be hidden from the list but can still be restored later.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -138,20 +184,57 @@ export default function ProjectDetailScreen() {
     );
   };
 
-  const addMilestone = async () => {
+  const openAddMilestone = () => {
+    setEditingMsId(null);
+    setMsTitle(''); setMsStart(''); setMsEnd('');
+    setAddMsModal(true);
+  };
+
+  const openEditMilestone = (m: any) => {
+    setEditingMsId(m.id);
+    setMsTitle(m.title ?? '');
+    setMsStart(m.start_date ?? '');
+    setMsEnd(m.end_date ?? '');
+    setAddMsModal(true);
+  };
+
+  const saveMilestone = async () => {
     if (!msTitle.trim()) return showAlert('Validation', 'Milestone title is required.');
     setSavingMs(true);
     try {
-      await api.projects.createMilestone(params.appId, params.projectId, {
-        title: msTitle.trim(), start_date: msStart || undefined, end_date: msEnd || undefined,
-      });
-      setMsTitle(''); setMsStart(''); setMsEnd(''); setAddMsModal(false);
+      const data = { title: msTitle.trim(), start_date: msStart || undefined, end_date: msEnd || undefined };
+      if (editingMsId != null) {
+        await api.projects.updateMilestone(params.appId, params.projectId, editingMsId, data);
+      } else {
+        await api.projects.createMilestone(params.appId, params.projectId, data);
+      }
+      setMsTitle(''); setMsStart(''); setMsEnd(''); setAddMsModal(false); setEditingMsId(null);
       await load();
     } catch (err) {
-      showAlert('Could not add milestone', apiErrorMessage(err));
+      showAlert('Could not save milestone', apiErrorMessage(err));
     } finally {
       setSavingMs(false);
     }
+  };
+
+  const deleteMilestoneConfirm = (m: any) => {
+    showAlert(
+      'Delete Milestone',
+      `Delete "${m.title}"? This can't be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete', style: 'destructive', onPress: async () => {
+            try {
+              await api.projects.deleteMilestone(params.appId, params.projectId, m.id);
+              await load();
+            } catch (err) {
+              showAlert('Could not delete milestone', apiErrorMessage(err));
+            }
+          },
+        },
+      ],
+    );
   };
 
   const postComment = async () => {
@@ -187,9 +270,32 @@ export default function ProjectDetailScreen() {
             >
               <Ionicons name="create-outline" size={20} color={colors.primary} />
             </TouchableOpacity>
-            <TouchableOpacity style={s.backBtn} onPress={deleteProject}>
-              <Ionicons name="trash-outline" size={20} color={colors.danger} />
+            <TouchableOpacity style={s.backBtn} onPress={() => setFeedModal(true)}>
+              <Ionicons name="megaphone-outline" size={19} color={colors.textSecondary} />
             </TouchableOpacity>
+            <TouchableOpacity
+              style={s.backBtn}
+              onPress={() => navigation.navigate('ProjectFinancials', { appId: params.appId, projectId: params.projectId })}
+            >
+              <Ionicons name="cash-outline" size={19} color={colors.textSecondary} />
+            </TouchableOpacity>
+            {project.has_time_logs ? (
+              <TouchableOpacity style={s.backBtn} onPress={toggleInactive} disabled={togglingInactive}>
+                {togglingInactive ? (
+                  <ActivityIndicator size="small" color={colors.textMuted} />
+                ) : (
+                  <Ionicons
+                    name={project.is_inactive ? 'play-circle-outline' : 'pause-circle-outline'}
+                    size={20}
+                    color={project.is_inactive ? colors.primary : colors.textMuted}
+                  />
+                )}
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity style={s.backBtn} onPress={deleteProject}>
+                <Ionicons name="trash-outline" size={20} color={colors.danger} />
+              </TouchableOpacity>
+            )}
           </View>
         ) : (
           <View style={{ width: 36 }} />
@@ -218,7 +324,7 @@ export default function ProjectDetailScreen() {
         <View style={s.sectionHeadRow}>
           <Text style={s.sectionHead}>MILESTONES</Text>
           {isOwnerOrAdmin && (
-            <TouchableOpacity onPress={() => setAddMsModal(true)}>
+            <TouchableOpacity onPress={openAddMilestone}>
               <Ionicons name="add-circle-outline" size={18} color={colors.primary} />
             </TouchableOpacity>
           )}
@@ -249,7 +355,7 @@ export default function ProjectDetailScreen() {
                     />
                   </TouchableOpacity>
                   <View style={{ flex: 1 }}>
-                    <Text style={[s.msTitle, m.is_completed && s.msTitleDone]}>{m.title}</Text>
+                    <Text style={[s.msTitle, m.is_completed && s.msTitleDone]} numberOfLines={2}>{m.title}</Text>
                     {(m.start_date || m.end_date) ? (
                       <Text style={s.msDate}>
                         {m.start_date ? `Start: ${new Date(m.start_date).toLocaleDateString()}` : ''}
@@ -268,6 +374,16 @@ export default function ProjectDetailScreen() {
                     <View style={[s.msBadge, { backgroundColor: colors.danger + '20' }]}>
                       <Text style={[s.msBadgeText, { color: colors.danger }]}>Overdue</Text>
                     </View>
+                  )}
+                  {isOwnerOrAdmin && (
+                    <>
+                      <TouchableOpacity onPress={(e) => { e.stopPropagation(); openEditMilestone(m); }} hitSlop={8}>
+                        <Ionicons name="create-outline" size={15} color={colors.textMuted} />
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={(e) => { e.stopPropagation(); deleteMilestoneConfirm(m); }} hitSlop={8}>
+                        <Ionicons name="trash-outline" size={15} color={colors.danger} />
+                      </TouchableOpacity>
+                    </>
                   )}
                   <Ionicons name={isExpanded ? 'chevron-down' : 'chevron-forward'} size={16} color={colors.gray400} />
                 </TouchableOpacity>
@@ -333,22 +449,46 @@ export default function ProjectDetailScreen() {
         </TouchableOpacity>
       </View>
 
-      <Modal visible={addMsModal} transparent animationType="fade" onRequestClose={() => setAddMsModal(false)}>
+      <Modal visible={addMsModal} transparent animationType="fade" onRequestClose={() => { setAddMsModal(false); setEditingMsId(null); }}>
         {/* KeyboardAvoidingView so the title input isn't covered by the keyboard
             — Modal content sits outside the screen's own KeyboardAvoidingView
             (separate native root), so it needs its own here. */}
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={s.modalBackdrop}>
           <View style={s.modalCard}>
             <View style={s.modalHead}>
-              <Text style={s.modalTitle}>Add Milestone</Text>
-              <TouchableOpacity onPress={() => setAddMsModal(false)}>
+              <Text style={s.modalTitle}>{editingMsId != null ? 'Edit Milestone' : 'Add Milestone'}</Text>
+              <TouchableOpacity onPress={() => { setAddMsModal(false); setEditingMsId(null); }}>
                 <Ionicons name="close" size={22} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
             <Input label="Title *" value={msTitle} onChangeText={setMsTitle} placeholder="Milestone title" />
             <DatePickerField label="Start Date" value={msStart} onChange={setMsStart} />
             <DatePickerField label="End Date" value={msEnd} onChange={setMsEnd} />
-            <Button label="Add Milestone" onPress={addMilestone} loading={savingMs} fullWidth />
+            <Button label={editingMsId != null ? 'Save Milestone' : 'Add Milestone'} onPress={saveMilestone} loading={savingMs} fullWidth />
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal visible={feedModal} transparent animationType="fade" onRequestClose={() => setFeedModal(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={s.modalBackdrop}>
+          <View style={s.modalCard}>
+            <View style={s.modalHead}>
+              <Text style={s.modalTitle}>Send Feed Update</Text>
+              <TouchableOpacity onPress={() => setFeedModal(false)}>
+                <Ionicons name="close" size={22} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <Text style={s.feedModalHint}>
+              Posts to the feed, visible only to this project's {(project.member_user_ids ?? []).length} member{(project.member_user_ids ?? []).length === 1 ? '' : 's'}.
+            </Text>
+            <Input
+              value={feedText}
+              onChangeText={setFeedText}
+              placeholder="Write an update for the project team..."
+              multiline
+              numberOfLines={4}
+            />
+            <Button label="Send" onPress={sendFeedUpdate} loading={sendingFeed} disabled={!feedText.trim()} fullWidth />
           </View>
         </KeyboardAvoidingView>
       </Modal>
@@ -384,9 +524,14 @@ function makeStyles(c: AppColors) {
     modalCard: { backgroundColor: c.surface, borderRadius: 16, padding: 18 },
     modalHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
     modalTitle: { fontSize: 17, fontWeight: '800', color: c.textPrimary },
+    feedModalHint: { fontSize: 12, color: c.textMuted, marginBottom: 12 },
     emptyText: { fontSize: 13, color: c.textMuted, marginBottom: 12 },
     msItemWrap: { marginBottom: 12 },
-    msRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    // flex-start (not center) — an unbounded-length milestone title can wrap
+    // to several lines, and centering the row's icons/badges/chevron against
+    // that full height made them float mid-way through the wrapped text
+    // instead of sitting next to the first line, like a real list row should.
+    msRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
     msTitle: { fontSize: 13, fontWeight: '600', color: c.textPrimary },
     msTitleDone: { color: c.textMuted, textDecorationLine: 'line-through' },
     msDate: { fontSize: 11, color: c.textMuted, marginTop: 2 },

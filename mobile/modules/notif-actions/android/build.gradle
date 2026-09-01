@@ -1,0 +1,21 @@
+plugins {
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.greatleap.notifactions'
+version = '0.1.0'
+
+android {
+  namespace 'expo.modules.notifactions'
+  defaultConfig {
+    versionCode 1
+    versionName '0.1.0'
+  }
+}
+
+dependencies {
+  implementation 'androidx.core:core-ktx:1.13.1'
+  // Networking uses java.net.HttpURLConnection (JDK, always present) and
+  // storage uses plain private SharedPreferences — no extra dependencies, so
+  // nothing here can clash with what React Native / Expo already resolve.
+}

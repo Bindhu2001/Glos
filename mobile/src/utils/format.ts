@@ -78,6 +78,7 @@ export function getInitials(name: string): string {
     .join('');
 }
 
-export function capitalize(s: string): string {
+export function capitalize(s: string | null | undefined): string {
+  if (!s) return '';
   return s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, ' ');
 }

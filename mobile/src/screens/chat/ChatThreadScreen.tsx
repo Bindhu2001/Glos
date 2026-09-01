@@ -2,16 +2,19 @@ import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react'
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList, Platform, ScrollView,
   ActivityIndicator, TextInput, KeyboardAvoidingView, Modal, Animated, PanResponder, Dimensions,
+  AppState,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '@clerk/clerk-expo';
+import * as Clipboard from 'expo-clipboard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useApi } from '../../hooks/useApi';
 import { getSocket } from '../../lib/socket';
+import { dismissNotificationsForConversation } from '../../lib/pushNotifications';
 import { AppColors } from '../../utils/colors';
 import { ChatStackParamList } from '../../navigation/types';
 import { apiErrorMessage } from '../../utils/apiError';
@@ -23,8 +26,9 @@ import AttachmentChips from '../../components/common/AttachmentChips';
 import AttachmentList from '../../components/common/AttachmentList';
 import {
   pickAttachmentFiles, uploadAttachments, downloadAttachment, stripAttachmentMarkers, pickedFileFromLocalUri,
-  isForwardedBody, stripForwardMarker, PickedFile,
+  isForwardedBody, stripForwardMarker, isImageAttachment, PickedFile,
 } from '../../utils/attachments';
+import { stripMentionTokens, renderMentionText } from '../../utils/mentions';
 import { getDraft, setDraft, clearDraft } from '../../utils/chatDrafts';
 import { OutboxItem, loadOutbox, addToOutbox, removeFromOutbox } from '../../utils/chatOutbox';
 import {
@@ -36,6 +40,14 @@ type Nav = NativeStackNavigationProp<ChatStackParamList, 'ChatThread'>;
 type Rt = RouteProp<ChatStackParamList, 'ChatThread'>;
 
 const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+// Matches web's ALL_EMOJIS — the full palette behind the "+" expand button,
+// beyond the 6 quick-react options above.
+const ALL_REACTIONS = [
+  '👍', '👎', '❤️', '🔥', '😂', '😮', '😢', '😡', '🎉', '🙏',
+  '👏', '💯', '🤔', '😍', '🥰', '😎', '🤣', '😅', '😊', '😇',
+  '🤯', '🥳', '😴', '🤗', '😏', '🙄', '😬', '🤐', '😤', '😔',
+  '👀', '💪', '🤝', '✅', '⭐', '🚀', '💡', '📌', '🔔', '💬',
+];
 const CHAR_LIMIT = 2000;
 const COLLAPSE_LIMIT = 300;
 const PAGE_SIZE = 30;
@@ -91,12 +103,23 @@ function dayLabel(iso?: string) {
   return d.toLocaleDateString([], { month: 'long', day: 'numeric', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
 }
 
+// Attachment-only messages (no text body) used to render reply previews as a
+// blank line — this gives them a label + icon instead, same idea as web's
+// ReplyAttachmentPreview but as a one-line fallback rather than a thumbnail.
+function replyAttachmentLabel(a: { content_type: string; file_name: string } | undefined): string | null {
+  if (!a) return null;
+  if (isImageAttachment(a)) return 'Photo';
+  if (a.content_type.startsWith('video/')) return 'Video';
+  if (a.content_type.startsWith('audio/')) return 'Voice message';
+  return a.file_name;
+}
+
 function MessageRow({
-  item, isMine, showAvatar, colors, s, onMenuPress, onReactChip, onQuickReact, onSwipeReply, myUserId, isRead, isPinned, isHighlighted, onAvatarPress, onRetry,
+  item, isMine, showAvatar, colors, s, onMenuPress, onReactChip, onQuickReact, onSwipeReply, onReplyPreviewPress, myUserId, isRead, isPinned, isHighlighted, onAvatarPress, onRetry,
 }: {
   item: any; isMine: boolean; showAvatar: boolean; colors: AppColors; s: any;
   onMenuPress: () => void; onReactChip: (emoji: string) => void; onQuickReact: (e: any) => void;
-  onSwipeReply: () => void; myUserId: number | null; isRead: boolean; isPinned: boolean; isHighlighted: boolean;
+  onSwipeReply: () => void; onReplyPreviewPress: () => void; myUserId: number | null; isRead: boolean; isPinned: boolean; isHighlighted: boolean;
   onAvatarPress: () => void; onRetry: () => void;
 }) {
   const pan = useRef(new Animated.ValueXY()).current;
@@ -119,10 +142,22 @@ function MessageRow({
     })
   ).current;
 
-  const forwarded = !item.deleted_at && isForwardedBody(item.body ?? '');
+  // Web now stamps a real `is_forwarded` DB column on send (migration 090) —
+  // check that first. The zero-width-marker fallback stays for messages
+  // forwarded before this change (or from an un-updated client) so they don't
+  // silently lose their tag.
+  const forwarded = !item.deleted_at && (!!item.is_forwarded || isForwardedBody(item.body ?? ''));
+  // Mention tokens (@[id:Name]) stay intact here — renderMentionText below
+  // needs them present to render the highlighted "@Name" span; stripping
+  // them earlier would leave nothing for it to detect.
   const body: string = item.deleted_at ? 'This message was deleted' : stripAttachmentMarkers(stripForwardMarker(item.body ?? ''));
   const isLong = !item.deleted_at && body.length > COLLAPSE_LIMIT;
   const displayBody = isLong && !expanded ? `${body.slice(0, COLLAPSE_LIMIT)}…` : body;
+
+  const replyBody = item.reply_to
+    ? stripMentionTokens(stripAttachmentMarkers(stripForwardMarker(item.reply_to.body ?? '')))
+    : '';
+  const replyFallback = replyAttachmentLabel(item.reply_to?.attachments?.[0]);
 
   return (
     <View style={[s.swipeWrap, isHighlighted && s.swipeWrapHighlighted]}>
@@ -159,12 +194,16 @@ function MessageRow({
               </View>
             )}
             {item.reply_to && (
-              <View style={[s.replyQuote, isMine && s.replyQuoteMine]}>
+              <TouchableOpacity
+                style={[s.replyQuote, isMine && s.replyQuoteMine]}
+                onPress={onReplyPreviewPress}
+                activeOpacity={0.7}
+              >
                 <Text style={[s.replyQuoteSender, isMine && s.metaTagMine]} numberOfLines={1}>{item.reply_to.sender?.name ?? 'Unknown'}</Text>
                 <Text style={[s.replyQuoteBody, isMine && s.metaTagMine]} numberOfLines={1}>
-                  {item.reply_to.deleted_at ? 'This message was deleted' : stripAttachmentMarkers(stripForwardMarker(item.reply_to.body ?? ''))}
+                  {item.reply_to.deleted_at ? 'This message was deleted' : (replyBody || (replyFallback ? `📎 ${replyFallback}` : ''))}
                 </Text>
-              </View>
+              </TouchableOpacity>
             )}
             {!!displayBody && (
               looksTabular(displayBody) ? (
@@ -172,7 +211,9 @@ function MessageRow({
                   <Text style={[s.bubbleText, s.bubbleTextMono, isMine && s.bubbleTextMine]}>{displayBody}</Text>
                 </ScrollView>
               ) : (
-                <Text style={[s.bubbleText, isMine && s.bubbleTextMine]}>{displayBody}</Text>
+                <Text style={[s.bubbleText, isMine && s.bubbleTextMine]}>
+                  {renderMentionText(displayBody, isMine ? s.mentionChipMine : s.mentionChip, isMine ? s.linkChipMine : undefined)}
+                </Text>
               )
             )}
             {isLong && (
@@ -304,15 +345,31 @@ export default function ChatThreadScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState('');
+  // @mention autocomplete for the compose box — parity with web's Chat.jsx
+  // (@mention for all chats). Members come from the whole workspace, not just
+  // this conversation (fix 254e2f79). Inserts the same `@[id:Name]` token the
+  // rest of the app renders as a chip via renderMentionText.
+  const [mentionSel, setMentionSel] = useState({ start: 0, end: 0 });
+  const [mentionMembers, setMentionMembers] = useState<{ id: number; name: string; photoUrl?: string | null }[]>([]);
+  const mentionMembersLoadedRef = useRef(false);
+  const [mentionBlurred, setMentionBlurred] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<PickedFile[]>([]);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  // Matches web: editing can add/remove attachments too, not just body text.
+  // editingAttachments is the message's existing attachments as of entering
+  // edit mode; removedAttachmentIds tracks which of those the user X'd out
+  // (still shown, struck through, until Save actually removes them —
+  // matches AttachmentDisplay's onDelete behavior on web).
+  const [editingAttachments, setEditingAttachments] = useState<any[]>([]);
+  const [removedAttachmentIds, setRemovedAttachmentIds] = useState<number[]>([]);
   // Stashes whatever the user had been composing before they tapped "Edit" on
   // an older message (which repurposes `text` for the edit body), so cancelling
   // or finishing that edit restores it instead of losing an in-progress draft.
   const preEditTextRef = useRef('');
   const [connected, setConnected] = useState(false);
   const [reactionTargetId, setReactionTargetId] = useState<number | null>(null);
+  const [showAllReactions, setShowAllReactions] = useState(false);
   const [reactionAnchor, setReactionAnchor] = useState<{ x: number; y: number } | null>(null);
   const [nudging, setNudging] = useState(false);
   const [replyTo, setReplyTo] = useState<any | null>(null);
@@ -321,6 +378,7 @@ export default function ChatThreadScreen() {
 
   const [conv, setConv] = useState<any>(null);
   const [pinnedMessages, setPinnedMessages] = useState<any[]>([]);
+  const [pinBannerIndex, setPinBannerIndex] = useState(0);
   const [highlightedMessageId, setHighlightedMessageId] = useState<number | null>(null);
   const highlightTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -329,6 +387,10 @@ export default function ChatThreadScreen() {
   const [searchingOlder, setSearchingOlder] = useState(false);
   const [memberReadAt, setMemberReadAt] = useState<Record<string, string>>({});
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
+  const [typingUserIds, setTypingUserIds] = useState<Set<string>>(new Set());
+  const [removedFromGroup, setRemovedFromGroup] = useState(false);
+  const [removedByName, setRemovedByName] = useState<string | null>(null);
+  const typingStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [muted, setMuted] = useState(false);
   const mutedRef = useRef(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -398,6 +460,42 @@ export default function ChatThreadScreen() {
   // so this must (a) only show the full-screen spinner on the very first load,
   // and (b) not blindly replace `messages` with just the latest page, which would
   // silently discard any older history the user had paged in via "Load more".
+  // Always-current mirror of `messages` so markRead() can read the newest id
+  // without depending on a state-updater side effect (which React only runs
+  // eagerly when no other update to that state is pending — unreliable right
+  // after a setMessages() call, e.g. inside load()).
+  const messagesRef = useRef<any[]>([]);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+
+  // Mark this conversation read — mirrors web's markRead(): always sends a
+  // last_read_message_id (the server's unread count is computed off that
+  // cursor whenever it's set, so a timestamp-only write leaves the thread
+  // showing unread on web), and falls back to the HTTP /read endpoint when
+  // the socket isn't connected instead of silently doing nothing. Pass an
+  // explicit id when the caller already knows the newest message (initial
+  // load, a just-arrived socket message) since messagesRef may not have it
+  // yet at that instant.
+  const markRead = useCallback((explicitLastId?: number | null) => {
+    let lastReadMessageId = explicitLastId ?? null;
+    if (lastReadMessageId == null) {
+      const realIds = messagesRef.current
+        .filter((m) => typeof m.id === 'number' && !m._pending)
+        .map((m) => m.id as number);
+      lastReadMessageId = realIds.length ? Math.max(...realIds) : null;
+    }
+    const socket = getSocket();
+    // The server's mark_read handler early-returns unless the socket has
+    // actually joined (socket.appId is set on join) — so "connected" isn't
+    // enough; if it isn't joined yet, go straight to HTTP, which always works.
+    if (socket?.connected && socketJoinedRef.current) {
+      socket.emit('mark_read', { conversation_id: params.conversationId, last_read_message_id: lastReadMessageId });
+    } else {
+      api.chat.markConversationRead(params.appId, params.conversationId, lastReadMessageId).catch(() => {});
+    }
+  }, [params.appId, params.conversationId, api]);
+  const markReadRef = useRef(markRead);
+  useEffect(() => { markReadRef.current = markRead; }, [markRead]);
+
   const load = useCallback(async () => {
     const isRefocus = hasLoadedRef.current;
     if (!isRefocus) setLoading(true);
@@ -433,6 +531,17 @@ export default function ChatThreadScreen() {
       }
       setMemberReadAt(readMap);
       setError(null);
+      // Mark read as soon as the thread's messages are in hand, independent of
+      // the socket — markRead() picks the socket or the HTTP /read fallback.
+      // Without this, opening a thread while the socket is down (or before it
+      // connects) never synced the read cursor, so web kept showing the
+      // conversation unread until it was opened again with a live socket.
+      // Pass the newest id explicitly — messagesRef isn't updated yet here.
+      const initialRealIds = initialMsgs
+        .filter((m: any) => typeof m.id === 'number')
+        .map((m: any) => m.id as number);
+      const newestId = initialRealIds.length ? Math.max(...initialRealIds) : null;
+      if (AppState.currentState === 'active') markReadRef.current(newestId);
     } catch (err) {
       setError(apiErrorMessage(err, 'Could not load this conversation.'));
     } finally {
@@ -589,6 +698,19 @@ export default function ChatThreadScreen() {
 
     const onNewMsg = (msg: any) => {
       if (msg.conversation_id !== convId) return;
+      // Matches web: re-mark-read on every incoming message while this thread
+      // is open, not just on join. Without this, mark_read only fired once on
+      // connect, so a sender's tick never turned blue in real time for anyone
+      // who already had the thread open — only after they left and came back.
+      // Gated on the app actually being foregrounded — this screen stays
+      // mounted (and the socket connected) while backgrounded, so without this
+      // check a message would get silently marked read the instant it arrived
+      // even though nobody was actually looking at the phone.
+      if (AppState.currentState === 'active') {
+        // Pass the just-arrived id — messagesRef doesn't include it yet.
+        markReadRef.current(typeof msg.id === 'number' ? msg.id : undefined);
+      }
+      dismissNotificationsForConversation(convId);
       setMessages((prev) => {
         // Defensive de-dupe by id — belt-and-braces alongside the listener-leak
         // fix above, in case any other path (reconnect, etc.) ever double-emits.
@@ -645,6 +767,28 @@ export default function ChatThreadScreen() {
     const onPresence = (payload: any) => {
       setOnlineIds(new Set((payload.online ?? []).map((x: any) => String(x))));
     };
+    // Backend already sends the "X removed Y" system message via new_message
+    // for everyone else still in the group — this only needs to catch the
+    // "it was ME" case, which additionally locks the compose bar (matches
+    // web: contentEditable=false + disabled send/attach/emoji, not just a
+    // banner, since sends would otherwise just silently fail from here on).
+    const onMemberRemoved = (payload: any) => {
+      if (payload.conversation_id !== convId) return;
+      if (myUserIdRef.current != null && String(payload.user_id) === String(myUserIdRef.current)) {
+        setRemovedFromGroup(true);
+        setRemovedByName(payload.removed_by || null);
+      }
+    };
+    const onTyping = (payload: any) => {
+      if (payload.conversation_id !== convId) return;
+      if (myUserIdRef.current != null && String(payload.user_id) === String(myUserIdRef.current)) return;
+      setTypingUserIds((prev) => {
+        const next = new Set(prev);
+        if (payload.is_typing) next.add(String(payload.user_id));
+        else next.delete(String(payload.user_id));
+        return next;
+      });
+    };
 
     // Message listeners are registered exactly once per effect run, independent
     // of connect/reconnect timing — doJoin below must not re-register them (it
@@ -658,12 +802,23 @@ export default function ChatThreadScreen() {
     socket.on('message_pinned', onPinned);
     socket.on('read_receipt', onReadReceipt);
     socket.on('presence_update', onPresence);
+    socket.on('typing', onTyping);
+    socket.on('member_removed', onMemberRemoved);
 
     const doJoin = () => {
       setConnected(true);
       socketJoinedRef.current = false; // server hasn't ack'd this join yet
       socket.emit('join', { appId: params.appId });
-      socket.emit('mark_read', { conversation_id: convId });
+      // Gated on foreground — 'connect' (and so doJoin) refires on every
+      // reconnect, which Android triggers constantly in the background
+      // (doze, screen lock, network blips). Without this check, those
+      // reconnects kept bumping last_read_at to "now" purely from
+      // connectivity churn, making a message from someone else appear
+      // already-read on their end before they'd actually looked at it.
+      if (AppState.currentState === 'active') {
+        markReadRef.current();
+      }
+      dismissNotificationsForConversation(convId);
       socket.emit('get_presence');
     };
     if (socket.connected) doJoin();
@@ -681,6 +836,10 @@ export default function ChatThreadScreen() {
     // was missed while disconnected and flush anything still waiting to send.
     const onJoined = () => {
       socketJoinedRef.current = true;
+      // Now that the room is actually joined, re-mark-read over the socket so
+      // a read_receipt broadcasts live to the other members (the earlier
+      // doJoin() call fell back to HTTP because the join wasn't acked yet).
+      if (AppState.currentState === 'active') markReadRef.current();
       setMessages((prev) => {
         const lastReal = [...prev].reverse().find((m) => typeof m.id === 'number');
         if (lastReal) {
@@ -721,7 +880,11 @@ export default function ChatThreadScreen() {
       socket.off('message_pinned', onPinned);
       socket.off('read_receipt', onReadReceipt);
       socket.off('presence_update', onPresence);
+      socket.off('typing', onTyping);
+      socket.off('member_removed', onMemberRemoved);
       socket.off('disconnect', onDisconnect);
+      if (typingStopTimerRef.current) clearTimeout(typingStopTimerRef.current);
+      if (socket.connected) socket.emit('typing', { conversation_id: convId, is_typing: false });
     };
   // getToken/shakeBell are intentionally excluded — read via getTokenRef and a
   // stable useCallback respectively — so this only (re)joins on conversation change.
@@ -763,6 +926,70 @@ export default function ChatThreadScreen() {
   };
 
   const removePendingFile = (i: number) => setPendingFiles((prev) => prev.filter((_, idx) => idx !== i));
+
+  // Matches web: emit is_typing:true on every keystroke, then a 2s
+  // no-further-keystroke timer flips it back to false. No client-side
+  // safety timeout beyond that — same as web, trusting the false event
+  // (and this screen's own unmount cleanup below) to clear it.
+  const handleTextChange = (v: string) => {
+    setText(v);
+    setMentionBlurred(false);
+    const socket = getSocket();
+    if (socket?.connected && socketJoinedRef.current) {
+      socket.emit('typing', { conversation_id: params.conversationId, is_typing: true });
+      if (typingStopTimerRef.current) clearTimeout(typingStopTimerRef.current);
+      typingStopTimerRef.current = setTimeout(() => {
+        socket.emit('typing', { conversation_id: params.conversationId, is_typing: false });
+      }, 2000);
+    }
+  };
+
+  // Text between the last "@" before the cursor and the cursor, while that
+  // span has no whitespace — same rule as the Feed's MentionCommentInput.
+  const mentionQuery = useMemo(() => {
+    if (mentionBlurred) return null;
+    const upToCursor = text.slice(0, mentionSel.start);
+    const at = upToCursor.lastIndexOf('@');
+    if (at === -1) return null;
+    const between = upToCursor.slice(at + 1);
+    // No whitespace between the "@" and the cursor — and the "@" isn't the
+    // start of an already-inserted @[id:Name] token (its "] " trailing space
+    // normally covers this, but a single-word name pasted without one might not).
+    if (/\s/.test(between) || /^\[\d+:/.test(between)) return null;
+    return between;
+  }, [text, mentionSel, mentionBlurred]);
+
+  const loadMentionMembers = useCallback(() => {
+    if (mentionMembersLoadedRef.current) return;
+    mentionMembersLoadedRef.current = true;
+    api.workspace.getMembers(params.appId).then((r: any) => {
+      const items: any[] = r.data?.items ?? r.data ?? [];
+      setMentionMembers(items.map((m) => ({
+        id: m.user_id ?? m.id,
+        name: `${m.first_name ?? ''} ${m.last_name ?? ''}`.trim() || m.email || 'Member',
+        photoUrl: m.photo_url,
+      })));
+    }).catch(() => {});
+  }, [api, params.appId]);
+
+  useEffect(() => { if (mentionQuery != null) loadMentionMembers(); }, [mentionQuery != null, loadMentionMembers]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const mentionMatches = useMemo(() => {
+    if (mentionQuery == null) return [];
+    const q = mentionQuery.toLowerCase();
+    return mentionMembers.filter((m) => m.name.toLowerCase().includes(q)).slice(0, 6);
+  }, [mentionQuery, mentionMembers]);
+
+  const pickMention = (m: { id: number; name: string }) => {
+    const upToCursor = text.slice(0, mentionSel.start);
+    const at = upToCursor.lastIndexOf('@');
+    const before = text.slice(0, at);
+    const after = text.slice(mentionSel.start);
+    const token = `@[${m.id}:${m.name}] `;
+    setText(before + token + after);
+    const pos = before.length + token.length;
+    setMentionSel({ start: pos, end: pos });
+  };
 
   // requestRecordingPermissionsAsync/setAudioModeAsync/prepareToRecordAsync are
   // all real awaits (permission dialog, native session setup) — recorder.record()
@@ -856,12 +1083,37 @@ export default function ChatThreadScreen() {
     if (sendingRef.current) return;
     const filesToSend = overrideFile ? [overrideFile] : pendingFiles;
     const trimmed = overrideFile ? '' : text.trim();
-    if ((!trimmed && filesToSend.length === 0) || trimmed.length > CHAR_LIMIT) return;
+    const remainingExisting = editingAttachments.filter((a) => !removedAttachmentIds.includes(a.id));
     if (editingId) {
-      api.chat.editMessage(params.appId, editingId, trimmed)
-        .catch((err) => showAlert('Could not edit message', apiErrorMessage(err)));
+      if (!trimmed && filesToSend.length === 0 && remainingExisting.length === 0) return;
+    } else if ((!trimmed && filesToSend.length === 0) || trimmed.length > CHAR_LIMIT) {
+      return;
+    }
+    if (typingStopTimerRef.current) { clearTimeout(typingStopTimerRef.current); typingStopTimerRef.current = null; }
+    const socketForTyping = getSocket();
+    if (socketForTyping?.connected) socketForTyping.emit('typing', { conversation_id: params.conversationId, is_typing: false });
+    if (editingId) {
+      const savingId = editingId;
       setEditingId(null);
       setText(preEditTextRef.current);
+      setEditingAttachments([]);
+      const filesToUpload = pendingFiles;
+      setPendingFiles([]);
+      (async () => {
+        try {
+          let addAttachments: Record<string, unknown>[] = [];
+          if (filesToUpload.length > 0) {
+            addAttachments = await uploadAttachments(api, params.appId, 'chat', filesToUpload);
+          }
+          await api.chat.editMessage(params.appId, savingId, trimmed, {
+            add_attachments: addAttachments,
+            remove_attachment_ids: removedAttachmentIds,
+          });
+        } catch (err) {
+          showAlert('Could not edit message', apiErrorMessage(err));
+        }
+      })();
+      setRemovedAttachmentIds([]);
       return;
     }
     sendingRef.current = true;
@@ -922,16 +1174,14 @@ export default function ChatThreadScreen() {
     queueSend(m.id, m.body, m.reply_to?.id ?? null, m.attachments ?? []);
   };
 
-  // Only one reaction per user at a time — switching emoji removes the previous one first.
+  // Backend toggles a single (message, user, emoji) row independently — a
+  // user can hold several simultaneous reactions on one message, same as
+  // Feed's reactions (fixed there for the same reason: this used to un-react
+  // whatever emoji was already there before adding the new one, silently
+  // dropping any other reaction the user already had on the message).
   const react = async (messageId: number, emoji: string) => {
     setReactionTargetId(null);
-    const msg = messages.find((m) => m.id === messageId);
-    const myReaction = (msg?.reactions ?? []).find((r: any) =>
-      r.user_ids?.some((uid: number) => String(uid) === String(myUserIdRef.current)));
     try {
-      if (myReaction && myReaction.emoji !== emoji) {
-        await api.chat.reactToMessage(params.appId, messageId, myReaction.emoji);
-      }
       const res = await api.chat.reactToMessage(params.appId, messageId, emoji);
       // Apply from this response immediately rather than waiting on the
       // message_reaction socket echo — that event can lag (or get missed on a
@@ -1134,6 +1384,12 @@ export default function ChatThreadScreen() {
         }),
       },
     ];
+    if (!m.deleted_at && !!m.body) {
+      options.push({
+        text: 'Copy', icon: 'copy-outline',
+        onPress: () => Clipboard.setStringAsync(stripMentionTokens(stripAttachmentMarkers(stripForwardMarker(m.body ?? '')))),
+      });
+    }
     const attachments: any[] = m.attachments ?? [];
     if (attachments.length === 1) {
       options.push({ text: 'Download', icon: 'download-outline', onPress: () => downloadAttachment(attachments[0]) });
@@ -1143,7 +1399,16 @@ export default function ChatThreadScreen() {
       }
     }
     if (isMine) {
-      options.push({ text: 'Edit', icon: 'create-outline', onPress: () => { preEditTextRef.current = text; setEditingId(m.id); setText(stripAttachmentMarkers(stripForwardMarker(m.body ?? ''))); setPendingFiles([]); } });
+      options.push({
+        text: 'Edit', icon: 'create-outline', onPress: () => {
+          preEditTextRef.current = text;
+          setEditingId(m.id);
+          setText(stripAttachmentMarkers(stripForwardMarker(m.body ?? '')));
+          setPendingFiles([]);
+          setEditingAttachments(m.attachments ?? []);
+          setRemovedAttachmentIds([]);
+        },
+      });
       options.push({
         text: 'Delete', icon: 'trash-outline', style: 'destructive',
         onPress: () => api.chat.deleteMessage(params.appId, m.id).catch((err) => showAlert('Could not delete message', apiErrorMessage(err))),
@@ -1180,6 +1445,7 @@ export default function ChatThreadScreen() {
 
   const someoneOnline = !isGroup && !isNote && otherMembers.some((m: any) => onlineIds.has(String(m.id)));
   const charCount = text.length;
+  const replyBarAttachmentFallback = replyTo ? replyAttachmentLabel(replyTo.attachments?.[0]) : null;
 
   if (loading) return <View style={{ flex: 1, backgroundColor: colors.background }}><ActivityIndicator style={{ flex: 1 }} color={colors.primary} /></View>;
   if (error) return <LoadError message={error} onRetry={load} />;
@@ -1257,15 +1523,38 @@ export default function ChatThreadScreen() {
         </View>
       )}
 
-      {pinnedMessages.length > 0 && (
-        <TouchableOpacity style={s.pinBanner} onPress={() => scrollToMessage(pinnedMessages[0].id)} activeOpacity={0.7}>
-          <Ionicons name="pin" size={14} color={colors.warning} />
-          <Text style={s.pinBannerTxt} numberOfLines={1}>
-            {pinnedMessages[0].deleted_at ? 'This message was deleted' : stripAttachmentMarkers(stripForwardMarker(pinnedMessages[0].body ?? ''))}
-          </Text>
-          {pinnedMessages.length > 1 && <Text style={s.pinBannerCount}>+{pinnedMessages.length - 1}</Text>}
-        </TouchableOpacity>
-      )}
+      {pinnedMessages.length > 0 && (() => {
+        // Matches web: prev/next chevrons + index counter to page through up
+        // to 3 pins, and a direct unpin (X) on the banner — previously this
+        // only ever showed pinnedMessages[0] with a "+N" badge, so reaching
+        // the 2nd/3rd pin meant scrolling/searching for it manually.
+        const idx = Math.min(pinBannerIndex, pinnedMessages.length - 1);
+        const current = pinnedMessages[idx];
+        return (
+          <View style={s.pinBanner}>
+            {pinnedMessages.length > 1 && (
+              <TouchableOpacity onPress={() => setPinBannerIndex((i) => (i - 1 + pinnedMessages.length) % pinnedMessages.length)} hitSlop={6}>
+                <Ionicons name="chevron-back" size={14} color={colors.textMuted} />
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={s.pinBannerBody} onPress={() => scrollToMessage(current.id)} activeOpacity={0.7}>
+              <Ionicons name="pin" size={14} color={colors.warning} />
+              <Text style={s.pinBannerTxt} numberOfLines={1}>
+                {current.deleted_at ? 'This message was deleted' : stripMentionTokens(stripAttachmentMarkers(stripForwardMarker(current.body ?? '')))}
+              </Text>
+              {pinnedMessages.length > 1 && <Text style={s.pinBannerCount}>{idx + 1}/{pinnedMessages.length}</Text>}
+            </TouchableOpacity>
+            {pinnedMessages.length > 1 && (
+              <TouchableOpacity onPress={() => setPinBannerIndex((i) => (i + 1) % pinnedMessages.length)} hitSlop={6}>
+                <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity onPress={() => togglePin(current.id)} hitSlop={6}>
+              <Ionicons name="close" size={15} color={colors.textMuted} />
+            </TouchableOpacity>
+          </View>
+        );
+      })()}
 
       <FlatList
         ref={listRef}
@@ -1343,9 +1632,11 @@ export default function ChatThreadScreen() {
                 onQuickReact={(e) => {
                   const { pageX, pageY } = e.nativeEvent;
                   setReactionAnchor({ x: pageX, y: pageY });
+                  setShowAllReactions(false);
                   setReactionTargetId(item.id);
                 }}
                 onSwipeReply={() => { if (!item.deleted_at && !item._pending) setReplyTo(item); }}
+                onReplyPreviewPress={() => { if (item.reply_to && !item.reply_to.deleted_at) scrollToMessage(item.reply_to.id); }}
                 onAvatarPress={() => setProfileUser({
                   id: item.sender_id,
                   name: item.sender?.name ?? 'Unknown',
@@ -1359,11 +1650,26 @@ export default function ChatThreadScreen() {
         }}
       />
 
+      {typingUserIds.size > 0 && (() => {
+        const names = otherMembers
+          .filter((m: any) => typingUserIds.has(String(m.id)))
+          .map((m: any) => (m.name ?? 'Someone').split(' ')[0]);
+        if (names.length === 0) return null;
+        const label = names.length === 1 ? `${names[0]} is typing…`
+          : names.length === 2 ? `${names[0]} and ${names[1]} are typing…`
+          : `${names.length} people are typing…`;
+        return (
+          <View style={s.typingBar}>
+            <Text style={s.typingTxt}>{label}</Text>
+          </View>
+        );
+      })()}
+
       {editingId && (
         <View style={s.editingBar}>
           <Ionicons name="create-outline" size={14} color={colors.primary} />
           <Text style={s.editingTxt}>Editing message</Text>
-          <TouchableOpacity onPress={() => { setEditingId(null); setText(preEditTextRef.current); }}>
+          <TouchableOpacity onPress={() => { setEditingId(null); setText(preEditTextRef.current); setEditingAttachments([]); setRemovedAttachmentIds([]); setPendingFiles([]); }}>
             <Ionicons name="close" size={16} color={colors.textMuted} />
           </TouchableOpacity>
         </View>
@@ -1374,7 +1680,10 @@ export default function ChatThreadScreen() {
           <Ionicons name="arrow-undo" size={14} color={colors.primary} />
           <View style={{ flex: 1 }}>
             <Text style={s.replyBarSender}>{replyTo.sender?.name ?? 'Unknown'}</Text>
-            <Text style={s.replyBarBody} numberOfLines={1}>{stripAttachmentMarkers(stripForwardMarker(replyTo.body ?? ''))}</Text>
+            <Text style={s.replyBarBody} numberOfLines={1}>
+              {stripMentionTokens(stripAttachmentMarkers(stripForwardMarker(replyTo.body ?? ''))) ||
+                (replyBarAttachmentFallback ? `📎 ${replyBarAttachmentFallback}` : '')}
+            </Text>
           </View>
           <TouchableOpacity onPress={() => setReplyTo(null)}>
             <Ionicons name="close" size={16} color={colors.textMuted} />
@@ -1388,8 +1697,54 @@ export default function ChatThreadScreen() {
         </Text>
       )}
 
+      {editingId && editingAttachments.length > 0 && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.editAttRow}>
+          {editingAttachments.map((a) => {
+            const removed = removedAttachmentIds.includes(a.id);
+            return (
+              <TouchableOpacity
+                key={a.id}
+                style={[s.editAttChip, removed && s.editAttChipRemoved]}
+                onPress={() => setRemovedAttachmentIds((prev) => (removed ? prev.filter((id) => id !== a.id) : [...prev, a.id]))}
+              >
+                <Ionicons name="document-attach-outline" size={13} color={removed ? colors.textMuted : colors.primary} />
+                <Text style={[s.editAttChipTxt, removed && s.editAttChipTxtRemoved]} numberOfLines={1}>{a.file_name}</Text>
+                <Ionicons name={removed ? 'add-circle-outline' : 'close-circle'} size={15} color={removed ? colors.success : colors.gray400} />
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      )}
       <AttachmentChips files={pendingFiles} onRemove={removePendingFile} uploading={uploadingAttachments} containerStyle={{ paddingHorizontal: 16, paddingBottom: 8 }} />
 
+      {removedFromGroup ? (
+        // Matches web: the whole compose bar is replaced, not just disabled
+        // in place — sends from here on would just fail silently otherwise,
+        // with no explanation why.
+        <View style={s.removedBar}>
+          <Ionicons name="lock-closed-outline" size={14} color={colors.textMuted} />
+          <Text style={s.removedBarTxt}>
+            {removedByName ? `${removedByName} removed you from this group` : "You're no longer a participant in this group"}
+          </Text>
+        </View>
+      ) : (
+      <>
+      {/* @mention autocomplete — floats above the input bar */}
+      {mentionQuery != null && mentionMatches.length > 0 && (
+        <View style={s.mentionDropdown}>
+          <FlatList
+            data={mentionMatches}
+            keyExtractor={(m) => String(m.id)}
+            keyboardShouldPersistTaps="handled"
+            renderItem={({ item }) => (
+              <TouchableOpacity style={s.mentionRow} onPress={() => pickMention(item)}>
+                <Avatar name={item.name} photoUrl={item.photoUrl} size={22} />
+                <Text style={s.mentionRowText} numberOfLines={1}>{item.name}</Text>
+              </TouchableOpacity>
+            )}
+          />
+        </View>
+      )}
       {/* No insets.bottom — this screen sits inside the tab navigator, whose
           tabBarStyle already reserves the device's bottom safe area below it. */}
       <View style={[s.inputBar, { paddingBottom: 8 }]}>
@@ -1412,17 +1767,18 @@ export default function ChatThreadScreen() {
           </>
         ) : (
           <>
-            {!editingId && (
-              <TouchableOpacity style={s.attachBtn} onPress={pickFiles} disabled={uploadingAttachments}>
-                <Ionicons name="attach" size={20} color={colors.textMuted} />
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity style={s.attachBtn} onPress={pickFiles} disabled={uploadingAttachments}>
+              <Ionicons name="attach" size={20} color={colors.textMuted} />
+            </TouchableOpacity>
             <TextInput
               style={s.input}
               placeholder={editingId ? 'Edit message...' : 'Message...'}
               placeholderTextColor={colors.textMuted}
               value={text}
-              onChangeText={setText}
+              onChangeText={handleTextChange}
+              onSelectionChange={(e) => setMentionSel(e.nativeEvent.selection)}
+              onFocus={() => { setMentionBlurred(false); loadMentionMembers(); }}
+              onBlur={() => setMentionBlurred(true)}
               multiline
               maxLength={CHAR_LIMIT}
             />
@@ -1444,16 +1800,33 @@ export default function ChatThreadScreen() {
           </>
         )}
       </View>
+      </>
+      )}
 
       <Modal visible={reactionTargetId != null} transparent animationType="fade" onRequestClose={() => setReactionTargetId(null)}>
         <TouchableOpacity style={s.reactOverlayTop} activeOpacity={1} onPress={() => setReactionTargetId(null)}>
-          <View style={[s.reactPicker, reactPickerPosition(reactionAnchor)]}>
-            {QUICK_REACTIONS.map((e) => (
-              <TouchableOpacity key={e} style={s.reactPickerBtn} onPress={() => reactionTargetId != null && react(reactionTargetId, e)}>
-                <Text style={s.reactPickerEmoji}>{e}</Text>
+          {showAllReactions ? (
+            <View style={[s.reactPickerFull, reactPickerPosition(reactionAnchor)]}>
+              <ScrollView contentContainerStyle={s.reactPickerFullGrid} showsVerticalScrollIndicator={false}>
+                {ALL_REACTIONS.map((e) => (
+                  <TouchableOpacity key={e} style={s.reactPickerFullBtn} onPress={() => reactionTargetId != null && react(reactionTargetId, e)}>
+                    <Text style={s.reactPickerEmoji}>{e}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          ) : (
+            <View style={[s.reactPicker, reactPickerPosition(reactionAnchor)]}>
+              {QUICK_REACTIONS.map((e) => (
+                <TouchableOpacity key={e} style={s.reactPickerBtn} onPress={() => reactionTargetId != null && react(reactionTargetId, e)}>
+                  <Text style={s.reactPickerEmoji}>{e}</Text>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity style={s.reactPickerBtn} onPress={() => setShowAllReactions(true)}>
+                <Ionicons name="add" size={18} color={colors.textSecondary} />
               </TouchableOpacity>
-            ))}
-          </View>
+            </View>
+          )}
         </TouchableOpacity>
       </Modal>
       <UserProfileModal user={profileUser} onClose={() => setProfileUser(null)} />
@@ -1483,6 +1856,7 @@ function makeStyles(c: AppColors) {
       paddingHorizontal: 16, paddingVertical: 8, backgroundColor: c.warningLight,
       borderBottomWidth: 1, borderBottomColor: c.border,
     },
+    pinBannerBody: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
     pinBannerTxt: { flex: 1, fontSize: 12, color: c.textPrimary, fontWeight: '600' },
     pinBannerCount: { fontSize: 11, color: c.warning, fontWeight: '700' },
     list: { padding: 16, paddingBottom: 8 },
@@ -1528,6 +1902,13 @@ function makeStyles(c: AppColors) {
     bubbleText: { fontSize: 14, color: c.textPrimary, lineHeight: 19 },
     bubbleTextMono: { fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', fontSize: 12, lineHeight: 17 },
     bubbleTextMine: { color: '#fff' },
+    mentionChip: { fontWeight: '700', color: c.primary },
+    mentionChipMine: { fontWeight: '700', color: '#fff', textDecorationLine: 'underline' },
+    // Link color for a "mine" bubble (colored background) needs the same
+    // white treatment as its mentions — the default blue link color used
+    // everywhere else would be nearly invisible against the primary-colored
+    // bubble fill.
+    linkChipMine: { color: '#fff', textDecorationLine: 'underline', fontWeight: '600' },
     viewMoreTxt: { fontSize: 11, fontWeight: '700', color: c.primary, marginTop: 2 },
     metaRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3, alignSelf: 'flex-end' },
     editedTag: { fontSize: 9, color: c.textMuted, fontStyle: 'italic' },
@@ -1546,6 +1927,23 @@ function makeStyles(c: AppColors) {
       paddingHorizontal: 16, paddingVertical: 6, backgroundColor: c.primaryLight,
     },
     editingTxt: { flex: 1, fontSize: 11, color: c.primary, fontWeight: '600' },
+    typingBar: { paddingHorizontal: 16, paddingVertical: 4, backgroundColor: c.surface },
+    typingTxt: { fontSize: 12, fontWeight: '700', color: c.primary },
+    removedBar: {
+      flexDirection: 'row', alignItems: 'center', gap: 8,
+      paddingHorizontal: 16, paddingVertical: 14, backgroundColor: c.gray50,
+      borderTopWidth: 1, borderTopColor: c.border,
+    },
+    removedBarTxt: { flex: 1, fontSize: 12.5, color: c.textMuted, fontWeight: '600' },
+    editAttRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingBottom: 8 },
+    editAttChip: {
+      flexDirection: 'row', alignItems: 'center', gap: 6,
+      backgroundColor: c.primaryLight, borderRadius: 16,
+      paddingHorizontal: 10, paddingVertical: 6, maxWidth: 160,
+    },
+    editAttChipRemoved: { backgroundColor: c.gray100, opacity: 0.7 },
+    editAttChipTxt: { fontSize: 12, color: c.textPrimary, flexShrink: 1 },
+    editAttChipTxtRemoved: { color: c.textMuted, textDecorationLine: 'line-through' },
     charCount: { textAlign: 'right', fontSize: 10, color: c.textMuted, paddingHorizontal: 16, paddingTop: 4, backgroundColor: c.surface },
     charCountWarn: { color: c.warning, fontWeight: '700' },
     charCountMax: { color: c.danger, fontWeight: '700' },
@@ -1560,6 +1958,13 @@ function makeStyles(c: AppColors) {
     },
     sendBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: c.primary, alignItems: 'center', justifyContent: 'center' },
     sendBtnDisabled: { backgroundColor: c.gray300 },
+    mentionDropdown: {
+      marginHorizontal: 16, marginBottom: 6,
+      backgroundColor: c.surface, borderRadius: 10, borderWidth: 1, borderColor: c.border,
+      maxHeight: 190, overflow: 'hidden',
+    },
+    mentionRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, paddingVertical: 8 },
+    mentionRowText: { fontSize: 13, fontWeight: '600', color: c.textPrimary },
     attachBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
     recordingIndicator: {
       flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8,
@@ -1576,5 +1981,12 @@ function makeStyles(c: AppColors) {
     },
     reactPickerBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
     reactPickerEmoji: { fontSize: 24 },
+    reactPickerFull: {
+      width: 260, maxHeight: 260, backgroundColor: c.surface, borderRadius: 16,
+      padding: 8, borderWidth: 1, borderColor: c.border,
+      shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 8,
+    },
+    reactPickerFullGrid: { flexDirection: 'row', flexWrap: 'wrap' },
+    reactPickerFullBtn: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center' },
   });
 }

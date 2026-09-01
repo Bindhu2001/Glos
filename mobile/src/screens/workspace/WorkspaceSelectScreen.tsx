@@ -39,9 +39,10 @@ const APP_PALETTE = [
   '#1a56db', '#0e9f6e', '#c27803', '#e02424', '#7e3af2', '#0694a2',
 ];
 
-function colorForName(name: string): string {
+function colorForName(name: string | null | undefined): string {
+  const safeName = name || '?';
   let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  for (let i = 0; i < safeName.length; i++) hash = safeName.charCodeAt(i) + ((hash << 5) - hash);
   return APP_PALETTE[Math.abs(hash) % APP_PALETTE.length];
 }
 

@@ -119,7 +119,7 @@ export default function ServicesListScreen() {
                   <Ionicons name="construct-outline" size={20} color="#4f46e5" />
                 </View>
                 <View style={s.cardBody}>
-                  <Text style={s.cardTitle}>{svc.service_name}</Text>
+                  <Text style={s.cardTitle} numberOfLines={2}>{svc.service_name}</Text>
                   <View style={s.metaRow}>
                     <Text style={s.codeText}>{svc.service_code}</Text>
                     <Text style={s.metaText}>{svc.normal_processing_days} day{svc.normal_processing_days !== 1 ? 's' : ''}</Text>
@@ -164,7 +164,7 @@ function makeStyles(c: AppColors) {
     empty: { alignItems: 'center', gap: 12, paddingTop: 60 },
     emptyText: { fontSize: 14, color: c.textMuted },
     card: {
-      flexDirection: 'row', alignItems: 'center', gap: 12,
+      flexDirection: 'row', alignItems: 'flex-start', gap: 12,
       backgroundColor: c.surface, borderRadius: 14, padding: 14,
       borderWidth: 1, borderColor: c.border,
     },

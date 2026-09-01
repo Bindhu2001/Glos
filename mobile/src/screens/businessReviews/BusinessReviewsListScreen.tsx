@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, ActivityIndicator, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, ActivityIndicator, RefreshControl, Modal, FlatList } from 'react-native';
 import Svg, { Circle, Text as SvgText } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -49,6 +49,12 @@ export default function BusinessReviewsListScreen() {
   const [viewMode, setViewMode] = useState<ViewMode>('calendar');
   const [cursor, setCursor] = useState(() => new Date());
 
+  // Matches web's BusinessReviewHub.jsx dashboard strip — pending reviews
+  // (any manager's, not month-scoped) plus the manager filter on that panel.
+  const [pendingReviews, setPendingReviews] = useState<any[]>([]);
+  const [pendingManagerFilter, setPendingManagerFilter] = useState<number | null>(null);
+  const [managerPickerOpen, setManagerPickerOpen] = useState(false);
+
   const hasLoadedRef = useRef(false);
 
   const load = useCallback(async (isRefresh = false) => {
@@ -84,6 +90,18 @@ export default function BusinessReviewsListScreen() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
+  const loadPending = useCallback(async () => {
+    if (!workspace?.id) return;
+    try {
+      const res = await api.businessReviews.dashboard(workspace.id, {});
+      setPendingReviews(res.data?.pending ?? []);
+    } catch {
+      setPendingReviews([]);
+    }
+  }, [workspace?.id]);
+
+  useFocusEffect(useCallback(() => { loadPending(); }, [loadPending]));
+
   const dailyByDay = useMemo(() => {
     const map = new Map<string, any>();
     for (const r of reviews) {
@@ -94,6 +112,32 @@ export default function BusinessReviewsListScreen() {
   }, [reviews]);
 
   const nonDaily = reviews.filter((r) => r.type !== 'daily');
+
+  // Matches web's dailyClosed/otherClosed/thisMonthTotal/completionRate —
+  // scoped to whichever month the calendar is currently showing, computed
+  // client-side since mobile loads all reviews in one shot rather than
+  // re-fetching per browsed month like web does.
+  const cursorYm = `${cursor.getFullYear()}-${pad(cursor.getMonth() + 1)}`;
+  const inCursorMonth = (r: any) => (r.review_date || r.period_start || '').slice(0, 7) === cursorYm;
+  const monthDaily = reviews.filter((r) => r.type === 'daily' && inCursorMonth(r));
+  const monthOther = reviews.filter((r) => r.type !== 'daily' && inCursorMonth(r));
+  const dailyClosed = monthDaily.filter((r) => r.status === 'closed').length;
+  const dailyOpen = monthDaily.length - dailyClosed;
+  const otherClosed = monthOther.filter((r) => r.status === 'closed').length;
+  const otherOpen = monthOther.length - otherClosed;
+  const thisMonthTotal = monthDaily.length + monthOther.length;
+  const completionRate = thisMonthTotal > 0 ? Math.round(((dailyClosed + otherClosed) / thisMonthTotal) * 100) : 0;
+
+  const pendingManagerOptions = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const r of pendingReviews) {
+      if (r.manager_user_id && r.manager?.name) map.set(r.manager_user_id, r.manager.name);
+    }
+    return [...map.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [pendingReviews]);
+  const visiblePendingReviews = pendingManagerFilter
+    ? pendingReviews.filter((r) => r.manager_user_id === pendingManagerFilter)
+    : pendingReviews;
 
   const firstOfMonth = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
   const daysInMonth = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0).getDate();
@@ -144,8 +188,79 @@ export default function BusinessReviewsListScreen() {
         <ScrollView
           contentContainerStyle={s.list}
           showsVerticalScrollIndicator={false}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(true); }} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(true); loadPending(); }} />}
         >
+          {/* Dashboard stat strip — matches web's 4 info cards */}
+          <View style={s.statRow}>
+            <View style={s.statTile}>
+              <Text style={s.statLabel}>Daily Check-Ins</Text>
+              <View style={s.statPairRow}>
+                <View><Text style={[s.statBig, { color: colors.success }]}>{dailyClosed}</Text><Text style={s.statSub}>Closed</Text></View>
+                <View><Text style={[s.statBig, { color: colors.warning }]}>{dailyOpen}</Text><Text style={s.statSub}>Open</Text></View>
+              </View>
+            </View>
+            <View style={s.statTile}>
+              <Text style={s.statLabel}>Other Reviews</Text>
+              <View style={s.statPairRow}>
+                <View><Text style={[s.statBig, { color: colors.success }]}>{otherClosed}</Text><Text style={s.statSub}>Closed</Text></View>
+                <View><Text style={[s.statBig, { color: colors.warning }]}>{otherOpen}</Text><Text style={s.statSub}>Open</Text></View>
+              </View>
+            </View>
+            <View style={s.statTile}>
+              <Text style={s.statLabel}>This Month</Text>
+              <Text style={[s.statBig, { color: '#8b5cf6' }]}>{thisMonthTotal}</Text>
+              <Text style={s.statSub}>Reviews Scheduled</Text>
+            </View>
+            <View style={s.statTile}>
+              <Text style={s.statLabel}>Completion Rate</Text>
+              <Text style={[s.statBig, { color: '#f97316' }]}>{completionRate}%</Text>
+              <Text style={s.statSub}>Across All Reviews</Text>
+            </View>
+          </View>
+
+          {/* Pending Reviews — not month-scoped, matches web's panel */}
+          {pendingReviews.length > 0 && (
+            <View style={s.pendingCard}>
+              <View style={s.pendingHead}>
+                <Text style={s.pendingTitle}>Pending Reviews</Text>
+                <Text style={s.pendingCount}>{visiblePendingReviews.length} open</Text>
+              </View>
+              {pendingManagerOptions.length > 1 && (
+                <TouchableOpacity style={s.pendingFilterBtn} onPress={() => setManagerPickerOpen(true)}>
+                  <Text style={s.pendingFilterTxt} numberOfLines={1}>
+                    {pendingManagerFilter ? pendingManagerOptions.find((m) => m.id === pendingManagerFilter)?.name : 'All Managers'}
+                  </Text>
+                  <Ionicons name="chevron-down" size={12} color={colors.textSecondary} />
+                </TouchableOpacity>
+              )}
+              {visiblePendingReviews.map((r) => {
+                const typeLabel = TYPE_LABELS[r.type] ?? r.type ?? 'Review';
+                const dateStr = r.review_date || r.period_start || '';
+                const rangeStr = r.period_start && r.period_end
+                  ? `${new Date(r.period_start).toLocaleDateString()} – ${new Date(r.period_end).toLocaleDateString()}`
+                  : (dateStr ? new Date(dateStr).toLocaleDateString() : '');
+                return (
+                  <TouchableOpacity
+                    key={r.id}
+                    style={s.pendingRow}
+                    onPress={() => navigation.navigate('BusinessReviewDetail', { reviewId: r.id, appId: workspace!.id })}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={s.pendingRange}>{rangeStr}</Text>
+                      <View style={s.metaRow}>
+                        {r.manager?.name ? <Text style={s.metaText}>Manager: {r.manager.name}</Text> : null}
+                        <Text style={s.metaText}>{typeLabel}</Text>
+                      </View>
+                    </View>
+                    <View style={[s.statusBadge, { backgroundColor: colors.warning + '18', borderColor: colors.warning + '44' }]}>
+                      <Text style={[s.statusText, { color: colors.warning }]}>{r.days_pending} day{r.days_pending === 1 ? '' : 's'} pending</Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
+
           {viewMode === 'calendar' && (
             <View style={s.calCard}>
               <View style={s.navRow}>
@@ -257,6 +372,31 @@ export default function BusinessReviewsListScreen() {
           )}
         </ScrollView>
       )}
+
+      <Modal visible={managerPickerOpen} transparent animationType="fade" onRequestClose={() => setManagerPickerOpen(false)}>
+        <TouchableOpacity style={s.pickerBackdrop} activeOpacity={1} onPress={() => setManagerPickerOpen(false)}>
+          <View style={s.pickerCard}>
+            <Text style={s.pickerCardTitle}>Filter by Manager</Text>
+            <FlatList
+              data={[{ id: null as number | null, name: 'All Managers' }, ...pendingManagerOptions]}
+              keyExtractor={(o) => String(o.id)}
+              style={{ maxHeight: 340 }}
+              renderItem={({ item }) => {
+                const active = item.id === pendingManagerFilter;
+                return (
+                  <TouchableOpacity
+                    style={[s.pickerOption, active && s.pickerOptionActive]}
+                    onPress={() => { setPendingManagerFilter(item.id); setManagerPickerOpen(false); }}
+                  >
+                    <Text style={[s.pickerOptionTxt, active && s.pickerOptionTxtActive]}>{item.name}</Text>
+                    {active && <Ionicons name="checkmark" size={16} color={colors.primary} />}
+                  </TouchableOpacity>
+                );
+              }}
+            />
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }
@@ -295,6 +435,40 @@ function makeStyles(c: AppColors) {
     metaText: { fontSize: 11, color: c.textMuted },
     statusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1 },
     statusText: { fontSize: 11, fontWeight: '700', textTransform: 'capitalize' },
+
+    statRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
+    statTile: {
+      flexGrow: 1, flexBasis: '47%', backgroundColor: c.surface, borderRadius: 12,
+      borderWidth: 1, borderColor: c.border, padding: 12,
+    },
+    statLabel: { fontSize: 11, fontWeight: '700', color: c.textMuted },
+    statPairRow: { flexDirection: 'row', gap: 20, marginTop: 6 },
+    statBig: { fontSize: 20, fontWeight: '800', marginTop: 4 },
+    statSub: { fontSize: 10, color: c.textMuted, marginTop: 1 },
+
+    pendingCard: { backgroundColor: c.surface, borderRadius: 14, borderWidth: 1, borderColor: c.border, padding: 14, marginBottom: 10 },
+    pendingHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    pendingTitle: { fontSize: 14, fontWeight: '700', color: c.textPrimary },
+    pendingCount: { fontSize: 12, color: c.textMuted },
+    pendingFilterBtn: {
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6,
+      backgroundColor: c.gray50, borderRadius: 8, borderWidth: 1, borderColor: c.border,
+      paddingHorizontal: 10, paddingVertical: 6, marginTop: 8, alignSelf: 'flex-start',
+    },
+    pendingFilterTxt: { fontSize: 12, fontWeight: '600', color: c.textSecondary, maxWidth: 140 },
+    pendingRow: {
+      flexDirection: 'row', alignItems: 'center', gap: 10,
+      paddingVertical: 10, borderTopWidth: 1, borderTopColor: c.border, marginTop: 10,
+    },
+    pendingRange: { fontSize: 12, fontWeight: '700', color: c.textPrimary },
+
+    pickerBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 24 },
+    pickerCard: { backgroundColor: c.surface, borderRadius: 14, padding: 12, maxHeight: 420 },
+    pickerCardTitle: { fontSize: 15, fontWeight: '700', color: c.textPrimary, marginBottom: 8, paddingHorizontal: 6 },
+    pickerOption: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, paddingHorizontal: 10, borderRadius: 8 },
+    pickerOptionActive: { backgroundColor: c.primaryLight },
+    pickerOptionTxt: { fontSize: 14, color: c.textPrimary, flex: 1 },
+    pickerOptionTxtActive: { color: c.primary, fontWeight: '700' },
 
     calCard: { backgroundColor: c.surface, borderRadius: 14, borderWidth: 1, borderColor: c.border, padding: 16 },
     navRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },

@@ -84,6 +84,28 @@ export function useApi() {
   const onWorkspaceRevokedRef = useRef(onWorkspaceRevoked);
   onWorkspaceRevokedRef.current = onWorkspaceRevoked;
 
+  // A 404 "App not found" means the workspace this session is pinned to has
+  // been deleted (or its id in storage is stale) — retrying the same request
+  // can never succeed, so offer a way straight to the workspace picker.
+  // Throttled so a burst of parallel 404s doesn't stack the modal.
+  const appMissingShownAtRef = useRef(0);
+  const onAppMissing = useCallback(() => {
+    const now = Date.now();
+    if (now - appMissingShownAtRef.current < 3000) return;
+    appMissingShownAtRef.current = now;
+    showAlert(
+      'Workspace unavailable',
+      'This workspace may have been removed or is no longer available. Switch to another workspace to continue.',
+      [
+        { text: 'Switch Workspace', onPress: () => { setWorkspace(null); } },
+        { text: 'Try Again', style: 'cancel' },
+      ],
+    );
+  }, [setWorkspace]);
+
+  const onAppMissingRef = useRef(onAppMissing);
+  onAppMissingRef.current = onAppMissing;
+
   const inflightTokenRef = useRef<Promise<string> | null>(null);
 
   // Clerk's getToken() silently refreshes the session token over the network
@@ -140,6 +162,7 @@ export function useApi() {
         photoUrl: u?.imageUrl ?? '',
       },
       getFreshToken,
+      () => onAppMissingRef.current(),
     );
   }, [getCachedToken, getFreshToken]);
 
@@ -218,6 +241,14 @@ export function useApi() {
           const client = await mkClient();
           return notificationsApi(client).markAllRead(appId);
         },
+        registerPushToken: async (token: string, platform: 'ios' | 'android') => {
+          const client = await mkClient();
+          return notificationsApi(client).registerPushToken(token, platform);
+        },
+        unregisterPushToken: async (token: string) => {
+          const client = await mkClient();
+          return notificationsApi(client).unregisterPushToken(token);
+        },
       },
       dashboard: bindApiGroup(mkClient, dashboardApi),
       projects: bindApiGroup(mkClient, projectsApi),
@@ -247,6 +278,10 @@ export function useApi() {
         delete: async (appId: number, taskId: number) => {
           const client = await mkClient();
           return tasksApi(client).delete(appId, taskId);
+        },
+        check: async (appId: number, taskId: number, data: { check_status: 'approved' | 'rejected'; check_remarks?: string | null }) => {
+          const client = await mkClient();
+          return tasksApi(client).check(appId, taskId, data);
         },
         getWorkload: async (appId: number, userId: number) => {
           const client = await mkClient();
@@ -330,17 +365,22 @@ export function useApi() {
         },
       },
       feed: {
-        list: async (appId: number) => {
+        list: async (appId: number, params?: { limit?: number; offset?: number; type?: string; month?: string }) => {
           const client = await mkClient();
-          return feedApi(client).list(appId);
+          return feedApi(client).list(appId, params);
         },
         create: async (appId: number, data: Record<string, unknown>) => {
           const client = await mkClient();
           return feedApi(client).create(appId, data);
         },
-        update: async (appId: number, postId: number, content: string) => {
+        update: async (appId: number, postId: number, data: string | {
+          content: string;
+          poll_question?: string;
+          poll_options?: { id: number | null; option_text: string }[];
+          poll_multi?: boolean;
+        }) => {
           const client = await mkClient();
-          return feedApi(client).update(appId, postId, content);
+          return feedApi(client).update(appId, postId, data);
         },
         delete: async (appId: number, postId: number) => {
           const client = await mkClient();

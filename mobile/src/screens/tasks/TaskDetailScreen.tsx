@@ -23,6 +23,7 @@ import LoadError from '../../components/common/LoadError';
 import { useLoadWithTimeout } from '../../hooks/useLoadWithTimeout';
 import Avatar from '../../components/common/Avatar';
 import { stripNonContentElements, stripTags } from '../../utils/postContent';
+import { renderMentionText } from '../../utils/mentions';
 import UserProfileModal, { ProfileUser } from '../../components/common/UserProfileModal';
 import AttachmentChips from '../../components/common/AttachmentChips';
 import AttachmentList from '../../components/common/AttachmentList';
@@ -30,6 +31,7 @@ import DatePickerField from '../../components/common/DatePickerField';
 import TimePickerField from '../../components/common/TimePickerField';
 import { showAlert } from '../../components/common/AlertModal';
 import { pickAttachmentFiles, uploadAttachments, PickedFile } from '../../utils/attachments';
+import MentionCommentInput from '../../components/common/MentionCommentInput';
 
 type Route = RouteProp<TasksStackParamList, 'TaskDetail'>;
 type Nav = NativeStackNavigationProp<TasksStackParamList, 'TaskDetail'>;
@@ -637,7 +639,11 @@ export default function TaskDetailScreen() {
             {(task.description || task.description_attachments?.length > 0) ? (
               <View style={s.section}>
                 <Text style={s.sectionTitle}>Description</Text>
-                {!!task.description && <Text style={s.description}>{stripTags(stripNonContentElements(task.description))}</Text>}
+                {!!task.description && (
+                  <Text style={s.description}>
+                    {renderMentionText(stripTags(stripNonContentElements(task.description)), s.mention)}
+                  </Text>
+                )}
                 {task.description_attachments?.length > 0 && (
                   // View-only here — deleting a description attachment is an edit
                   // action, so it only lives on the Edit screen (CreateTaskScreen).
@@ -653,6 +659,17 @@ export default function TaskDetailScreen() {
                 {task.due_on && <InfoRow icon="calendar-outline" label="Due" value={formatDate(task.due_on)} colors={colors} s={s} />}
                 {task.project_name && <InfoRow icon="folder-open-outline" label="Project" value={task.project_name} colors={colors} s={s} />}
                 {task.milestone_title && <InfoRow icon="flag-outline" label="Milestone" value={task.milestone_title} colors={colors} s={s} />}
+                {(task.contract_id || task.agreement_name || task.agreement_number) && (
+                  <InfoRow
+                    icon="document-text-outline"
+                    label="Agreement"
+                    value={task.agreement_name
+                      ? `${task.agreement_name}${task.agreement_number ? ` (${task.agreement_number})` : ''}`
+                      : (task.agreement_number || `#${task.contract_id}`)}
+                    colors={colors}
+                    s={s}
+                  />
+                )}
               </View>
             </View>
             {/* Assignee section */}
@@ -899,13 +916,12 @@ export default function TaskDetailScreen() {
             <TouchableOpacity onPress={pickCommentFiles} style={s.attachBtn} disabled={uploadingCommentFiles}>
               <Ionicons name="attach" size={20} color={colors.gray400} />
             </TouchableOpacity>
-          <TextInput
-            style={s.inputField}
-            placeholder="Add a comment..."
-            placeholderTextColor={colors.gray400}
+          <MentionCommentInput
+            appId={appId}
             value={commentText}
             onChangeText={setCommentText}
-            multiline
+            placeholder="Add a comment..."
+            style={s.inputField}
           />
           <TouchableOpacity onPress={postComment} style={s.sendBtn} disabled={saving}>
             {saving ? <ActivityIndicator size="small" color="#ffffff" /> : <Ionicons name="send" size={18} color="#ffffff" />}
@@ -1042,6 +1058,7 @@ function makeStyles(c: AppColors) {
     section: { marginBottom: 20 },
     sectionTitle: { fontSize: 13, fontWeight: '700', color: c.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 },
     description: { fontSize: 14, color: c.gray700, lineHeight: 22 },
+    mention: { fontWeight: '700', color: c.primary },
     infoGrid: { gap: 8 },
     infoRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
     infoLabel: { fontSize: 13, color: c.gray500, width: 98, flexShrink: 0 },

@@ -145,7 +145,21 @@ function AudioPlayerView({ url, name }: { url: string; name: string }) {
     <View style={s.centerBox}>
       <Ionicons name="musical-notes" size={56} color="#888" />
       <Text style={s.audioName} numberOfLines={2}>{name}</Text>
-      <TouchableOpacity style={s.playBtn} onPress={() => (status.playing ? player.pause() : player.play())}>
+      <TouchableOpacity
+        style={s.playBtn}
+        onPress={() => {
+          if (status.playing) {
+            player.pause();
+            return;
+          }
+          // Playback halts at the end without resetting currentTime, so
+          // play() on a finished track is a no-op unless we seek back first.
+          if (status.duration > 0 && status.currentTime >= status.duration - 0.05) {
+            player.seekTo(0);
+          }
+          player.play();
+        }}
+      >
         <Ionicons name={status.playing ? 'pause' : 'play'} size={28} color="#fff" />
       </TouchableOpacity>
       <Text style={s.audioTime}>{fmt(status.currentTime)} / {fmt(status.duration)}</Text>

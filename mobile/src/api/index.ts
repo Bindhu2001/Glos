@@ -46,6 +46,15 @@ export const notificationsApi = (client: AxiosInstance) => ({
   markRead: (id: number) => client.patch(`/notifications/${id}/read`),
   markAllRead: (appId?: number) =>
     client.post('/notifications/read-all', appId != null ? { app_id: appId } : undefined),
+  // Registers this device's Expo push token so server-side notification
+  // triggers (new message, mention, task assignment, etc.) also fire an OS
+  // push, not just create the in-app row these other endpoints read. See
+  // registerForPushNotifications in src/lib/pushNotifications.ts for where
+  // this gets called from.
+  registerPushToken: (token: string, platform: 'ios' | 'android') =>
+    client.post('/notifications/push-token', { token, platform }),
+  unregisterPushToken: (token: string) =>
+    client.delete('/notifications/push-token', { data: { token } }),
 });
 
 // ── Dashboard ────────────────────────────────────────────────
@@ -164,6 +173,16 @@ export const contractsApi = (client: AxiosInstance) => ({
     client.post(`/apps/${appId}/hr/contracts/compliance/task`, data),
   checkContractTask: (appId: number, taskId: number, data: { check_status: 'approved' | 'rejected'; check_remarks?: string | null }) =>
     client.post(`/apps/${appId}/hr/contracts/tasks/${taskId}/check`, data),
+  listContractTasks: (appId: number, params?: Record<string, unknown>) =>
+    client.get(`/apps/${appId}/hr/contracts/tasks`, { params }),
+  getContractTask: (appId: number, id: number) =>
+    client.get(`/apps/${appId}/hr/contracts/tasks/${id}`),
+  createContractTask: (appId: number, data: Record<string, unknown>) =>
+    client.post(`/apps/${appId}/hr/contracts/tasks`, data),
+  updateContractTask: (appId: number, id: number, data: Record<string, unknown>) =>
+    client.patch(`/apps/${appId}/hr/contracts/tasks/${id}`, data),
+  getContractTaskLogs: (appId: number, id: number) =>
+    client.get(`/apps/${appId}/hr/contracts/tasks/${id}/logs`),
 });
 
 // ── Routines ─────────────────────────────────────────────────
@@ -182,6 +201,8 @@ export const otherReportsApi = (client: AxiosInstance) => ({
     client.get(`/apps/${appId}/hr/other-reports/areas`, { params }),
   getRoutineReport: (appId: number, params: { month: string; user_id?: number; routine_ids?: string }) =>
     client.get(`/apps/${appId}/hr/other-reports/routines`, { params }),
+  getEmployeesByRole: (appId: number, roleId: number) =>
+    client.get(`/apps/${appId}/hr/other-reports/employees-by-role`, { params: { role_id: roleId } }),
 });
 
 // ── Chat ─────────────────────────────────────────────────────
@@ -194,6 +215,14 @@ export const chatApi = (client: AxiosInstance) => ({
   deleteGroup: (appId: number, convId: number) => client.delete(`/apps/${appId}/chat/${convId}`),
   pinMessage: (appId: number, convId: number, messageId: number) =>
     client.post(`/apps/${appId}/chat/${convId}/pin`, { message_id: messageId }),
+  // HTTP equivalent of the socket 'mark_read' emit — for callers with no live
+  // socket connection (notification "Mark as read", and the thread screen when
+  // the socket is down). Pass last_read_message_id so the server moves the
+  // read *cursor* forward, not just last_read_at — the unread count is computed
+  // off the cursor whenever it's set (see chat.js), so a timestamp-only write
+  // leaves the conversation showing unread on web.
+  markConversationRead: (appId: number, convId: number, lastReadMessageId?: number | null) =>
+    client.post(`/apps/${appId}/chat/${convId}/read`, lastReadMessageId != null ? { last_read_message_id: lastReadMessageId } : {}),
   getMessages: (appId: number, convId: number, params?: { limit?: number; before?: number; after?: number }) =>
     client.get(`/apps/${appId}/chat/${convId}/messages`, { params }),
   // HTTP-first send path — the primary way messages leave the device now (see
@@ -204,8 +233,8 @@ export const chatApi = (client: AxiosInstance) => ({
   sendMessage: (appId: number, convId: number, data: { body: string; reply_to_id: number | null; attachments: Record<string, unknown>[]; _tempId: string }) =>
     client.post(`/apps/${appId}/chat/${convId}/messages`, data),
   deleteMessage: (appId: number, msgId: number) => client.delete(`/apps/${appId}/chat/messages/${msgId}`),
-  editMessage: (appId: number, msgId: number, body: string) =>
-    client.patch(`/apps/${appId}/chat/messages/${msgId}`, { body }),
+  editMessage: (appId: number, msgId: number, body: string, extra?: { add_attachments?: Record<string, unknown>[]; remove_attachment_ids?: number[] }) =>
+    client.patch(`/apps/${appId}/chat/messages/${msgId}`, { body, ...extra }),
   reactToMessage: (appId: number, msgId: number, emoji: string) =>
     client.post(`/apps/${appId}/chat/messages/${msgId}/react`, { emoji }),
   toggleGroupAdmin: (appId: number, convId: number, userId: number) =>
@@ -227,6 +256,8 @@ export const businessReviewsApi = (client: AxiosInstance) => ({
   dashboard: (appId: number, params?: Record<string, unknown>) =>
     client.get(`/apps/${appId}/hr/business-reviews/dashboard`, { params }),
   scopeOptions: (appId: number) => client.get(`/apps/${appId}/hr/business-reviews/scope-options`),
+  history: (appId: number, id: number, userId: number) =>
+    client.get(`/apps/${appId}/hr/business-reviews/${id}/history/${userId}`),
   addActionItem: (appId: number, id: number, data: Record<string, unknown>) =>
     client.post(`/apps/${appId}/hr/business-reviews/${id}/action-items`, data),
   updateActionItem: (appId: number, id: number, aiId: number, data: Record<string, unknown>) =>
@@ -261,6 +292,11 @@ export const tasksApi = (client: AxiosInstance) => ({
     client.patch(`/apps/${appId}/hr/tasks/${taskId}`, data),
   delete: (appId: number, taskId: number) =>
     client.delete(`/apps/${appId}/hr/tasks/${taskId}`),
+  // Maker-checker review on a Tasks-module task (used by the Compliance
+  // Board's per-task Approve/Reject). Separate from contractsApi.checkContractTask,
+  // which acts on the legacy contract_tasks slot.
+  check: (appId: number, taskId: number, data: { check_status: 'approved' | 'rejected'; check_remarks?: string | null }) =>
+    client.post(`/apps/${appId}/hr/tasks/${taskId}/check`, data),
   getWorkload: (appId: number, userId: number) =>
     client.get(`/apps/${appId}/hr/tasks/workload/${userId}`),
   // Timer
@@ -312,12 +348,21 @@ export const tasksApi = (client: AxiosInstance) => ({
 
 // ── Feed ─────────────────────────────────────────────────────
 export const feedApi = (client: AxiosInstance) => ({
-  list: (appId: number) => client.get(`/apps/${appId}/hr/feed`),
+  list: (appId: number, params?: { limit?: number; offset?: number; type?: string; month?: string }) =>
+    client.get(`/apps/${appId}/hr/feed`, { params }),
   create: (appId: number, data: Record<string, unknown>) =>
     client.post(`/apps/${appId}/hr/feed`, data),
   // Author-only, and the server rejects this after 15 minutes from creation.
-  update: (appId: number, postId: number, content: string) =>
-    client.patch(`/apps/${appId}/hr/feed/${postId}`, { content }),
+  // `content` alone edits a text post; a poll post additionally needs
+  // poll_question/poll_options/poll_multi (see PATCH /feed/:id — it
+  // reconciles poll_options by id, keeping votes on unchanged options).
+  update: (appId: number, postId: number, data: string | {
+    content: string;
+    poll_question?: string;
+    poll_options?: { id: number | null; option_text: string }[];
+    poll_multi?: boolean;
+  }) =>
+    client.patch(`/apps/${appId}/hr/feed/${postId}`, typeof data === 'string' ? { content: data } : data),
   delete: (appId: number, postId: number) =>
     client.delete(`/apps/${appId}/hr/feed/${postId}`),
   pin: (appId: number, postId: number) =>
@@ -371,14 +416,14 @@ export const performanceApi = (client: AxiosInstance) => ({
     client.get(`/apps/${appId}/hr/appraisals`, { params }),
   createAppraisal: (appId: number, data: Record<string, unknown>) =>
     client.post(`/apps/${appId}/hr/appraisals`, data),
-  listMyReviews: (appId: number) =>
-    client.get(`/apps/${appId}/hr/performance-reviews`),
+  listMyReviews: (appId: number, params?: Record<string, unknown>) =>
+    client.get(`/apps/${appId}/hr/performance-reviews`, { params }),
   listPendingForMe: (appId: number) =>
     client.get(`/apps/${appId}/hr/performance-reviews/pending-for-me`),
   listTeamReviews: (appId: number, params?: Record<string, unknown>) =>
     client.get(`/apps/${appId}/hr/performance-reviews/team`, { params }),
-  listAllReviews: (appId: number) =>
-    client.get(`/apps/${appId}/hr/performance-reviews/all`),
+  listAllReviews: (appId: number, params?: Record<string, unknown>) =>
+    client.get(`/apps/${appId}/hr/performance-reviews/all`, { params }),
   submitReview: (appId: number, reviewId: number, data: Record<string, unknown>) =>
     client.patch(`/apps/${appId}/hr/performance-reviews/${reviewId}`, data),
   getReview: (appId: number, reviewId: number) =>

@@ -21,22 +21,17 @@ import EmptyState from '../../components/common/EmptyState';
 import { FeedStackParamList } from '../../navigation/types';
 import { formatRelative } from '../../utils/format';
 import { renderMentionText } from '../../utils/mentions';
+import { BADGE_META } from '../../utils/badges';
 import { showAlert } from '../../components/common/AlertModal';
-import { guardedTextChange, CONTENT_MAX_LEN } from '../../utils/postContent';
+import { guardedTextChange, CONTENT_MAX_LEN, stripTags, stripNonContentElements } from '../../utils/postContent';
+import {
+  RecipientNamesInline, RecipientsModal, toRecipients, Recipient,
+} from '../../components/feed/RecipientNames';
 
 type Nav = NativeStackNavigationProp<FeedStackParamList, 'FeedList'>;
 type Route = RouteProp<FeedStackParamList, 'FeedList'>;
 type Tab = 'feed' | 'appreciations' | 'feedback';
 
-const BADGE_META: Record<string, { emoji: string; label: string }> = {
-  teamwork:        { emoji: '🤝', label: 'Teamwork' },
-  innovation:      { emoji: '💡', label: 'Innovation' },
-  leadership:      { emoji: '🌟', label: 'Leadership' },
-  excellence:      { emoji: '🏆', label: 'Excellence' },
-  mentorship:      { emoji: '🎓', label: 'Mentorship' },
-  customer_focus:  { emoji: '💛', label: 'Customer Focus' },
-  problem_solving: { emoji: '🔧', label: 'Problem Solving' },
-};
 
 export default function FeedScreen() {
   const api = useApi();
@@ -50,6 +45,7 @@ export default function FeedScreen() {
   const isAdmin = workspace?.role === 'super_admin' || workspace?.role === 'admin';
 
   const [activeTab, setActiveTab] = useState<Tab>(route.params?.initialTab ?? 'feed');
+  const [recipientsModal, setRecipientsModal] = useState<Recipient[] | null>(null);
 
   // Deep-link from notifications (e.g. tapping a "feedback received" notification
   // while the Feed tab is already mounted in the background) — the screen isn't
@@ -60,10 +56,16 @@ export default function FeedScreen() {
 
   // Feed tab
   const [posts, setPosts] = useState<any[]>([]);
+  const [feedTotal, setFeedTotal] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [feedLoading, setFeedLoading] = useState(true);
   const [feedError, setFeedError] = useState(false);
   const [feedRefreshing, setFeedRefreshing] = useState(false);
   const [search, setSearch] = useState('');
+  // "Appreciation"/"Feedback" from web's filter dropdown are redundant here —
+  // mobile already has dedicated tabs for those. All/Post/Poll is the
+  // meaningful remaining split within the Feed tab itself.
+  const [postTypeFilter, setPostTypeFilter] = useState<'all' | 'post' | 'poll'>('all');
   const [showAppreciation, setShowAppreciation] = useState(false);
   const [meId, setMeId] = useState<number | null>(null);
 
@@ -103,17 +105,38 @@ export default function FeedScreen() {
   const [audienceRoles, setAudienceRoles] = useState<{ id: number; name: string }[]>([]);
 
   // ── Feed ──────────────────────────────────────────────────
+  // Matches web (Feed.jsx) — first page is 30, "Load more" pulls 20 at a
+  // time. The backend defaults to limit=50 with no pagination at all if not
+  // asked, which is exactly why the list used to just stop at 50 with no way
+  // to see anything older.
   const loadFeed = useCallback(async () => {
     if (!workspace) return;
     try {
-      const r = await api.feed.list(workspace.id);
+      const r = await api.feed.list(workspace.id, { limit: 30, offset: 0 });
       const d = r.data;
       setPosts(Array.isArray(d) ? d : (d?.items ?? d?.posts ?? []));
+      setFeedTotal(Array.isArray(d) ? d.length : (d?.total ?? 0));
       setFeedError(false);
     } catch {
       setFeedError(true);
     }
   }, [workspace, api]);
+
+  const loadMoreFeed = useCallback(async () => {
+    if (!workspace || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const r = await api.feed.list(workspace.id, { limit: 20, offset: posts.length });
+      const d = r.data;
+      const more = Array.isArray(d) ? d : (d?.items ?? d?.posts ?? []);
+      setPosts((prev) => [...prev, ...more]);
+      setFeedTotal(Array.isArray(d) ? feedTotal : (d?.total ?? feedTotal));
+    } catch {
+      // Silent — same as web, the button just stays available to retry.
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [workspace, api, posts.length, loadingMore, feedTotal]);
 
   // ── Appreciations ─────────────────────────────────────────
   const loadAppreciations = useCallback(async () => {
@@ -201,43 +224,32 @@ export default function FeedScreen() {
   };
 
   // ── Post reactions ────────────────────────────────────────
+  // Backend toggles a single (post, user, emoji) row independently — a user
+  // can hold several simultaneous reactions on one post (matches web's
+  // Feed.jsx handleReact). Previously mobile treated my_reactions as
+  // single-select and un-reacted whatever was there first, which silently
+  // dropped any other reaction the user already had on the post.
   const handleReact = async (postId: number, emoji: string = '❤️') => {
     if (!workspace) return;
-    const post = posts.find(p => p.id === postId);
-    const prevEmoji = post?.my_reactions?.[0] ?? null;
-    const togglingOff = prevEmoji === emoji;
-
-    // Optimistic update immediately (before API)
     const originalPosts = posts;
+
     setPosts(prev => prev.map(p => {
       if (p.id !== postId) return p;
-      let reactions = [...(p.reactions ?? [])];
-      if (togglingOff) {
-        reactions = reactions.map((r: any) =>
-          r.emoji === emoji ? { ...r, count: Math.max(0, r.count - 1) } : r
-        );
-        return { ...p, my_reactions: [], reactions };
-      }
-      if (prevEmoji) {
-        reactions = reactions.map((r: any) =>
-          r.emoji === prevEmoji ? { ...r, count: Math.max(0, r.count - 1) } : r
-        );
-      }
-      const hasNew = reactions.find((r: any) => r.emoji === emoji);
-      if (hasNew) {
-        reactions = reactions.map((r: any) =>
-          r.emoji === emoji ? { ...r, count: r.count + 1 } : r
-        );
-      } else {
-        reactions.push({ emoji, count: 1 });
-      }
-      return { ...p, my_reactions: [emoji], reactions };
+      const myReactions = p.my_reactions ?? [];
+      const alreadyReacted = myReactions.includes(emoji);
+      const newMyReactions = alreadyReacted
+        ? myReactions.filter((e: string) => e !== emoji)
+        : [...myReactions, emoji];
+      const reactions = p.reactions ?? [];
+      const newReactions = alreadyReacted
+        ? reactions.map((r: any) => (r.emoji === emoji ? { ...r, count: Math.max(0, r.count - 1) } : r)).filter((r: any) => r.count > 0)
+        : reactions.some((r: any) => r.emoji === emoji)
+          ? reactions.map((r: any) => (r.emoji === emoji ? { ...r, count: r.count + 1 } : r))
+          : [...reactions, { emoji, count: 1 }];
+      return { ...p, my_reactions: newMyReactions, reactions: newReactions };
     }));
 
     try {
-      if (prevEmoji && !togglingOff) {
-        await api.feed.addReaction(workspace.id, postId, prevEmoji);
-      }
       await api.feed.addReaction(workspace.id, postId, emoji);
     } catch {
       setPosts(originalPosts); // revert on error
@@ -382,15 +394,21 @@ export default function FeedScreen() {
   if (feedLoading) return <LoadingSpinner />;
   if (feedError && activeTab === 'feed') return <LoadError onRetry={() => { setFeedLoading(true); loadFeed().finally(() => setFeedLoading(false)); }} />;
 
-  const filteredPosts = search
-    ? posts.filter((p) => {
-        const q = search.toLowerCase();
-        const authorName = p.author_name
-          ?? [p.author?.first_name, p.author?.last_name].filter(Boolean).join(' ')
-          ?? '';
-        return (p.content ?? '').toLowerCase().includes(q) || authorName.toLowerCase().includes(q);
-      })
-    : posts;
+  // Matches web's matchesQuery — content, author, and poll question (this
+  // tab never shows appreciation/feedback posts, those have their own tabs).
+  const filteredPosts = posts
+    .filter((p) => postTypeFilter === 'all' || p.post_type === postTypeFilter)
+    .filter((p) => {
+      if (!search.trim()) return true;
+      const q = search.toLowerCase();
+      const authorName = p.author_name
+        ?? [p.author?.first_name, p.author?.last_name].filter(Boolean).join(' ')
+        ?? '';
+      const pollQ = p.poll?.question ?? '';
+      return (p.content ?? '').toLowerCase().includes(q)
+        || authorName.toLowerCase().includes(q)
+        || pollQ.toLowerCase().includes(q);
+    });
 
   const fbSelectedIds = new Set(fbSelected.map((m) => m.id));
   const fbFilteredMembers = fbSearch.trim()
@@ -476,11 +494,37 @@ export default function FeedScreen() {
                       </TouchableOpacity>
                     )}
                   </View>
+                  <View style={s.typeFilterRow}>
+                    {([
+                      { key: 'all', label: 'All' },
+                      { key: 'post', label: 'Posts' },
+                      { key: 'poll', label: 'Polls' },
+                    ] as { key: 'all' | 'post' | 'poll'; label: string }[]).map((o) => (
+                      <TouchableOpacity
+                        key={o.key}
+                        style={[s.typeFilterChip, postTypeFilter === o.key && s.typeFilterChipActive]}
+                        onPress={() => setPostTypeFilter(o.key)}
+                      >
+                        <Text style={[s.typeFilterChipTxt, postTypeFilter === o.key && s.typeFilterChipTxtActive]}>{o.label}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
                 </View>
               </View>
             }
             ListEmptyComponent={
               <EmptyState icon="newspaper-outline" title="No posts yet" subtitle="Share something with your team!" />
+            }
+            ListFooterComponent={
+              !search && postTypeFilter === 'all' && posts.length < feedTotal ? (
+                <TouchableOpacity style={s.loadMoreBtn} onPress={loadMoreFeed} disabled={loadingMore}>
+                  {loadingMore ? (
+                    <ActivityIndicator color={colors.primary} />
+                  ) : (
+                    <Text style={s.loadMoreTxt}>Load more ({feedTotal - posts.length} remaining)</Text>
+                  )}
+                </TouchableOpacity>
+              ) : null
             }
             renderItem={({ item }) => (
               <PostCard
@@ -490,7 +534,10 @@ export default function FeedScreen() {
                 onReact={(emoji) => handleReact(item.id, emoji)}
                 onVote={(optionIds) => handleVote(item.id, optionIds)}
                 onDelete={(isAdmin || item.author_user_id === meId) ? () => handleDelete(item.id) : undefined}
-                onEdit={canEditPost(item) ? () => navigation.navigate('CreatePost', { appId: workspace!.id, postId: item.id, initialContent: item.content }) : undefined}
+                onEdit={canEditPost(item) ? () => navigation.navigate('CreatePost', {
+                  appId: workspace!.id, postId: item.id, initialContent: item.content,
+                  initialPostType: item.post_type, initialPoll: item.post_type === 'poll' ? item.poll : undefined,
+                }) : undefined}
                 onPin={isAdmin ? () => handlePin(item.id) : undefined}
                 members={audienceMembers}
                 departments={audienceDepartments}
@@ -560,7 +607,12 @@ export default function FeedScreen() {
                       <Text style={s.apprFrom} numberOfLines={2}>
                         <Text style={s.apprName}>{uname(item.from_user_name, item.from_user, 'Someone')}</Text>
                         {' → '}
-                        <Text style={s.apprName}>{namesWithMore(item.to_users, item.to_user_name, item.to_user)}</Text>
+                        <RecipientNamesInline
+                          recipients={toRecipients(item.to_users, item.to_user_name, item.to_user)}
+                          textStyle={s.apprName}
+                          linkStyle={s.recipientLink}
+                          onExpand={setRecipientsModal}
+                        />
                       </Text>
                       {meta && (
                         <View style={s.apprBadgeChip}>
@@ -568,7 +620,7 @@ export default function FeedScreen() {
                         </View>
                       )}
                     </View>
-                    {!!item.message && <Text style={s.apprMsg}>"{renderMentionText(item.message, s.mention)}"</Text>}
+                    {!!item.message && <Text style={s.apprMsg}>"{renderMentionText(stripTags(stripNonContentElements(item.message)), s.mention)}"</Text>}
                     <Text style={s.apprTime}>{formatRelative(item.created_at)}</Text>
                   </View>
                 </View>
@@ -637,10 +689,19 @@ export default function FeedScreen() {
                     />
                     <View style={{ flex: 1 }}>
                       <Text style={s.fbPerson}>
-                        {feedbackView === 'received'
-                          ? `From ${item.is_anonymous ? 'Anonymous' : uname(item.from_user_name, item.from_user)}`
-                          : `To ${namesWithMore(item.to_users, item.to_user_name, item.to_user)}`
-                        }
+                        {feedbackView === 'received' ? (
+                          `From ${item.is_anonymous ? 'Anonymous' : uname(item.from_user_name, item.from_user)}`
+                        ) : (
+                          <>
+                            {'To '}
+                            <RecipientNamesInline
+                              recipients={toRecipients(item.to_users, item.to_user_name, item.to_user)}
+                              textStyle={s.fbPerson}
+                              linkStyle={s.recipientLink}
+                              onExpand={setRecipientsModal}
+                            />
+                          </>
+                        )}
                       </Text>
                       <Text style={s.fbTime}>{formatRelative(item.created_at)}</Text>
                     </View>
@@ -650,7 +711,7 @@ export default function FeedScreen() {
                       </View>
                     )}
                   </View>
-                  <Text style={s.fbMsg}>{renderMentionText(item.feedback_text, s.mention)}</Text>
+                  <Text style={s.fbMsg}>{renderMentionText(stripTags(stripNonContentElements(item.feedback_text)), s.mention)}</Text>
                 </View>
               ))
             )}
@@ -819,6 +880,7 @@ export default function FeedScreen() {
           </View>
         </TouchableOpacity>
       </Modal>
+      <RecipientsModal recipients={recipientsModal} onClose={() => setRecipientsModal(null)} />
     </View>
   );
 }
@@ -884,6 +946,17 @@ function makeStyles(c: AppColors) {
       borderWidth: 1.5, borderColor: c.border,
     },
     searchInput: { flex: 1, fontSize: 14, color: c.textPrimary },
+    typeFilterRow: { flexDirection: 'row', gap: 6, marginTop: 8, marginHorizontal: 16 },
+    typeFilterChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: c.gray50, borderWidth: 1, borderColor: c.border },
+    typeFilterChipActive: { backgroundColor: c.primaryLight, borderColor: c.primary },
+    typeFilterChipTxt: { fontSize: 11.5, fontWeight: '600', color: c.textSecondary },
+    typeFilterChipTxtActive: { color: c.primary, fontWeight: '700' },
+    loadMoreBtn: {
+      alignItems: 'center', justifyContent: 'center', paddingVertical: 14,
+      marginTop: 4, marginBottom: 8, borderRadius: 10,
+      backgroundColor: c.gray50, borderWidth: 1, borderColor: c.border,
+    },
+    loadMoreTxt: { fontSize: 13, fontWeight: '700', color: c.primary },
 
     list: { padding: 16, paddingBottom: 32 },
     listHeader: { marginHorizontal: -16, marginTop: -16, marginBottom: 8 },
@@ -902,6 +975,7 @@ function makeStyles(c: AppColors) {
     apprTopRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 },
     apprFrom: { fontSize: 13, color: c.textSecondary, lineHeight: 18, flex: 1 },
     apprName: { fontWeight: '700', color: c.textPrimary },
+    recipientLink: { fontWeight: '700', color: c.primary, textDecorationLine: 'underline' },
     apprBadgeChip: {
       backgroundColor: c.primaryLight, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 12,
     },

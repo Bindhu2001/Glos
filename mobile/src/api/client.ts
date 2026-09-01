@@ -9,6 +9,7 @@ export function createApiClient(
   onWorkspaceRevoked?: () => void,
   userMeta?: UserMeta,
   getFreshToken?: () => Promise<string>,
+  onAppMissing?: () => void,
 ): AxiosInstance {
   const client = axios.create({
     baseURL: API_BASE_URL,
@@ -43,6 +44,22 @@ export function createApiClient(
         } catch {
           return Promise.reject(err);
         }
+      },
+    );
+  }
+
+  if (onAppMissing) {
+    client.interceptors.response.use(
+      (res) => res,
+      (err) => {
+        // 404 from loadAppMembership when the app row is gone. Distinct from
+        // the 403 NOT_A_MEMBER case (app exists, membership doesn't) already
+        // handled below — here the workspace itself no longer exists, so the
+        // calling screen's "Try Again" can't help.
+        if (err?.response?.status === 404 && err?.response?.data?.error === 'App not found') {
+          onAppMissing();
+        }
+        return Promise.reject(err);
       },
     );
   }

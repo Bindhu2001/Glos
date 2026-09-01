@@ -13,6 +13,7 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { AppColors } from '../../utils/colors';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import LoadError from '../../components/common/LoadError';
+import { showAlert } from '../../components/common/AlertModal';
 import { useLoadWithTimeout } from '../../hooks/useLoadWithTimeout';
 import { PerformanceStackParamList } from '../../navigation/types';
 
@@ -181,12 +182,7 @@ export default function PerformanceReviewDetailScreen() {
   const canFinalRate = review?.status === 'pending_approver' && isDesignatedApprover;
   const isViewOnly = !canSelfRate && !canManagerRate && !canFinalRate;
 
-  const handleSubmitSelf = async () => {
-    const ratings = buildPayload();
-    if (ratings.length === 0) {
-      Alert.alert('Rate yourself', 'Please rate at least one item before submitting.');
-      return;
-    }
+  const doSubmitSelf = async (ratings: any[]) => {
     setSubmitting(true);
     try {
       await api.performance.submitSelfRating(appId, reviewId, { ratings });
@@ -197,22 +193,20 @@ export default function PerformanceReviewDetailScreen() {
       Alert.alert('Error', 'Failed to submit self rating');
     } finally { setSubmitting(false); }
   };
-
-  const handleSubmitManager = async () => {
-    if (managerAction === 'approve') {
-      const ratings = buildPayload();
-      if (ratings.length === 0) {
-        Alert.alert('Rate', 'Please provide ratings before submitting.');
-        return;
-      }
-      if (!feedbackDate.trim()) {
-        Alert.alert('Required', 'Please enter a feedback discussion date.');
-        return;
-      }
-    } else if (!rejectionComment.trim()) {
-      Alert.alert('Required', 'Please enter a reason for sending this back to the employee.');
+  // Confirm before submitting — matches web's PerformanceReview (window.confirm).
+  const handleSubmitSelf = () => {
+    const ratings = buildPayload();
+    if (ratings.length === 0) {
+      Alert.alert('Rate yourself', 'Please rate at least one item before submitting.');
       return;
     }
+    showAlert('Submit self-rating?', 'Submit your self-rating for manager review?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Submit', onPress: () => doSubmitSelf(ratings) },
+    ]);
+  };
+
+  const doSubmitManager = async () => {
     setSubmitting(true);
     try {
       await api.performance.submitManagerRating(appId, reviewId, {
@@ -229,12 +223,35 @@ export default function PerformanceReviewDetailScreen() {
       Alert.alert('Error', 'Failed to submit manager rating');
     } finally { setSubmitting(false); }
   };
-
-  const handleSubmitFinal = async (action: 'approve' | 'reject_to_manager' | 'reject_to_employee') => {
-    if (action !== 'approve' && !finalComment.trim()) {
-      Alert.alert('Required', 'Please enter a comment.');
+  const handleSubmitManager = () => {
+    if (managerAction === 'approve') {
+      const ratings = buildPayload();
+      if (ratings.length === 0) {
+        Alert.alert('Rate', 'Please provide ratings before submitting.');
+        return;
+      }
+      if (!feedbackDate.trim()) {
+        Alert.alert('Required', 'Please enter a feedback discussion date.');
+        return;
+      }
+    } else if (!rejectionComment.trim()) {
+      Alert.alert('Required', 'Please enter a reason for sending this back to the employee.');
       return;
     }
+    const isApprove = managerAction === 'approve';
+    showAlert(
+      isApprove ? 'Submit manager review?' : 'Send back to employee?',
+      isApprove
+        ? 'Submit your manager review and send for final approval?'
+        : 'Reject this review and send it back to the employee for revision?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: isApprove ? 'Submit' : 'Send Back', style: isApprove ? 'default' : 'destructive', onPress: doSubmitManager },
+      ],
+    );
+  };
+
+  const doSubmitFinal = async (action: 'approve' | 'reject_to_manager' | 'reject_to_employee') => {
     setSubmitting(true);
     try {
       await api.performance.submitFinalRating(appId, reviewId, {
@@ -247,6 +264,21 @@ export default function PerformanceReviewDetailScreen() {
     } catch {
       Alert.alert('Error', 'Failed to submit final decision');
     } finally { setSubmitting(false); }
+  };
+  const handleSubmitFinal = (action: 'approve' | 'reject_to_manager' | 'reject_to_employee') => {
+    if (action !== 'approve' && !finalComment.trim()) {
+      Alert.alert('Required', 'Please enter a comment.');
+      return;
+    }
+    const msg = action === 'approve'
+      ? 'Approve this review? This will complete the workflow.'
+      : action === 'reject_to_manager'
+        ? 'Reject and send back to manager for revision?'
+        : 'Reject and send back to the employee for revision?';
+    showAlert(action === 'approve' ? 'Approve review?' : 'Send back?', msg, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: action === 'approve' ? 'Approve' : 'Send Back', style: action === 'approve' ? 'default' : 'destructive', onPress: () => doSubmitFinal(action) },
+    ]);
   };
 
   if (loading) return <LoadingSpinner />;

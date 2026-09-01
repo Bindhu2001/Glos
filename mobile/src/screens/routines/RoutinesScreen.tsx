@@ -11,6 +11,7 @@ import { useApi } from '../../hooks/useApi';
 import { AppColors } from '../../utils/colors';
 import { apiErrorMessage } from '../../utils/apiError';
 import LoadError from '../../components/common/LoadError';
+import { formatDate } from '../../utils/format';
 
 type RView = 'my' | 'team';
 
@@ -32,6 +33,7 @@ interface RoutineStat {
   tasks_completed: number;
   tasks_total: number;
   expected_count?: number;
+  last_completed_on?: string | null;
 }
 
 interface Reportee {
@@ -106,25 +108,94 @@ function OdometerRing({ type, pct, colors }: { type: Periodicity; pct: number; c
   );
 }
 
-// Mirrors backend's buildTeamAggregates() type_stats: the mean of each routine's
-// own (already 0-100 capped) combined_pct — NOT sum(done)/sum(expected), which lets
-// one overachieved routine (e.g. 26/4) blow the aggregate past 100%.
+// Per-periodicity odometer %. Matches web's TeamRoutines.jsx MemberDetailPanel
+// (fix 55e0f87e): cap EACH routine's own completion at 100% first, then take
+// the plain mean across routines of that periodicity — do NOT sum raw
+// completed/expected and clamp only the final ratio, since an over-achieving
+// routine (e.g. 22/5) then mathematically absorbs another's shortfall (4/5)
+// and hides genuinely incomplete routines.
 function typeEfficiencyFor(stats: RoutineStat[]) {
   const out: Partial<Record<Periodicity, number>> = {};
   for (const p of PERIODICITIES) {
     const items = stats.filter((r) => r.routine?.periodicity === p);
     if (items.length === 0) continue;
-    // Matches web's TeamRoutines.jsx exactly: sum tasks_completed/expected_count
-    // across every routine of this periodicity, then take one ratio — NOT an
-    // average of each routine's own already-rounded percentage. Averaging
-    // percentages under- or over-weights routines with different expected
-    // counts (e.g. one expected 22x/month, another only 4x), which is why this
-    // used to disagree with web's number for the same person/month.
-    const done = items.reduce((sum, r) => sum + (r.tasks_completed ?? 0), 0);
-    const exp = items.reduce((sum, r) => sum + (r.expected_count ?? 0), 0);
-    out[p] = exp > 0 ? Math.min(100, Math.round((done / exp) * 100)) : 0;
+    const capped = items.map((r) => {
+      const exp = r.expected_count ?? 0;
+      if (exp <= 0) return 0;
+      return Math.min(100, ((r.tasks_completed ?? 0) / exp) * 100);
+    });
+    out[p] = Math.round(capped.reduce((sum, v) => sum + v, 0) / capped.length);
   }
   return out;
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  completed: 'Completed', pending: 'Pending', incomplete: 'Incomplete',
+  not_started: 'Not Started', not_applicable: 'N/A',
+};
+const ATTENTION_ORDER: Record<string, number> = { incomplete: 0, pending: 1, not_started: 2 };
+
+// Matches web's MyRoutines.jsx AttentionSection exactly — everything that
+// isn't completed/not_applicable, sorted worst-first, grouped by role.
+function AttentionSection({ stats, colors, s }: { stats: RoutineStat[]; colors: AppColors; s: any }) {
+  const attention = stats
+    .filter((r) => r.status !== 'completed' && r.status !== 'not_applicable')
+    .sort((a, b) => (ATTENTION_ORDER[a.status] ?? 3) - (ATTENTION_ORDER[b.status] ?? 3));
+
+  if (attention.length === 0) {
+    return (
+      <View style={s.allDone}>
+        <Text style={{ fontSize: 20 }}>✅</Text>
+        <Text style={s.allDoneText}>All routines completed for this period!</Text>
+      </View>
+    );
+  }
+
+  const byRole = new Map<string, RoutineStat[]>();
+  for (const item of attention) {
+    const role = item.role_name || 'General';
+    if (!byRole.has(role)) byRole.set(role, []);
+    byRole.get(role)!.push(item);
+  }
+
+  return (
+    <View style={s.attentionSection}>
+      <View style={s.attentionHeader}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Text style={s.attentionTitle}>Needs Attention</Text>
+          <View style={s.attentionCount}><Text style={s.attentionCountTxt}>{attention.length}</Text></View>
+        </View>
+        <Text style={s.attentionSub}>Routines that are incomplete or not yet started</Text>
+      </View>
+      {[...byRole.entries()].map(([role, items]) => (
+        <View key={role} style={{ marginTop: 10 }}>
+          <Text style={s.attentionRoleLabel}>{role}</Text>
+          {items.map((item) => {
+            const remaining = item.expected_count != null ? item.expected_count - item.tasks_completed : null;
+            const color = STATUS_COLORS[item.status] ?? '#6b7280';
+            return (
+              <View key={item.routine.id} style={[s.attentionItem, { borderLeftColor: color }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.attentionName} numberOfLines={1}>{item.routine.description}</Text>
+                  <Text style={s.attentionMeta}>
+                    {PERIODICITY_LABEL[item.routine.periodicity] ?? item.routine.periodicity}
+                    {item.area_name ? ` · ${item.area_name}` : ''}
+                    {remaining !== null && remaining > 0 ? ` · ${remaining} more to go` : ''}
+                  </Text>
+                </View>
+                {!!item.expected_count && (
+                  <Text style={s.attentionTasks}>{item.tasks_completed}/{item.expected_count}</Text>
+                )}
+                <View style={[s.statusBadge, { backgroundColor: color + '18', borderColor: color + '44' }]}>
+                  <Text style={[s.statusText, { color }]}>{STATUS_LABEL[item.status] ?? item.status}</Text>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      ))}
+    </View>
+  );
 }
 
 function RoutineRow({ r, colors, s }: { r: RoutineStat; colors: AppColors; s: any }) {
@@ -137,6 +208,7 @@ function RoutineRow({ r, colors, s }: { r: RoutineStat; colors: AppColors; s: an
           {r.role_name ? <Text style={s.metaText}>{r.role_name}</Text> : null}
           <Text style={s.metaText}>{PERIODICITY_LABEL[r.routine.periodicity] ?? r.routine.periodicity}</Text>
           <Text style={s.metaText}>{r.tasks_completed}/{r.expected_count ?? r.tasks_total} done</Text>
+          {!!r.last_completed_on && <Text style={s.metaText}>Last: {formatDate(r.last_completed_on)}</Text>}
         </View>
       </View>
       <View style={[s.statusBadge, { backgroundColor: statusColor + '18', borderColor: statusColor + '44' }]}>
@@ -213,6 +285,9 @@ function MemberDetail({
   const typeEff = typeEfficiencyFor(stats);
   const activeTypes = PERIODICITIES.filter((p) => typeEff[p] != null);
   const monthLabel = monthOptions.find((o) => o.value === selectedMonth)?.label ?? selectedMonth;
+  // not_applicable = zero expected occurrences this period (backend's
+  // buildMonthRoutineStats), not a deleted routine — never shown as a row.
+  const visibleStats = useMemo(() => stats.filter((r) => r.status !== 'not_applicable'), [stats]);
 
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
@@ -245,13 +320,13 @@ function MemberDetail({
             </View>
           )}
 
-          {stats.length === 0 ? (
+          {visibleStats.length === 0 ? (
             <View style={s.empty}>
               <Ionicons name="calendar-outline" size={40} color={colors.gray400} />
               <Text style={s.emptyText}>No routines for this month</Text>
             </View>
           ) : (
-            stats.map((r) => (
+            visibleStats.map((r) => (
               <View key={r.routine.id} style={s.card}>
                 <RoutineRow r={r} colors={colors} s={s} />
                 {r.area_name ? <Text style={s.areaSub}>{r.area_name}</Text> : null}
@@ -290,6 +365,7 @@ export default function RoutinesScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedMember, setSelectedMember] = useState<Reportee | null>(null);
+  const [typeFilter, setTypeFilter] = useState<'all' | Periodicity>('all');
 
   const hasLoadedRef = useRef(false);
 
@@ -323,6 +399,11 @@ export default function RoutinesScreen() {
   const myTypeEff = useMemo(() => typeEfficiencyFor(myStats), [myStats]);
   const myActiveTypes = PERIODICITIES.filter((p) => myTypeEff[p] != null);
   const teamActiveTypes = PERIODICITIES.filter((p) => teamTypeStats[p] != null);
+  // not_applicable = a deleted/inactive assignment — never shown in the
+  // routine list itself, same as AttentionSection above already excludes it.
+  const visibleMyStats = useMemo(() => myStats.filter((r) => r.status !== 'not_applicable'), [myStats]);
+  const myPresentTypes = PERIODICITIES.filter((p) => visibleMyStats.some((r) => r.routine.periodicity === p));
+  const filteredMyStats = typeFilter === 'all' ? visibleMyStats : visibleMyStats.filter((r) => r.routine.periodicity === typeFilter);
 
   if (selectedMember && workspace) {
     return (
@@ -374,11 +455,33 @@ export default function RoutinesScreen() {
               <Text style={s.emptyText}>No routines found for this month</Text>
             </View>
           ) : (
-            myStats.map((r) => (
-              <View key={r.routine.id} style={s.card}>
-                <RoutineRow r={r} colors={colors} s={s} />
-              </View>
-            ))
+            <>
+              <AttentionSection stats={myStats} colors={colors} s={s} />
+
+              <Text style={s.breakdownHead}>All Routines — Breakdown</Text>
+              {myPresentTypes.length > 1 && (
+                <View style={s.typeTabRow}>
+                  <TouchableOpacity style={[s.typeTab, typeFilter === 'all' && s.typeTabActive]} onPress={() => setTypeFilter('all')}>
+                    <Text style={[s.typeTabTxt, typeFilter === 'all' && s.typeTabTxtActive]}>All</Text>
+                  </TouchableOpacity>
+                  {myPresentTypes.map((p) => (
+                    <TouchableOpacity key={p} style={[s.typeTab, typeFilter === p && s.typeTabActive]} onPress={() => setTypeFilter(p)}>
+                      <Text style={[s.typeTabTxt, typeFilter === p && s.typeTabTxtActive]}>{PERIODICITY_LABEL[p]}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+
+              {filteredMyStats.length === 0 ? (
+                <Text style={s.emptyText}>No active routines this month</Text>
+              ) : (
+                filteredMyStats.map((r) => (
+                  <View key={r.routine.id} style={s.card}>
+                    <RoutineRow r={r} colors={colors} s={s} />
+                  </View>
+                ))
+              )}
+            </>
           )}
         </ScrollView>
       ) : (
@@ -401,6 +504,9 @@ export default function RoutinesScreen() {
                 const name = personName(p.user);
                 const eff = p.overall_efficiency;
                 const effColor = eff == null ? colors.textMuted : eff >= 80 ? colors.success : eff >= 50 ? colors.warning : colors.danger;
+                // Matches MemberDetail's own visibleStats filter — otherwise this
+                // count disagrees with what tapping through actually shows.
+                const visibleCount = p.routine_stats.filter((r) => r.status !== 'not_applicable').length;
                 return (
                   <TouchableOpacity key={p.user.id} style={s.memberRow} onPress={() => setSelectedMember(p)}>
                     <View style={s.memberAvatar}><Text style={s.memberAvatarTxt}>{initials(name)}</Text></View>
@@ -413,7 +519,7 @@ export default function RoutinesScreen() {
                     </View>
                     <View style={{ alignItems: 'flex-end' }}>
                       <Text style={[s.memberEff, { color: effColor }]}>{eff != null ? `${eff}%` : '—'}</Text>
-                      <Text style={s.memberEffLbl}>{p.routine_stats.length} routine{p.routine_stats.length !== 1 ? 's' : ''}</Text>
+                      <Text style={s.memberEffLbl}>{visibleCount} routine{visibleCount !== 1 ? 's' : ''}</Text>
                     </View>
                     <Ionicons name="chevron-forward" size={18} color={colors.gray400} />
                   </TouchableOpacity>
@@ -475,6 +581,38 @@ function makeStyles(c: AppColors) {
     metaText: { fontSize: 11, color: c.textMuted },
     statusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1 },
     statusText: { fontSize: 11, fontWeight: '700' },
+
+    // Needs Attention section
+    allDone: {
+      flexDirection: 'row', alignItems: 'center', gap: 8, justifyContent: 'center',
+      backgroundColor: c.successLight ?? c.gray50, borderRadius: 12, padding: 16, marginBottom: 4,
+    },
+    allDoneText: { fontSize: 13, fontWeight: '600', color: c.textPrimary },
+    attentionSection: {
+      backgroundColor: c.surface, borderRadius: 14, borderWidth: 1, borderColor: c.border,
+      padding: 14, marginBottom: 4,
+    },
+    attentionHeader: { marginBottom: 4 },
+    attentionTitle: { fontSize: 14, fontWeight: '800', color: c.textPrimary },
+    attentionCount: { backgroundColor: c.danger, borderRadius: 10, paddingHorizontal: 7, paddingVertical: 1 },
+    attentionCountTxt: { fontSize: 11, fontWeight: '800', color: '#fff' },
+    attentionSub: { fontSize: 11, color: c.textMuted, marginTop: 2 },
+    attentionRoleLabel: { fontSize: 11, fontWeight: '700', color: c.textSecondary, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.3 },
+    attentionItem: {
+      flexDirection: 'row', alignItems: 'center', gap: 8,
+      borderLeftWidth: 3, paddingLeft: 10, paddingVertical: 8,
+    },
+    attentionName: { fontSize: 13, fontWeight: '600', color: c.textPrimary },
+    attentionMeta: { fontSize: 11, color: c.textMuted, marginTop: 2 },
+    attentionTasks: { fontSize: 11, color: c.textMuted, flexShrink: 0 },
+
+    // Breakdown section (type filter tabs + list)
+    breakdownHead: { fontSize: 13, fontWeight: '700', color: c.textPrimary, marginTop: 4 },
+    typeTabRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+    typeTab: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: c.gray50, borderWidth: 1, borderColor: c.border },
+    typeTabActive: { backgroundColor: c.primary, borderColor: c.primary },
+    typeTabTxt: { fontSize: 12, fontWeight: '600', color: c.textSecondary },
+    typeTabTxtActive: { color: '#fff' },
 
     // Team Routine Summary
     summaryCard: { backgroundColor: c.surface, borderRadius: 14, borderWidth: 1, borderColor: c.border, overflow: 'hidden' },

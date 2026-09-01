@@ -1,5 +1,5 @@
-import React, { useState, useMemo, useCallback, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, ActivityIndicator, RefreshControl } from 'react-native';
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, ActivityIndicator, RefreshControl, TextInput } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -33,14 +33,22 @@ export default function AgreementsListScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
 
   const hasLoadedRef = useRef(false);
+  // Read inside load() via a ref so `load` stays identity-stable — otherwise
+  // useFocusEffect would re-fire on every keystroke and defeat the debounce.
+  const searchRef = useRef(search);
+  searchRef.current = search;
 
   const load = useCallback(async (isRefresh = false) => {
     if (!workspace?.id) return;
     if (!isRefresh && !hasLoadedRef.current) setLoading(true);
     try {
-      const res = await api.contracts.listAgreements(workspace.id);
+      // Server-side search — matches web's Agreements list; the backend now
+      // matches agreement_name as well as agreement_number (fix 4427687e).
+      const q = searchRef.current.trim();
+      const res = await api.contracts.listAgreements(workspace.id, q ? { search: q } : undefined);
       setAgreements(res.data?.items ?? res.data ?? []);
       setError(null);
     } catch (err) {
@@ -54,6 +62,13 @@ export default function AgreementsListScreen() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
+  // Debounced server-side re-fetch as the user types.
+  useEffect(() => {
+    if (!hasLoadedRef.current) return;
+    const t = setTimeout(() => load(), 300);
+    return () => clearTimeout(t);
+  }, [search, load]);
+
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
       <View style={s.header}>
@@ -64,6 +79,22 @@ export default function AgreementsListScreen() {
         <TouchableOpacity style={s.backBtn} onPress={() => navigation.navigate('CreateEditAgreement', { appId: workspace!.id })}>
           <Ionicons name="add" size={24} color={colors.primary} />
         </TouchableOpacity>
+      </View>
+
+      <View style={s.searchRow}>
+        <Ionicons name="search-outline" size={15} color={colors.gray400} />
+        <TextInput
+          style={s.searchInput}
+          placeholder="Search agreements..."
+          placeholderTextColor={colors.gray400}
+          value={search}
+          onChangeText={setSearch}
+        />
+        {search.length > 0 && (
+          <TouchableOpacity onPress={() => setSearch('')}>
+            <Ionicons name="close-circle" size={16} color={colors.gray400} />
+          </TouchableOpacity>
+        )}
       </View>
 
       {loading ? (
@@ -95,8 +126,13 @@ export default function AgreementsListScreen() {
                     <Ionicons name="document-text-outline" size={20} color="#4f46e5" />
                   </View>
                   <View style={s.cardBody}>
-                    <Text style={s.cardTitle}>{a.agreement_number ?? `Agreement #${a.id}`}</Text>
+                    {/* Matches web's Agreements.jsx list — agreement_name is the
+                        heading, agreement_number is the secondary code chip,
+                        not the other way around (agreement_number used to be
+                        shown as the heading here). */}
+                    <Text style={s.cardTitle} numberOfLines={2}>{a.agreement_name || a.agreement_number || `Agreement #${a.id}`}</Text>
                     <View style={s.metaRow}>
+                      <Text style={s.codeText}>{a.agreement_number ?? `#${a.id}`}</Text>
                       {a.client?.client_name ? <Text style={s.metaText}>{a.client.client_name}</Text> : null}
                       <Text style={s.metaText}>{a.services?.length ?? 0} services</Text>
                     </View>
@@ -125,18 +161,26 @@ function makeStyles(c: AppColors) {
     },
     backBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
     title: { fontSize: 20, fontFamily: SERIF, color: c.textPrimary, fontWeight: '700' },
+    searchRow: {
+      flexDirection: 'row', alignItems: 'center', gap: 8,
+      marginHorizontal: 16, marginTop: 12, marginBottom: 4,
+      backgroundColor: c.surface, borderRadius: 10, borderWidth: 1, borderColor: c.border,
+      paddingHorizontal: 12, paddingVertical: 8,
+    },
+    searchInput: { flex: 1, fontSize: 13, color: c.textPrimary },
     list: { padding: 16, gap: 10 },
     empty: { alignItems: 'center', gap: 12, paddingTop: 60 },
     emptyText: { fontSize: 14, color: c.textMuted },
     card: {
-      flexDirection: 'row', alignItems: 'center', gap: 12,
+      flexDirection: 'row', alignItems: 'flex-start', gap: 12,
       backgroundColor: c.surface, borderRadius: 14, padding: 14,
       borderWidth: 1, borderColor: c.border,
     },
     iconBox: { width: 40, height: 40, borderRadius: 10, backgroundColor: '#4f46e514', alignItems: 'center', justifyContent: 'center' },
     cardBody: { flex: 1, gap: 4 },
     cardTitle: { fontSize: 14, fontWeight: '700', color: c.textPrimary },
-    metaRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+    codeText: { fontSize: 11, fontWeight: '700', color: c.primary, backgroundColor: c.gray50, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+    metaRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', alignItems: 'center' },
     metaText: { fontSize: 11, color: c.textMuted },
     statusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1 },
     statusText: { fontSize: 11, fontWeight: '700', textTransform: 'capitalize' },

@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, RefreshControl,
-  TouchableOpacity, Platform,
+  TouchableOpacity, Platform, ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -47,11 +47,14 @@ interface RoutineStat {
   tasks_total: number;
 }
 
-interface TeamRoutineReportee {
-  user: { id: number; first_name?: string; last_name?: string; email?: string };
-  overall_efficiency: number | null;
-  routine_stats: RoutineStat[];
-  is_manager?: boolean;
+// Matches backend buildUserAreaStats — one entry per area on the user's
+// role(s); `pct` is null when the area has no tasks this month.
+interface AreaStat {
+  area_id: number;
+  area_name: string;
+  done: number;
+  total: number;
+  pct: number | null;
 }
 
 interface DashData {
@@ -92,6 +95,7 @@ interface TeamDashData {
   sub_managers?: Array<{ user_id: number; name: string }>;
   min_hours_per_week?: number;
   min_hours_per_day?: number;
+  pending_manager_reviews?: number;
   team_totals?: {
     member_count?: number;
     hours_this_week?: number;
@@ -208,6 +212,7 @@ export default function DashboardScreen() {
 
   const [data, setData] = useState<DashData | null>(null);
   const [teamData, setTeamData] = useState<TeamDashData | null>(null);
+  const [teamLoading, setTeamLoading] = useState(false);
   const [pendingBusinessReviews, setPendingBusinessReviews] = useState(0);
   const [userName, setUserName] = useState('');
   const [myPhotoUrl, setMyPhotoUrl] = useState<string | null>(null);
@@ -241,11 +246,9 @@ export default function DashboardScreen() {
   const [myProjects, setMyProjects] = useState<any[]>([]);
   const [myRoutines, setMyRoutines] = useState<RoutineStat[]>([]);
   const [myRoutinesEfficiency, setMyRoutinesEfficiency] = useState<number | null>(null);
-
-  // Team Dashboard extra widgets
-  const [teamRoutines, setTeamRoutines] = useState<TeamRoutineReportee[]>([]);
-  const [apprMembers, setApprMembers] = useState<any[]>([]);
-  const [apprTotals, setApprTotals] = useState<{ total_appr: number; total_fb: number }>({ total_appr: 0, total_fb: 0 });
+  const [myAreas, setMyAreas] = useState<AreaStat[]>([]);
+  // 'routines' | 'areas' — matches web MyDashbaord's rtView toggle.
+  const [myRoutinesTab, setMyRoutinesTab] = useState<'routines' | 'areas'>('routines');
 
   const currentMonth = useMemo(() => {
     const d = new Date();
@@ -269,6 +272,7 @@ export default function DashboardScreen() {
     setMyProjects(Array.isArray(projItems) ? projItems : []);
     setMyRoutines(rout.data?.routine_stats ?? []);
     setMyRoutinesEfficiency(rout.data?.overall_efficiency ?? null);
+    setMyAreas(rout.data?.area_stats ?? []);
   }, [api, currentMonth]);
 
   // Admins default to the "admin" scope (equivalent to the old full-org
@@ -280,39 +284,46 @@ export default function DashboardScreen() {
     if (isAdmin) setMgrScope('admin');
   }, [isAdmin]);
 
+  // Deliberately NOT part of the initial load() — this used to be bundled into
+  // the same Promise.all as every "My Dashboard" request, so switching to the
+  // Team tab was instant but the *first* screen paint (regardless of which tab
+  // you actually wanted) waited on ~5 extra team/business-review requests, and
+  // a single team-fetch failure blanked the whole screen via load()'s shared
+  // error state. Now it's fetched lazily the first time Team view is opened,
+  // with its own loading flag and failure isolation so a team-fetch error only
+  // affects the Team section (it already renders every field with ?? fallbacks).
   const loadTeamData = useCallback(async () => {
     if (!workspace || !canSeeTeamContent) return;
-    const apiScope = mgrScope === 'all' ? 'team' : mgrScope;
-    const scopeViewAs = mgrScope === 'all' && viewAs != null ? viewAs : undefined;
-    // routRes/apprRes only depend on mgrScope/viewAs/currentMonth, not on
-    // teamRes — no reason to wait for getManagerDashboard before firing them.
-    const [teamRes, routRes, apprRes, bizRevRes] = await Promise.all([
-      api.dashboard.getManagerDashboard(workspace.id, mgrScope, undefined, viewAs ?? undefined),
-      api.routines.getTeamDashboard(workspace.id, { mode: 'month', month: currentMonth, scope: mgrScope, view_as: scopeViewAs }).catch(() => ({ data: {} })),
-      api.appreciations.getTeamStats(workspace.id, { scope: apiScope, month: currentMonth, view_as: scopeViewAs }).catch(() => ({ data: {} })),
-      // Matches web's TeamDashboard.jsx "Business Reviews Pending" hero tile —
-      // open daily/weekly/monthly check-ins this manager still needs to complete.
-      api.businessReviews.dashboard(workspace.id, {}).catch(() => ({ data: {} })),
-    ]);
-    setTeamData(teamRes.data);
-    setTeamRoutines(routRes.data?.reportees ?? []);
-    setApprMembers(apprRes.data?.members ?? []);
-    setApprTotals({ total_appr: apprRes.data?.total_appr ?? 0, total_fb: apprRes.data?.total_fb ?? 0 });
-    setPendingBusinessReviews((bizRevRes.data?.pending ?? []).length);
-  }, [workspace, api, isAdmin, canSeeTeamContent, mgrScope, viewAs, currentMonth]);
+    setTeamLoading(true);
+    try {
+      // Routine Analysis and Appreciations & Feedback fetch their own data now
+      // (each has its own independently-browsable month picker, matching web) —
+      // only the manager-dashboard totals and business-review queue live here.
+      const [teamRes, bizRevRes] = await Promise.all([
+        api.dashboard.getManagerDashboard(workspace.id, mgrScope, undefined, viewAs ?? undefined),
+        // Matches web's TeamDashboard.jsx "Business Reviews Pending" hero tile —
+        // open daily/weekly/monthly check-ins this manager still needs to complete.
+        api.businessReviews.dashboard(workspace.id, {}).catch(() => ({ data: {} })),
+      ]);
+      setTeamData(teamRes.data);
+      setPendingBusinessReviews((bizRevRes.data?.pending ?? []).length);
+    } catch {
+      // Swallowed — the Team section already degrades gracefully to its ??
+      // fallbacks when teamData is still null, no dedicated error UI needed.
+    } finally {
+      setTeamLoading(false);
+    }
+  }, [workspace, api, isAdmin, canSeeTeamContent, mgrScope, viewAs]);
 
   const load = useCallback(async () => {
     if (!workspace) return;
-    // Team/manager content is available to admins and to members who have
-    // reportees in the org chart — matches QA web's Sidebar.jsx `hasTeam` gate.
-    const [appRes, dash, notif, me, feedRes, , , membersRes] = await Promise.all([
+    const [appRes, dash, notif, me, feedRes, , membersRes] = await Promise.all([
       api.workspace.getApp(workspace.id),
       api.dashboard.getMyDashboard(workspace.id),
       api.notifications.unreadCount(workspace.id),
       api.me.getProfile(),
       api.feed.list(workspace.id),
       loadMyExtras(workspace.id),
-      loadTeamData(),
       api.workspace.getMembers(workspace.id).catch(() => ({ data: {} })),
     ]);
     const appData = appRes.data?.app ?? appRes.data;
@@ -323,16 +334,21 @@ export default function DashboardScreen() {
     const last = me.data?.lastName ?? me.data?.last_name ?? '';
     setUserName(`${first} ${last}`.trim() || first);
     const myId = me.data?.id;
-    const memberRows: any[] = membersRes.data?.members ?? membersRes.data?.items ?? membersRes.data ?? [];
+    const memberRowsRaw = membersRes.data?.members ?? membersRes.data?.items ?? membersRes.data ?? [];
+    const memberRows: any[] = Array.isArray(memberRowsRaw) ? memberRowsRaw : [];
     const myMember = memberRows.find((m: any) => String(m.user_id ?? m.id) === String(myId));
     setMyPhotoUrl(myMember?.photo_url ?? null);
     const items = feedRes.data?.items ?? feedRes.data ?? [];
     setFeed(Array.isArray(items) ? items.slice(0, 3) : []);
-  }, [workspace, api, setWorkspace, loadMyExtras, loadTeamData, applyUnread]);
+  }, [workspace, api, setWorkspace, loadMyExtras, applyUnread]);
 
   useEffect(() => { run(load); }, [load]);
 
-  useEffect(() => { if (dashView === 'Team') loadTeamData(); }, [mgrScope, viewAs]);
+  // Fires the first time Team view is opened, and again whenever the scope
+  // (Direct/Entire Team/All Members) or the admin's "view as" selection
+  // changes while already on Team view (loadTeamData already depends on
+  // mgrScope/viewAs itself, so its own identity change re-triggers this too).
+  useEffect(() => { if (dashView === 'Team') loadTeamData(); }, [dashView, loadTeamData]);
 
   // Matches web's 30s poll (NotificationBell.jsx) — mobile previously only
   // ever refreshed the unread count on load/refocus, so a notification that
@@ -382,6 +398,7 @@ export default function DashboardScreen() {
   const tt = teamData?.team_totals;
   const members = teamData?.members ?? [];
   const minHoursPerWeek = teamData?.min_hours_per_week ?? 40;
+  const pendingReviews = teamData?.pending_manager_reviews ?? 0;
 
   const teamLeaderboard: LeaderboardEntry[] = members.map((m) => ({
     id: m.user_id ?? m.user?.id ?? 0,
@@ -433,7 +450,7 @@ export default function DashboardScreen() {
             onPress={() => setDashView('Team')}
           >
             <Ionicons name={dashView === 'Team' ? 'people' : 'people-outline'} size={13} color={dashView === 'Team' ? '#fff' : colors.textSecondary} />
-            <Text style={[s.viewToggleTxt, dashView === 'Team' && s.viewToggleTxtActive]}>Team Dashboard</Text>
+            <Text style={[s.viewToggleTxt, dashView === 'Team' && s.viewToggleTxtActive]}>Manager Dashboard</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -628,10 +645,74 @@ export default function DashboardScreen() {
               </View>
             )}
 
-            {/* My Routines */}
-            {myRoutines.length > 0 && (
+            {/* My Routines / My Areas — mirrors web MyDashboard's Routines|Areas toggle */}
+            {(myRoutines.length > 0 || myAreas.length > 0) && (
               <View style={s.sectionCard}>
-                <Text style={s.sectionHead}>MY ROUTINES</Text>
+                <View style={s.rtHeadRow}>
+                  <Text style={[s.sectionHead, { marginBottom: 0 }]}>
+                    {myRoutinesTab === 'areas' && myAreas.length > 0 ? 'MY AREAS' : 'MY ROUTINES'}
+                  </Text>
+                  {myAreas.length > 0 && (
+                    <View style={s.rtTabs}>
+                      <TouchableOpacity
+                        style={[s.rtTab, myRoutinesTab === 'routines' && s.rtTabActive]}
+                        onPress={() => setMyRoutinesTab('routines')}
+                      >
+                        <Text style={[s.rtTabTxt, myRoutinesTab === 'routines' && s.rtTabTxtActive]}>Routines</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[s.rtTab, myRoutinesTab === 'areas' && s.rtTabActive]}
+                        onPress={() => setMyRoutinesTab('areas')}
+                      >
+                        <Text style={[s.rtTabTxt, myRoutinesTab === 'areas' && s.rtTabTxtActive]}>Areas</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+
+                {myRoutinesTab === 'areas' && myAreas.length > 0 ? (
+                  (() => {
+                    // Same math as web MyDashboard: overall = mean of each
+                    // area's own completion % across areas that have tasks
+                    // this month; buckets mirror the Routines view.
+                    const areaClr = (p: number | null) =>
+                      p == null ? colors.gray400 : p >= 80 ? colors.success : p >= 50 ? colors.warning : colors.danger;
+                    const withPct = myAreas.filter((a) => a.pct != null);
+                    const overall = withPct.length
+                      ? Math.round(withPct.reduce((sum, a) => sum + (a.pct ?? 0), 0) / withPct.length)
+                      : null;
+                    const onTrack = myAreas.filter((a) => a.pct === 100).length;
+                    const needsAttn = myAreas.filter((a) => a.pct != null && a.pct < 100).length;
+                    return (
+                      <>
+                        <View style={s.routineKpiRow}>
+                          <View style={s.routineKpiCell}><Text style={[s.routineKpiVal, { color: areaClr(overall) }]}>{overall != null ? `${overall}%` : '—'}</Text><Text style={s.routineKpiLbl}>Completion</Text></View>
+                          <View style={s.routineKpiCell}><Text style={[s.routineKpiVal, { color: colors.success }]}>{onTrack}</Text><Text style={s.routineKpiLbl}>On Track</Text></View>
+                          <View style={s.routineKpiCell}><Text style={[s.routineKpiVal, needsAttn > 0 && { color: colors.warning }]}>{needsAttn}</Text><Text style={s.routineKpiLbl}>Attention</Text></View>
+                          <View style={s.routineKpiCell}><Text style={s.routineKpiVal}>{myAreas.length}</Text><Text style={s.routineKpiLbl}>Total</Text></View>
+                        </View>
+                        {overall != null && (
+                          <View style={s.rtBarWrap}>
+                            <View style={s.rtBarTrack}>
+                              <View style={[s.rtBarFill, { width: `${overall}%` as any, backgroundColor: areaClr(overall) }]} />
+                            </View>
+                            <Text style={s.rtBarLabel}>{overall}% overall</Text>
+                          </View>
+                        )}
+                        {myAreas.map((a) => (
+                          <View key={a.area_id} style={s.routineRow}>
+                            <View style={[s.areaDot, { backgroundColor: areaClr(a.pct) }]} />
+                            <Text style={s.routineDesc} numberOfLines={1}>{a.area_name}</Text>
+                            <Text style={s.areaMeta}>{a.total > 0 ? `${a.done} / ${a.total}` : '—'}</Text>
+                          </View>
+                        ))}
+                      </>
+                    );
+                  })()
+                ) : myRoutines.length === 0 ? (
+                  <Text style={s.rtEmptyTxt}>No routines assigned for this month.</Text>
+                ) : (
+                <>
                 {(() => {
                   // Matches web's MyDashboard.jsx exactly: efficiency is the
                   // backend's overall_efficiency (average of each routine's
@@ -658,7 +739,11 @@ export default function DashboardScreen() {
                     </View>
                   );
                 })()}
-                {myRoutines.slice(0, 6).map((r) => {
+                {/* Matches web's MyDashboard.jsx exactly — 'not_applicable' (this
+                    routine isn't due this period) is counted in the Total KPI
+                    above but never rendered as its own row; web only ever
+                    renders the Needs Attention and On Track sections. */}
+                {myRoutines.filter((r) => r.status !== 'not_applicable').slice(0, 6).map((r) => {
                   const statusColor = r.status === 'completed' ? colors.success : r.status === 'pending' ? colors.warning : r.status === 'incomplete' ? colors.danger : colors.gray400;
                   return (
                     <View key={r.routine.id} style={s.routineRow}>
@@ -674,6 +759,8 @@ export default function DashboardScreen() {
                 <TouchableOpacity onPress={() => goToMore('Routines')}>
                   <Text style={s.viewAllLink}>View all →</Text>
                 </TouchableOpacity>
+                </>
+                )}
               </View>
             )}
 
@@ -749,6 +836,13 @@ export default function DashboardScreen() {
         {/* ── TEAM DASHBOARD (matches web TeamDashboard.jsx) ── */}
         {dashView === 'Team' && canSeeTeamContent && (
           <>
+            {/* Lazy-loaded the first time this tab is opened — see loadTeamData */}
+            {teamLoading && !teamData && (
+              <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+                <ActivityIndicator size="large" color={colors.primary} />
+              </View>
+            )}
+
             {/* Date strip */}
             <View style={s.dateStrip}>
               <View style={[s.greenDot, { backgroundColor: colors.primary }]} />
@@ -849,6 +943,21 @@ export default function DashboardScreen() {
                 </Text>
                 <Text style={s.kpiSub}>on time</Text>
               </View>
+              {pendingReviews > 0 && (
+                <TouchableOpacity
+                  style={[s.kpiCard, { borderTopColor: colors.danger }]}
+                  onPress={() => navigation.navigate('PerformanceTab', { screen: 'PerformanceHome' } as never)}
+                >
+                  <View style={s.kpiHeadRow}>
+                    <Text style={s.kpiLabel} numberOfLines={1}>REVIEWS</Text>
+                    <View style={[s.kpiIconWrap, { backgroundColor: colors.danger + '22' }]}>
+                      <Ionicons name="document-text-outline" size={12} color={colors.danger} />
+                    </View>
+                  </View>
+                  <Text style={[s.kpiValue, { color: colors.danger }]}>{pendingReviews}</Text>
+                  <Text style={s.kpiSub}>pending</Text>
+                </TouchableOpacity>
+              )}
               {pendingBusinessReviews > 0 && (
                 <TouchableOpacity
                   style={[s.kpiCard, { borderTopColor: '#d97706' }]}
@@ -952,11 +1061,11 @@ export default function DashboardScreen() {
               />
             )}
 
-            {/* Routine Analysis */}
-            <TeamRoutineAnalysisWidget reportees={teamRoutines} colors={colors} onViewAllRoutines={() => goToMore('Routines')} />
+            {/* Routine Analysis — self-contained, own month picker */}
+            <TeamRoutineAnalysisWidget appId={workspace!.id} mgrScope={mgrScope} viewAs={viewAs} colors={colors} onViewAllRoutines={() => goToMore('Routines')} />
 
-            {/* Appreciations & Feedback */}
-            <AppreciationsFeedbackWidget members={apprMembers} totalAppr={apprTotals.total_appr} totalFb={apprTotals.total_fb} colors={colors} />
+            {/* Appreciations & Feedback — self-contained, own month picker */}
+            <AppreciationsFeedbackWidget appId={workspace!.id} mgrScope={mgrScope} viewAs={viewAs} colors={colors} />
 
             {/* Business Review Calendar (reviews this manager conducts) */}
             {data?.user?.id != null && (
@@ -1271,5 +1380,19 @@ function makeStyles(c: AppColors) {
     routineBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1 },
     routineBadgeTxt: { fontSize: 10, fontWeight: '700', textTransform: 'capitalize' },
     viewAllLink: { fontSize: 12, fontWeight: '700', color: c.primary, marginTop: 8, textAlign: 'right' },
+    // Routines | Areas toggle (My Routines card)
+    rtHeadRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
+    rtTabs: { flexDirection: 'row', backgroundColor: c.gray100, borderRadius: 8, padding: 2 },
+    rtTab: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 },
+    rtTabActive: { backgroundColor: c.surface, borderWidth: 1, borderColor: c.border },
+    rtTabTxt: { fontSize: 11, fontWeight: '700', color: c.textMuted },
+    rtTabTxtActive: { color: c.textPrimary },
+    rtBarWrap: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
+    rtBarTrack: { flex: 1, height: 7, borderRadius: 4, backgroundColor: c.gray100, overflow: 'hidden' },
+    rtBarFill: { height: 7, borderRadius: 4 },
+    rtBarLabel: { fontSize: 10, fontWeight: '700', color: c.textSecondary },
+    rtEmptyTxt: { fontSize: 12, color: c.textMuted, textAlign: 'center', paddingVertical: 12 },
+    areaDot: { width: 8, height: 8, borderRadius: 4 },
+    areaMeta: { fontSize: 11, fontWeight: '700', color: c.textSecondary },
   });
 }

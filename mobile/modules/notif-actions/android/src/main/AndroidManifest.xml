@@ -1,0 +1,26 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+  <uses-permission android:name="android.permission.INTERNET" />
+
+  <application>
+
+    <!--
+      expo-notifications routes a notification-action broadcast to whichever
+      receiver in this package declares the highest-priority intent-filter for
+      NOTIFICATION_EVENT (its own service registers at android:priority="-1"
+      precisely so an app receiver can override it). Registering here at
+      priority 1 makes ChatActionReceiver the designated receiver; it services
+      the chat "Reply" / "Mark as read" buttons itself while the app is killed
+      and forwards every other event straight back to expo-notifications.
+    -->
+    <receiver
+      android:name="expo.modules.notifactions.ChatActionReceiver"
+      android:enabled="true"
+      android:exported="false">
+      <intent-filter android:priority="1">
+        <action android:name="expo.modules.notifications.NOTIFICATION_EVENT" />
+      </intent-filter>
+    </receiver>
+
+  </application>
+</manifest>

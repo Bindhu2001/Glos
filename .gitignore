@@ -9,6 +9,10 @@ mobile/dist/
 mobile/.expo/
 mobile/android/
 mobile/ios/
+# Local Expo modules — build artifacts only, keep the source
+mobile/modules/*/android/.gradle/
+mobile/modules/*/android/build/
+mobile/modules/*/android/.cxx/
 *.jks
 *.p8
 *.p12

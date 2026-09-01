@@ -40,7 +40,7 @@ function initials(name?: string) {
   return name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2);
 }
 
-const COL = { sno: 30, name: 148, stat: 84 };
+const COL = { sno: 36, name: 148, stat: 84 };
 // Gap between columns — matches TeamActivityTableWidget's spacing so the two
 // Team Dashboard tables read consistently rather than looking smashed together.
 const COL_GAP = 16;
@@ -114,7 +114,7 @@ export default function BusinessReviewsTableWidget({
         <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={{ minWidth: TABLE_WIDTH }}>
           <View style={{ minWidth: TABLE_WIDTH }}>
             <View style={s.tableHead}>
-              <Text style={[s.th, { width: COL.sno }]}>#</Text>
+              <Text style={[s.th, { width: COL.sno }]}>S.No</Text>
               <Text style={[s.th, s.alignLeft, { width: COL.name }]}>Manager</Text>
               <Text style={[s.th, { width: COL.stat }]}>Daily{'\n'}Check-ins</Text>
               <Text style={[s.th, { width: COL.stat }]}>Weekly</Text>

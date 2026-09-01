@@ -51,7 +51,7 @@ function FieldLabel({ icon, text, required, colors, s }: { icon: IconName; text:
 
 export default function CreateTaskScreen() {
   const route = useRoute<Route>();
-  const { appId, taskId } = route.params;
+  const { appId, taskId, presetContractId, presetAgreementServiceId, lockContractType } = route.params;
   const isEditMode = !!taskId;
   const navigation = useNavigation();
   const api = useApi();
@@ -60,6 +60,12 @@ export default function CreateTaskScreen() {
   const insets = useSafeAreaInsets();
 
   const [title, setTitle] = useState('');
+  // Create-mode-only checklist seeding — matches web's CreateTaskModal
+  // (checklistItems local list, submitted right after the task itself is
+  // created). Edit mode already has a full live-backed Checklist tab on
+  // TaskDetailScreen, so this doesn't need its own edit-mode variant.
+  const [checklistDraft, setChecklistDraft] = useState<string[]>([]);
+  const [checklistInput, setChecklistInput] = useState('');
   const [description, setDescription] = useState('');
   const [descAttachments, setDescAttachments] = useState<Attachment[]>([]);
   const [descPendingFiles, setDescPendingFiles] = useState<PickedFile[]>([]);
@@ -74,11 +80,20 @@ export default function CreateTaskScreen() {
   const [estMinutes, setEstMinutes] = useState(45);
   const [customEst, setCustomEst] = useState(false);
   const [customEstInput, setCustomEstInput] = useState('');
-  const [taskType, setTaskType] = useState<'internal' | 'project' | 'contract'>('internal');
+  const [taskType, setTaskType] = useState<'internal' | 'project' | 'contract'>(
+    lockContractType || presetContractId ? 'contract' : 'internal',
+  );
   const [projectId, setProjectId] = useState<number | null>(null);
   const [milestoneId, setMilestoneId] = useState<number | null>(null);
   const [routineId, setRoutineId] = useState<number | null>(null);
-  const [contractId, setContractId] = useState<number | null>(null);
+  const [contractId, setContractId] = useState<number | null>(presetContractId ?? null);
+  const [agreementServiceId, setAgreementServiceId] = useState<number | null>(presetAgreementServiceId ?? null);
+  const [agreementServices, setAgreementServices] = useState<any[]>([]);
+  const [serviceModal, setServiceModal] = useState(false);
+  const [serviceSearch, setServiceSearch] = useState('');
+  // Seeded once from the preset service on open (create mode) so it isn't
+  // re-seeded every render; also guards the edit-mode load.
+  const serviceSeededRef = useRef(false);
 
   // Data
   const [members, setMembers] = useState<any[]>([]);
@@ -165,6 +180,13 @@ export default function CreateTaskScreen() {
           setTaskType('project');
           setProjectId(task.project_id);
           setMilestoneId(task.milestone_id ?? null);
+        } else if (task.contract_id) {
+          // Preserve the agreement + service link on edit — dropping these
+          // (as an unconditional `internal` fallback would) silently unlinks
+          // the task from its agreement/service on save.
+          setTaskType('contract');
+          setContractId(task.contract_id);
+          setAgreementServiceId(task.agreement_service_id ?? null);
         } else {
           setTaskType('internal');
         }
@@ -207,6 +229,59 @@ export default function CreateTaskScreen() {
       .then((res: any) => setContracts(res.data?.agreements ?? res.data?.items ?? res.data ?? []))
       .catch(() => setContracts([]));
   }, [taskType, appId]);
+
+  // Services attached to the selected agreement — matches web's CreateTaskModal
+  // service dropdown. Fetched fresh from the agreement (the list payload's
+  // services array can be trimmed), so the Compliance Board's preset service
+  // and its checklist seeding always resolve.
+  useEffect(() => {
+    if (taskType !== 'contract' || !contractId) { setAgreementServices([]); return; }
+    let alive = true;
+    api.contracts.getAgreement(appId, contractId)
+      .then((res: any) => {
+        if (!alive) return;
+        const svcs: any[] = res.data?.services ?? res.data?.agreement?.services ?? [];
+        setAgreementServices(svcs);
+        // Seed the checklist from the preset service once, in create mode,
+        // exactly like web's selectAgreementService (deliverables then
+        // major_activities, de-duped).
+        if (!isEditMode && !serviceSeededRef.current && presetAgreementServiceId) {
+          const match = svcs.find((x) => x.id === presetAgreementServiceId);
+          if (match) {
+            serviceSeededRef.current = true;
+            const auto = [...(match.deliverables ?? []), ...(match.major_activities ?? [])];
+            setChecklistDraft((prev) => {
+              const merged = [...prev];
+              auto.forEach((t: string) => { if (t && !merged.includes(t)) merged.push(t); });
+              return merged;
+            });
+          }
+        }
+      })
+      .catch(() => { if (alive) setAgreementServices([]); });
+    return () => { alive = false; };
+  }, [taskType, contractId, appId, isEditMode, presetAgreementServiceId]);
+
+  // Pick a service by hand — reseeds checklist items from the newly chosen
+  // service, dropping ones auto-added from a previously selected service but
+  // keeping hand-typed ones (mirrors web's selectAgreementService).
+  const selectService = useCallback((svc: any) => {
+    setAgreementServiceId(svc.id);
+    setServiceModal(false);
+    setServiceSearch('');
+    const auto: string[] = [...(svc.deliverables ?? []), ...(svc.major_activities ?? [])];
+    setChecklistDraft((prev) => {
+      const priorAuto = new Set(
+        agreementServices
+          .filter((x) => x.id !== svc.id)
+          .flatMap((x) => [...(x.deliverables ?? []), ...(x.major_activities ?? [])]),
+      );
+      const handTyped = prev.filter((t) => !priorAuto.has(t));
+      const merged = [...handTyped];
+      auto.forEach((t) => { if (t && !merged.includes(t)) merged.push(t); });
+      return merged;
+    });
+  }, [agreementServices]);
 
   useEffect(() => {
     if (!assigneeId) { setRoutines([]); return; }
@@ -345,6 +420,11 @@ export default function CreateTaskScreen() {
         estimated_minutes: estMinutes || 0,
         project_id: taskType === 'project' ? (projectId ?? undefined) : undefined,
         milestone_id: taskType === 'project' ? (milestoneId ?? undefined) : undefined,
+        // Contract link — was never sent, so a contract task created/edited on
+        // mobile silently lost its agreement (and service). Matches web's
+        // CreateTaskModal payload.
+        contract_id: taskType === 'contract' ? (contractId ?? null) : null,
+        agreement_service_id: taskType === 'contract' && contractId ? (agreementServiceId ?? null) : null,
         routine_id: routineId ?? undefined,
       };
       if (isEditMode && taskId) {
@@ -358,7 +438,11 @@ export default function CreateTaskScreen() {
           setUploadingDescFiles(false);
         }
       } else {
-        await api.tasks.create(appId, { ...payload, status: 'open' });
+        const created = await api.tasks.create(appId, { ...payload, status: 'open' });
+        const newTaskId = created.data?.id;
+        if (newTaskId && checklistDraft.length > 0) {
+          await Promise.all(checklistDraft.map((label) => api.tasks.addChecklistItem(appId, newTaskId, label)));
+        }
       }
       navigation.goBack();
     } catch {
@@ -389,6 +473,43 @@ export default function CreateTaskScreen() {
           <Input value={description} onChangeText={(v) => setDescription(v.slice(0, 1000))}
             placeholder="Optional details..." multiline numberOfLines={3} />
           <Text style={s.charCount}>{description.length}/1000</Text>
+
+          {!isEditMode && (
+            <>
+              <FieldLabel icon="checkbox-outline" text="Checklist" colors={colors} s={s} />
+              {checklistDraft.map((item, i) => (
+                <View key={i} style={s.checklistDraftRow}>
+                  <Ionicons name="square-outline" size={16} color={colors.gray400} />
+                  <Text style={s.checklistDraftTxt} numberOfLines={1}>{item}</Text>
+                  <TouchableOpacity onPress={() => setChecklistDraft((prev) => prev.filter((_, idx) => idx !== i))} hitSlop={8}>
+                    <Ionicons name="close-circle" size={18} color={colors.gray400} />
+                  </TouchableOpacity>
+                </View>
+              ))}
+              <View style={s.checklistAddRow}>
+                <TextInput
+                  style={s.checklistInput}
+                  placeholder="Add a checklist item"
+                  placeholderTextColor={colors.gray400}
+                  value={checklistInput}
+                  onChangeText={setChecklistInput}
+                  onSubmitEditing={() => {
+                    if (checklistInput.trim()) { setChecklistDraft((prev) => [...prev, checklistInput.trim()]); setChecklistInput(''); }
+                  }}
+                  returnKeyType="done"
+                />
+                <TouchableOpacity
+                  onPress={() => {
+                    if (checklistInput.trim()) { setChecklistDraft((prev) => [...prev, checklistInput.trim()]); setChecklistInput(''); }
+                  }}
+                  disabled={!checklistInput.trim()}
+                  hitSlop={8}
+                >
+                  <Ionicons name="add-circle" size={26} color={checklistInput.trim() ? colors.primary : colors.gray300} />
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
 
           {/* Attaching requires an existing task_id, so this is edit-mode-only — matches web. */}
           {isEditMode && (
@@ -482,26 +603,31 @@ export default function CreateTaskScreen() {
             )}
           </View>
 
-          {/* Task Type */}
-          <FieldLabel icon="grid-outline" text="Task Type" colors={colors} s={s} />
-          <View style={s.chipRow}>
-            {TASK_TYPES.map((t) => (
-              <TouchableOpacity
-                key={t}
-                style={[s.selectorChip, { backgroundColor: taskType === t ? colors.primaryLight : colors.surface, borderColor: taskType === t ? colors.primary : colors.border }]}
-                onPress={() => {
-                  setTaskType(t);
-                  if (t !== 'project') { setProjectId(null); setMilestoneId(null); }
-                  if (t !== 'contract') { setContractId(null); setContractSearch(''); }
-                }}
-              >
-                <Ionicons name={TASK_TYPE_ICONS[t]} size={13} color={taskType === t ? colors.primary : colors.gray500} />
-                <Text style={[s.selectorChipText, { color: taskType === t ? colors.primary : colors.gray500 }]}>
-                  {TASK_TYPE_LABELS[t]}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+          {/* Task Type — hidden when opened from the Compliance Board, which
+              locks the type to Agreement (matches web's lockTaskType). */}
+          {!lockContractType && (
+            <>
+              <FieldLabel icon="grid-outline" text="Task Type" colors={colors} s={s} />
+              <View style={s.chipRow}>
+                {TASK_TYPES.map((t) => (
+                  <TouchableOpacity
+                    key={t}
+                    style={[s.selectorChip, { backgroundColor: taskType === t ? colors.primaryLight : colors.surface, borderColor: taskType === t ? colors.primary : colors.border }]}
+                    onPress={() => {
+                      setTaskType(t);
+                      if (t !== 'project') { setProjectId(null); setMilestoneId(null); }
+                      if (t !== 'contract') { setContractId(null); setContractSearch(''); setAgreementServiceId(null); }
+                    }}
+                  >
+                    <Ionicons name={TASK_TYPE_ICONS[t]} size={13} color={taskType === t ? colors.primary : colors.gray500} />
+                    <Text style={[s.selectorChipText, { color: taskType === t ? colors.primary : colors.gray500 }]}>
+                      {TASK_TYPE_LABELS[t]}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </>
+          )}
 
           {taskType === 'project' && (
             <>
@@ -532,13 +658,36 @@ export default function CreateTaskScreen() {
           {taskType === 'contract' && (
             <>
               <FieldLabel icon="document-text-outline" text="Agreement" colors={colors} s={s} />
-              <TouchableOpacity style={s.pickerRow} onPress={() => setContractModal(true)}>
+              <TouchableOpacity
+                style={[s.pickerRow, lockContractType && { opacity: 0.6 }]}
+                onPress={() => { if (!lockContractType) setContractModal(true); }}
+                disabled={lockContractType}
+              >
                 <Ionicons name="document-text-outline" size={16} color={colors.gray400} />
                 <Text style={contractId ? s.pickerValue : s.pickerPlaceholder}>
-                  {contractId ? (contracts.find((c) => c.id === contractId)?.title ?? contracts.find((c) => c.id === contractId)?.agreement_number ?? 'Selected') : 'Tap to select an agreement'}
+                  {contractId ? (contracts.find((c) => c.id === contractId)?.agreement_name ?? contracts.find((c) => c.id === contractId)?.title ?? contracts.find((c) => c.id === contractId)?.agreement_number ?? 'Selected') : 'Tap to select an agreement'}
                 </Text>
-                <Ionicons name="chevron-forward" size={16} color={colors.gray400} style={{ marginLeft: 'auto' }} />
+                {!lockContractType && <Ionicons name="chevron-forward" size={16} color={colors.gray400} style={{ marginLeft: 'auto' }} />}
               </TouchableOpacity>
+
+              {contractId && (
+                <>
+                  <FieldLabel icon="construct-outline" text="Service" colors={colors} s={s} />
+                  <TouchableOpacity
+                    style={[s.pickerRow, lockContractType && !!presetAgreementServiceId && { opacity: 0.6 }]}
+                    onPress={() => { if (!(lockContractType && presetAgreementServiceId)) setServiceModal(true); }}
+                    disabled={lockContractType && !!presetAgreementServiceId}
+                  >
+                    <Ionicons name="construct-outline" size={16} color={colors.gray400} />
+                    <Text style={agreementServiceId ? s.pickerValue : s.pickerPlaceholder}>
+                      {agreementServiceId
+                        ? (agreementServices.find((x) => x.id === agreementServiceId)?.service_name ?? 'Selected')
+                        : (agreementServices.length === 0 ? 'No services on this agreement' : 'Tap to select a service')}
+                    </Text>
+                    {!(lockContractType && presetAgreementServiceId) && <Ionicons name="chevron-forward" size={16} color={colors.gray400} style={{ marginLeft: 'auto' }} />}
+                  </TouchableOpacity>
+                </>
+              )}
             </>
           )}
 
@@ -727,10 +876,50 @@ export default function CreateTaskScreen() {
                       <TouchableOpacity
                         key={c.id}
                         style={[s.modalOption, isActive && s.modalOptionActive]}
-                        onPress={() => { setContractId(c.id); setContractModal(false); }}
+                        onPress={() => { if (c.id !== contractId) setAgreementServiceId(null); setContractId(c.id); setContractModal(false); }}
                       >
                         <Ionicons name="document-text-outline" size={18} color={colors.gray400} />
                         <Text style={[s.modalOptionText, isActive && { color: colors.primary, fontWeight: '700' }]}>{label}</Text>
+                        {isActive && <Ionicons name="checkmark" size={18} color={colors.primary} style={{ marginLeft: 'auto' }} />}
+                      </TouchableOpacity>
+                    );
+                  })}
+              </ScrollView>
+            </View>
+          </KeyboardAvoidingView>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Service Picker Modal */}
+      <Modal visible={serviceModal} transparent animationType="slide" onRequestClose={() => setServiceModal(false)}>
+        <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setServiceModal(false)}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ width: '100%' }}>
+            <View style={[s.modalSheet, { paddingBottom: insets.bottom + 16 }]}>
+              <View style={s.modalHandle} />
+              <Text style={s.modalTitle}>Select Service</Text>
+              <TextInput
+                style={[s.searchInput, { color: colors.textPrimary, borderColor: colors.border, backgroundColor: colors.gray50 }]}
+                placeholder="Search services..."
+                placeholderTextColor={colors.gray400}
+                value={serviceSearch}
+                onChangeText={setServiceSearch}
+              />
+              <ScrollView keyboardShouldPersistTaps="handled">
+                {agreementServices.length === 0 && (
+                  <Text style={{ padding: 14, fontSize: 13, color: colors.textMuted }}>No services on this agreement</Text>
+                )}
+                {agreementServices
+                  .filter((x) => !serviceSearch || (x.service_name ?? '').toLowerCase().includes(serviceSearch.toLowerCase()))
+                  .map((x) => {
+                    const isActive = agreementServiceId === x.id;
+                    return (
+                      <TouchableOpacity
+                        key={x.id}
+                        style={[s.modalOption, isActive && s.modalOptionActive]}
+                        onPress={() => selectService(x)}
+                      >
+                        <Ionicons name="construct-outline" size={18} color={colors.gray400} />
+                        <Text style={[s.modalOptionText, isActive && { color: colors.primary, fontWeight: '700' }]}>{x.service_name ?? `Service #${x.id}`}</Text>
                         {isActive && <Ionicons name="checkmark" size={18} color={colors.primary} style={{ marginLeft: 'auto' }} />}
                       </TouchableOpacity>
                     );
@@ -789,6 +978,17 @@ function makeStyles(c: AppColors) {
       backgroundColor: c.primaryLight,
     },
     descAttachBtnText: { fontSize: 12, fontWeight: '600', color: c.primary },
+    checklistDraftRow: {
+      flexDirection: 'row', alignItems: 'center', gap: 8,
+      backgroundColor: c.gray50, borderWidth: 1, borderColor: c.border, borderRadius: 8,
+      paddingHorizontal: 10, paddingVertical: 8, marginBottom: 6,
+    },
+    checklistDraftTxt: { flex: 1, fontSize: 13, color: c.textPrimary },
+    checklistAddRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2, marginBottom: 8 },
+    checklistInput: {
+      flex: 1, backgroundColor: c.surface, borderWidth: 1, borderColor: c.border, borderRadius: 8,
+      paddingHorizontal: 10, paddingVertical: 8, fontSize: 13, color: c.textPrimary,
+    },
     chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 20, alignItems: 'center' },
     selectorChip: {
       flexDirection: 'row', alignItems: 'center', gap: 5,

@@ -137,6 +137,11 @@ export default function TaskReportsScreen() {
   const [showUserPicker, setShowUserPicker] = useState(false);
   const [hoursItems, setHoursItems] = useState<HoursRow[]>([]);
 
+  // Hours tab — status filter (client-side, matches web's filterStatus; the
+  // backend endpoint has no status param).
+  const [hoursStatusFilter, setHoursStatusFilter] = useState('');
+  const [showHoursStatusPicker, setShowHoursStatusPicker] = useState(false);
+
   // Details tab
   const [detailsItems, setDetailsItems] = useState<DetailsTask[]>([]);
   const [statusFilter, setStatusFilter] = useState('');
@@ -147,6 +152,12 @@ export default function TaskReportsScreen() {
   const [showPriorityPicker, setShowPriorityPicker] = useState(false);
   const [showAreaPicker, setShowAreaPicker] = useState(false);
   const [showAssigneePicker, setShowAssigneePicker] = useState(false);
+  // Details tab — month range, defaults to the current month matching web
+  // (mobile previously sent no date params at all, loading all-time).
+  const currentYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const [detailsFromMonth, setDetailsFromMonth] = useState(currentYm);
+  const [detailsToMonth, setDetailsToMonth] = useState(currentYm);
+  const [showDetailsRangePicker, setShowDetailsRangePicker] = useState(false);
 
   const monthStr = useMemo(
     () => `${year}-${String(month + 1).padStart(2, '0')}`,
@@ -176,9 +187,12 @@ export default function TaskReportsScreen() {
 
   const loadDetails = useCallback(async () => {
     if (!workspace) return;
-    const r = await api.tasks.detailsReport(workspace.id);
+    const from = `${detailsFromMonth}-01`;
+    const [ty, tm] = (detailsToMonth || detailsFromMonth).split('-').map(Number);
+    const to = `${detailsToMonth || detailsFromMonth}-${String(new Date(ty, tm, 0).getDate()).padStart(2, '0')}`;
+    const r = await api.tasks.detailsReport(workspace.id, { from, to });
     setDetailsItems(r.data?.items ?? r.data ?? []);
-  }, [workspace, api]);
+  }, [workspace, api, detailsFromMonth, detailsToMonth]);
 
   const isFirstMount = useRef(true);
 
@@ -196,6 +210,12 @@ export default function TaskReportsScreen() {
     // reloads elsewhere in the app.
     loadHours().catch(() => {});
   }, [monthStr]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const isDetailsFirstMount = useRef(true);
+  useEffect(() => {
+    if (isDetailsFirstMount.current) { isDetailsFirstMount.current = false; return; }
+    loadDetails().catch(() => {});
+  }, [detailsFromMonth, detailsToMonth]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -244,8 +264,9 @@ export default function TaskReportsScreen() {
         });
       }
     }
-    return Array.from(map.values());
-  }, [filteredHoursItems]);
+    const groups = Array.from(map.values());
+    return hoursStatusFilter ? groups.filter((g) => g.status === hoursStatusFilter) : groups;
+  }, [filteredHoursItems, hoursStatusFilter]);
 
   const grandTotalMinutes = useMemo(
     () => hoursGroups.reduce((sum, g) => sum + g.total_minutes, 0),
@@ -357,6 +378,12 @@ export default function TaskReportsScreen() {
               <Ionicons name="chevron-down" size={14} color={colors.gray400} />
             </TouchableOpacity>
           )}
+
+          <TouchableOpacity style={s.filterRow} onPress={() => setShowHoursStatusPicker(true)}>
+            <Ionicons name="flag-outline" size={15} color={colors.primary} />
+            <Text style={s.filterRowText}>{hoursStatusFilter ? STATUS_LABELS[hoursStatusFilter] ?? hoursStatusFilter : 'All Statuses'}</Text>
+            <Ionicons name="chevron-down" size={14} color={colors.gray400} />
+          </TouchableOpacity>
 
           {/* Summary cards */}
           <View style={s.summaryRow}>
@@ -470,6 +497,13 @@ export default function TaskReportsScreen() {
         <>
           {/* Filters */}
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.filtersScroll} contentContainerStyle={s.filtersRow}>
+            <TouchableOpacity style={[s.filterChip, s.filterChipActive]} onPress={() => setShowDetailsRangePicker(true)}>
+              <Text style={[s.filterChipText, s.filterChipTextActive]} numberOfLines={1}>
+                {detailsFromMonth === detailsToMonth ? detailsFromMonth : `${detailsFromMonth} – ${detailsToMonth}`}
+              </Text>
+              <Ionicons name="chevron-down" size={12} color={colors.primary} />
+            </TouchableOpacity>
+
             {canSeeTeamContent && (
               <TouchableOpacity
                 style={[s.filterChip, assigneeFilter.length > 0 ? s.filterChipActive : null]}
@@ -721,6 +755,31 @@ export default function TaskReportsScreen() {
       </Modal>
 
       {/* Status picker */}
+      <Modal visible={showHoursStatusPicker} transparent animationType="slide" onRequestClose={() => setShowHoursStatusPicker(false)}>
+        <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setShowHoursStatusPicker(false)}>
+          <View style={[s.modalSheet, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={s.modalHeader}>
+              <Text style={s.modalTitle}>Filter by Status</Text>
+              <TouchableOpacity onPress={() => setShowHoursStatusPicker(false)}>
+                <Ionicons name="close" size={22} color={colors.textPrimary} />
+              </TouchableOpacity>
+            </View>
+            {statusOptions.map(opt => (
+              <TouchableOpacity
+                key={opt || '__all__'}
+                style={[s.pickerRow, hoursStatusFilter === opt && s.pickerRowSel]}
+                onPress={() => { setHoursStatusFilter(opt); setShowHoursStatusPicker(false); }}
+              >
+                <Text style={[s.pickerRowText, hoursStatusFilter === opt && s.pickerRowTextSel]}>
+                  {opt ? (STATUS_LABELS[opt] ?? opt.replace(/_/g, ' ')) : 'All Statuses'}
+                </Text>
+                {hoursStatusFilter === opt && <Ionicons name="checkmark" size={18} color={colors.primary} />}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
       <Modal visible={showStatusPicker} transparent animationType="slide" onRequestClose={() => setShowStatusPicker(false)}>
         <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setShowStatusPicker(false)}>
           <View style={[s.modalSheet, { paddingBottom: insets.bottom + 16 }]}>
@@ -832,8 +891,47 @@ export default function TaskReportsScreen() {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      <Modal visible={showDetailsRangePicker} transparent animationType="slide" onRequestClose={() => setShowDetailsRangePicker(false)}>
+        <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setShowDetailsRangePicker(false)}>
+          <View style={[s.modalSheet, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={s.modalHeader}>
+              <Text style={s.modalTitle}>Month Range</Text>
+              <TouchableOpacity onPress={() => setShowDetailsRangePicker(false)}>
+                <Ionicons name="close" size={22} color={colors.textPrimary} />
+              </TouchableOpacity>
+            </View>
+            <View style={s.rangeStepRow}>
+              <Text style={s.rangeStepLbl}>From</Text>
+              <TouchableOpacity style={s.rangeStepBtn} onPress={() => setDetailsFromMonth((m) => shiftYm(m, -1))}>
+                <Ionicons name="chevron-back" size={16} color={colors.primary} />
+              </TouchableOpacity>
+              <Text style={s.rangeStepVal}>{detailsFromMonth}</Text>
+              <TouchableOpacity style={s.rangeStepBtn} onPress={() => setDetailsFromMonth((m) => shiftYm(m, 1))}>
+                <Ionicons name="chevron-forward" size={16} color={colors.primary} />
+              </TouchableOpacity>
+            </View>
+            <View style={s.rangeStepRow}>
+              <Text style={s.rangeStepLbl}>To</Text>
+              <TouchableOpacity style={s.rangeStepBtn} onPress={() => setDetailsToMonth((m) => shiftYm(m, -1))}>
+                <Ionicons name="chevron-back" size={16} color={colors.primary} />
+              </TouchableOpacity>
+              <Text style={s.rangeStepVal}>{detailsToMonth}</Text>
+              <TouchableOpacity style={s.rangeStepBtn} onPress={() => setDetailsToMonth((m) => shiftYm(m, 1))}>
+                <Ionicons name="chevron-forward" size={16} color={colors.primary} />
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
+}
+
+function shiftYm(ym: string, delta: number): string {
+  const [y, m] = ym.split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
 function makeStyles(c: AppColors) {
@@ -982,5 +1080,9 @@ function makeStyles(c: AppColors) {
     pickerRowSel: { backgroundColor: c.primaryLight },
     pickerRowText: { fontSize: 14, color: c.textPrimary, textTransform: 'capitalize', flex: 1 },
     pickerRowTextSel: { fontWeight: '700', color: c.primary },
+    rangeStepRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 20, paddingVertical: 10 },
+    rangeStepLbl: { fontSize: 12, fontWeight: '700', color: c.textMuted, width: 40 },
+    rangeStepBtn: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: c.gray100 },
+    rangeStepVal: { flex: 1, fontSize: 14, fontWeight: '700', color: c.textPrimary, textAlign: 'center' },
   });
 }

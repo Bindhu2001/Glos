@@ -189,26 +189,21 @@ export function isTextPreviewAttachment(a: { content_type: string; file_name: st
 // same inline layout — it always lists attachments below the text via
 // AttachmentList — so without this, a message composed on web with an inline
 // attachment would show the raw "[[att:0]]" token as literal text here.
-export function stripAttachmentMarkers(body: string): string {
+export function stripAttachmentMarkers(body: string | null | undefined): string {
+  if (!body) return '';
   return body.replace(/\[\[att:\d+\]\]/g, '').replace(/[ \t]+\n/g, '\n').trim();
 }
 
-// Web has no forward-message feature at all, so there's no backend column to
-// persist "this message was forwarded" — forwarding is mobile-only and reuses
-// the plain send_message event with the original body/attachments verbatim.
-// To still show a WhatsApp-style "Forwarded" tag without a backend/migration
-// change, a distinctive zero-width character sequence is prepended to the body
-// on send and detected on display. It renders as nothing if some other client
-// (web, or a future version) doesn't know about it — unlike a visible token
-// like "[[att:N]]", there's no raw text to leak if it isn't stripped.
-// Zero-width space + zero-width non-joiner + word joiner, built via character
-// codes rather than pasted literally so the source file has no invisible
-// characters of its own that could be silently mangled by an editor/tool.
+// Before backend migration 090, there was no `is_forwarded` column — mobile
+// forwarding prepended this distinctive zero-width character sequence to the
+// body instead, detected on display. New forwards now set the real
+// `is_forwarded` field (see ForwardMessageScreen's socket.emit), but old
+// already-forwarded messages still only have this marker, so detection stays
+// here as a fallback. Zero-width space + zero-width non-joiner + word joiner,
+// built via character codes rather than pasted literally so the source file
+// has no invisible characters of its own that could be silently mangled by
+// an editor/tool.
 const FORWARD_MARKER = String.fromCharCode(0x200b, 0x200c, 0x2060);
-
-export function withForwardMarker(body: string): string {
-  return FORWARD_MARKER + body;
-}
 
 export function isForwardedBody(body: string): boolean {
   return body.startsWith(FORWARD_MARKER);

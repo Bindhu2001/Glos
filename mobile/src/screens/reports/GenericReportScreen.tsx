@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, ActivityIndicator, Modal, FlatList } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
@@ -10,10 +10,20 @@ import { AppColors } from '../../utils/colors';
 import { MoreStackParamList } from '../../navigation/types';
 import { apiErrorMessage } from '../../utils/apiError';
 import LoadError from '../../components/common/LoadError';
+import { formatDuration } from '../../utils/format';
 
 type Rt = RouteProp<MoreStackParamList, 'ReportView'>;
 
 interface Col { key: string; label: string; format?: (row: any) => string }
+
+// Matches web's Projects.jsx STATUS_FILTER_OPTIONS.
+const STATUS_FILTER_CHIPS = [
+  { value: 'active', label: 'Active' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'overdue', label: 'Overdue' },
+  { value: 'near_end', label: 'Near End' },
+  { value: 'inactive', label: 'Inactive' },
+];
 
 const CONTRACT_TYPES = [
   { value: 'overdue', label: 'Overdue Tasks' },
@@ -72,6 +82,40 @@ function fmtDate(s?: string) {
 function titleCase(key: string) {
   return key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
+function shiftMonth(ym: string, delta: number): string {
+  const [y, m] = ym.split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function SimplePickerModal({ visible, title, options, selectedKey, onSelect, onClose, s, colors }: {
+  visible: boolean; title: string; options: { key: string; label: string }[]; selectedKey: string;
+  onSelect: (key: string) => void; onClose: () => void; s: ReturnType<typeof makeStyles>; colors: AppColors;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <TouchableOpacity style={s.modalBackdrop} activeOpacity={1} onPress={onClose}>
+        <View style={s.pickerModalCard}>
+          <Text style={s.pickerModalTitle}>{title}</Text>
+          <FlatList
+            data={options}
+            keyExtractor={(o) => o.key}
+            style={{ maxHeight: 340 }}
+            renderItem={({ item }) => {
+              const active = item.key === selectedKey;
+              return (
+                <TouchableOpacity style={[s.pickerOption, active && s.pickerOptionActive]} onPress={() => onSelect(item.key)}>
+                  <Text style={[s.pickerOptionTxt, active && s.pickerOptionTxtActive]}>{item.label}</Text>
+                  {active && <Ionicons name="checkmark" size={16} color={colors.primary} />}
+                </TouchableOpacity>
+              );
+            }}
+          />
+        </View>
+      </TouchableOpacity>
+    </Modal>
+  );
+}
 
 // Best-effort icon per column, based on its key — covers every column across
 // all 6 report types without hand-mapping each one individually.
@@ -114,7 +158,47 @@ export default function GenericReportScreen() {
   const [rows, setRows] = useState<any[]>([]);
   const [contractType, setContractType] = useState('overdue');
 
+  // Cycle selection (goals/performance) — was auto-picked with no way to
+  // switch, matching web's GoalsReport/PerformanceReport cycle dropdown.
+  const [cycles, setCycles] = useState<any[]>([]);
+  const [cycleId, setCycleId] = useState<number | null>(null);
+  const [cyclePickerOpen, setCyclePickerOpen] = useState(false);
+
+  // Generic client-side filters — options are derived from whatever's
+  // actually present in the loaded rows, matching web's per-report
+  // FilterSelect components (member/status/reason dropdowns).
+  const [memberFilter, setMemberFilter] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  const [reasonFilter, setReasonFilter] = useState<string | null>(null);
+  const [memberFilterOpen, setMemberFilterOpen] = useState(false);
+  const [statusFilterOpen, setStatusFilterOpen] = useState(false);
+  const [reasonFilterOpen, setReasonFilterOpen] = useState(false);
+
+  // Projects report: Status (multi-chip, matches ProjectsListScreen) + Owner.
+  const [projStatusFilter, setProjStatusFilter] = useState<string[]>([]);
+  const [projOwnerFilter, setProjOwnerFilter] = useState<number | null>(null);
+  const [projOwnerFilterOpen, setProjOwnerFilterOpen] = useState(false);
+
+  // Financial report: Project multi-select + month range — both server-side
+  // (sent as project_ids/from/to to financials-summary), matching web.
+  const [finProjectFilter, setFinProjectFilter] = useState<number[]>([]);
+  const [finProjectPickerOpen, setFinProjectPickerOpen] = useState(false);
+  const [allProjects, setAllProjects] = useState<{ id: number; name: string }[]>([]);
+  const monthNow = new Date().toISOString().slice(0, 7);
+  const [finFrom, setFinFrom] = useState(monthNow);
+  const [finTo, setFinTo] = useState(monthNow);
+
   const hasLoadedRef = useRef(false);
+
+  // Reports share this one screen component keyed by reportType — reset
+  // filters when the type changes so a stale cycle/member/status filter
+  // from a previously-viewed report type doesn't silently carry over.
+  useEffect(() => {
+    setCycleId(null); setCycles([]);
+    setMemberFilter(null); setStatusFilter(null); setReasonFilter(null);
+    setProjStatusFilter([]); setProjOwnerFilter(null);
+    setFinProjectFilter([]); setFinFrom(monthNow); setFinTo(monthNow);
+  }, [reportType]);
 
   const load = useCallback(async () => {
     if (!workspace?.id) return;
@@ -122,22 +206,44 @@ export default function GenericReportScreen() {
     try {
       if (reportType === 'projects') {
         const res = await api.projects.list(workspace.id, {});
-        setRows(res.data?.items ?? res.data ?? []);
+        const items = res.data?.items ?? res.data ?? [];
+        setRows(items);
+        setAllProjects(items.map((p: any) => ({ id: p.id, name: p.name })));
       } else if (reportType === 'financial') {
-        const res = await api.projects.financialsSummary(workspace.id, {});
+        const params: Record<string, unknown> = {};
+        if (finProjectFilter.length > 0) params.project_ids = finProjectFilter.join(',');
+        if (finFrom) params.from = `${finFrom}-01`;
+        if (finTo) { const [y, m] = finTo.split('-').map(Number); params.to = `${finTo}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`; }
+        const [res, projRes] = await Promise.all([
+          api.projects.financialsSummary(workspace.id, params),
+          allProjects.length === 0 ? api.projects.list(workspace.id, {}) : Promise.resolve(null),
+        ]);
         setRows(Array.isArray(res.data) ? res.data : res.data?.items ?? []);
+        if (projRes) {
+          const items = projRes.data?.items ?? projRes.data ?? [];
+          setAllProjects(items.map((p: any) => ({ id: p.id, name: p.name })));
+        }
       } else if (reportType === 'goals') {
         const cyclesRes = await api.performance.getCycles(workspace.id);
-        const cycles = cyclesRes.data?.items ?? cyclesRes.data ?? [];
+        const cycleList = cyclesRes.data?.items ?? cyclesRes.data ?? [];
+        setCycles(cycleList);
         // Matches web's GoalsReport.jsx: prefer the cycle whose date range spans
         // today over just taking the newest by year — falls back to the oldest
-        // cycle (last in the list) if none is currently active.
+        // cycle (last in the list) if none is currently active. A user-selected
+        // cycle (via the picker) always wins once one's been chosen.
         const today = new Date().toISOString().slice(0, 10);
-        const activeCycle = cycles.find((c: any) => c.start_date <= today && c.end_date >= today) ?? cycles[cycles.length - 1];
+        const defaultCycle = cycleList.find((c: any) => c.start_date <= today && c.end_date >= today) ?? cycleList[cycleList.length - 1];
+        const activeCycle = cycleId != null ? cycleList.find((c: any) => c.id === cycleId) ?? defaultCycle : defaultCycle;
         if (!activeCycle) { setRows([]); return; }
+        if (cycleId == null) setCycleId(activeCycle.id);
         const res = await api.performance.getWorkflowStatus(workspace.id, { cycle_id: activeCycle.id });
         setRows(res.data?.goals ?? []);
       } else if (reportType === 'performance') {
+        if (cycles.length === 0) {
+          const cyclesRes = await api.performance.getCycles(workspace.id);
+          setCycles(cyclesRes.data?.items ?? cyclesRes.data ?? []);
+        }
+        const cycleParams = cycleId != null ? { cycle_id: cycleId } : {};
         // An admin sees all. Non-admins (managers and plain members alike) need
         // their team's reviews AND their own self review merged — matching web's
         // PerformanceReport.jsx (isMultiUser = isAdmin || isManager fetches team
@@ -147,7 +253,7 @@ export default function GenericReportScreen() {
         // own review.
         let items: any[];
         try {
-          const res = await api.performance.listAllReviews(workspace.id);
+          const res = await api.performance.listAllReviews(workspace.id, cycleParams);
           items = res.data?.items ?? res.data ?? [];
         } catch {
           // listAllReviews failing here is expected for non-admins (403) — but
@@ -156,8 +262,8 @@ export default function GenericReportScreen() {
           let teamFailed = false;
           let selfFailed = false;
           const [teamRes, selfRes] = await Promise.all([
-            api.performance.listTeamReviews(workspace.id).catch(() => { teamFailed = true; return { data: { items: [] as any[] } }; }),
-            api.performance.listMyReviews(workspace.id).catch(() => { selfFailed = true; return { data: { items: [] as any[] } }; }),
+            api.performance.listTeamReviews(workspace.id, cycleParams).catch(() => { teamFailed = true; return { data: { items: [] as any[] } }; }),
+            api.performance.listMyReviews(workspace.id, cycleParams).catch(() => { selfFailed = true; return { data: { items: [] as any[] } }; }),
           ]);
           if (teamFailed && selfFailed) throw new Error('Could not load performance report');
           const teamItems = teamRes.data?.items ?? teamRes.data ?? [];
@@ -212,7 +318,7 @@ export default function GenericReportScreen() {
       setLoading(false);
       hasLoadedRef.current = true;
     }
-  }, [workspace?.id, reportType, contractType]);
+  }, [workspace?.id, reportType, contractType, cycleId, finProjectFilter, finFrom, finTo]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -221,9 +327,12 @@ export default function GenericReportScreen() {
       return [
         { key: 'name', label: 'Project' },
         { key: 'client_name', label: 'Client' },
+        { key: 'owner_name', label: 'Owner', format: (r) => r.owner_name ?? '—' },
         { key: 'computed_status', label: 'Status' },
         { key: 'completion_pct', label: 'Progress %', format: (r) => `${r.completion_pct ?? 0}%` },
-        { key: 'total_tasks', label: 'Tasks' },
+        { key: 'milestones', label: 'Milestones', format: (r) => `${r.completed_milestones ?? 0}/${r.total_milestones ?? 0}` },
+        { key: 'tasks_done', label: 'Tasks Done', format: (r) => `${r.done_tasks ?? 0}/${r.total_tasks ?? 0}` },
+        { key: 'time_spent', label: 'Time Spent', format: (r) => formatDuration(r.total_minutes ?? 0) },
         { key: 'start_date', label: 'Start', format: (r) => fmtDate(r.start_date) },
         { key: 'end_date', label: 'End', format: (r) => fmtDate(r.end_date) },
       ];
@@ -236,6 +345,7 @@ export default function GenericReportScreen() {
         { key: 'total_billing', label: 'Total Billing', format: (r) => r.total_billing != null ? `₹${r.total_billing}` : '—' },
         { key: 'estimated_cost', label: 'Est. Cost', format: (r) => `₹${r.estimated_cost}` },
         { key: 'actual_labor_cost', label: 'Actual Labor', format: (r) => `₹${r.actual_labor_cost}` },
+        { key: 'other_costs_total', label: 'Other Costs', format: (r) => `₹${r.other_costs_total ?? 0}` },
         { key: 'total_actual_cost', label: 'Total Cost', format: (r) => `₹${r.total_actual_cost}` },
         { key: 'invoiced_total', label: 'Invoiced', format: (r) => `₹${r.invoiced_total}` },
         { key: 'profit', label: 'Profit', format: (r) => `₹${r.profit}` },
@@ -290,6 +400,44 @@ export default function GenericReportScreen() {
     return String(v);
   };
 
+  // Member/status/reason values per report type — used both to derive
+  // filter dropdown options and to actually apply the filters below.
+  const memberNameOf = useCallback((row: any): string => {
+    if (reportType === 'goals' || reportType === 'appraisals') return personName(row.employee);
+    if (reportType === 'performance') return row.reviewee_name ?? row.employee_name ?? (row.employee ? personName(row.employee) : 'You');
+    return '';
+  }, [reportType]);
+  const statusOf = (row: any): string => {
+    if (reportType === 'goals') return row.goal_status ?? '';
+    if (reportType === 'performance' || reportType === 'appraisals') return row.status ?? '';
+    return '';
+  };
+
+  const memberOptions = useMemo(() => Array.from(new Set(rows.map(memberNameOf).filter(Boolean))).sort(), [rows, memberNameOf]);
+  const statusOptions = useMemo(() => Array.from(new Set(rows.map(statusOf).filter(Boolean))).sort(), [rows, reportType]);
+  const reasonOptions = useMemo(
+    () => (reportType === 'appraisals' ? Array.from(new Set(rows.map((r) => r.reason).filter(Boolean))).sort() : []),
+    [rows, reportType]
+  );
+  const projOwnerOptions = useMemo(() => {
+    const seen = new Map<number, string>();
+    for (const p of rows) if (p.owner_user_id != null && !seen.has(p.owner_user_id)) seen.set(p.owner_user_id, p.owner_name || 'Unknown');
+    return Array.from(seen.entries()).map(([id, name]) => ({ id, name }));
+  }, [rows]);
+
+  const filteredRows = useMemo(() => {
+    let list = rows;
+    if (reportType === 'projects') {
+      if (projStatusFilter.length > 0) list = list.filter((r) => projStatusFilter.includes(r.computed_status));
+      if (projOwnerFilter != null) list = list.filter((r) => r.owner_user_id === projOwnerFilter);
+    } else {
+      if (memberFilter) list = list.filter((r) => memberNameOf(r) === memberFilter);
+      if (statusFilter) list = list.filter((r) => statusOf(r) === statusFilter);
+      if (reasonFilter) list = list.filter((r) => r.reason === reasonFilter);
+    }
+    return list;
+  }, [rows, reportType, memberFilter, statusFilter, reasonFilter, projStatusFilter, projOwnerFilter, memberNameOf]);
+
   const accent = REPORT_COLORS[reportType] ?? colors.primary;
 
   // Up to 4 icon tiles across the top of every report — always starts with
@@ -298,6 +446,7 @@ export default function GenericReportScreen() {
   // count since its columns vary completely by sub-type.
   const headlineStats = useMemo(() => {
     type Tile = { icon: keyof typeof Ionicons.glyphMap; value: string; label: string; color: string };
+    const rows = filteredRows;
     if (rows.length === 0) return [] as Tile[];
     const rowWord = rows.length === 1 ? 'Row' : 'Rows';
     const tiles: Tile[] = [];
@@ -346,7 +495,7 @@ export default function GenericReportScreen() {
       tiles.push({ icon: REPORT_ICONS.contracts, value: String(rows.length), label: rowWord, color: accent });
     }
     return tiles;
-  }, [rows, reportType, colors, accent]);
+  }, [filteredRows, reportType, colors, accent]);
 
   const titleKey = CARD_TITLE_KEY[reportType];
   const badgeKey = CARD_BADGE_KEY[reportType];
@@ -376,14 +525,93 @@ export default function GenericReportScreen() {
         </ScrollView>
       )}
 
+      {(reportType === 'goals' || reportType === 'performance') && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.subtypeScroll} contentContainerStyle={s.filterRow}>
+          <TouchableOpacity style={s.filterBtn} onPress={() => setCyclePickerOpen(true)}>
+            <Text style={s.filterBtnTxt} numberOfLines={1}>
+              {cycleId != null ? (cycles.find((c) => c.id === cycleId)?.cycle_name ?? 'Cycle') : (reportType === 'goals' ? 'Cycle' : 'All Cycles')}
+            </Text>
+            <Ionicons name="chevron-down" size={12} color={colors.textSecondary} />
+          </TouchableOpacity>
+          {memberOptions.length > 0 && (
+            <TouchableOpacity style={s.filterBtn} onPress={() => setMemberFilterOpen(true)}>
+              <Text style={s.filterBtnTxt} numberOfLines={1}>{memberFilter ?? 'All Members'}</Text>
+              <Ionicons name="chevron-down" size={12} color={colors.textSecondary} />
+            </TouchableOpacity>
+          )}
+          {statusOptions.length > 0 && (
+            <TouchableOpacity style={s.filterBtn} onPress={() => setStatusFilterOpen(true)}>
+              <Text style={s.filterBtnTxt} numberOfLines={1}>{statusFilter ?? 'All Statuses'}</Text>
+              <Ionicons name="chevron-down" size={12} color={colors.textSecondary} />
+            </TouchableOpacity>
+          )}
+        </ScrollView>
+      )}
+      {reportType === 'appraisals' && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.subtypeScroll} contentContainerStyle={s.filterRow}>
+          {memberOptions.length > 0 && (
+            <TouchableOpacity style={s.filterBtn} onPress={() => setMemberFilterOpen(true)}>
+              <Text style={s.filterBtnTxt} numberOfLines={1}>{memberFilter ?? 'All Members'}</Text>
+              <Ionicons name="chevron-down" size={12} color={colors.textSecondary} />
+            </TouchableOpacity>
+          )}
+          {statusOptions.length > 0 && (
+            <TouchableOpacity style={s.filterBtn} onPress={() => setStatusFilterOpen(true)}>
+              <Text style={s.filterBtnTxt} numberOfLines={1}>{statusFilter ?? 'All Statuses'}</Text>
+              <Ionicons name="chevron-down" size={12} color={colors.textSecondary} />
+            </TouchableOpacity>
+          )}
+          {reasonOptions.length > 0 && (
+            <TouchableOpacity style={s.filterBtn} onPress={() => setReasonFilterOpen(true)}>
+              <Text style={s.filterBtnTxt} numberOfLines={1}>{reasonFilter ?? 'All Reasons'}</Text>
+              <Ionicons name="chevron-down" size={12} color={colors.textSecondary} />
+            </TouchableOpacity>
+          )}
+        </ScrollView>
+      )}
+      {reportType === 'projects' && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.subtypeScroll} contentContainerStyle={s.filterRow}>
+          {STATUS_FILTER_CHIPS.map((o) => {
+            const active = projStatusFilter.includes(o.value);
+            return (
+              <TouchableOpacity
+                key={o.value}
+                style={[s.filterChip, active && s.filterChipActive]}
+                onPress={() => setProjStatusFilter((prev) => (prev.includes(o.value) ? prev.filter((x) => x !== o.value) : [...prev, o.value]))}
+              >
+                <Text style={[s.filterChipTxt, active && s.filterChipTxtActive]}>{o.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+          {projOwnerOptions.length > 0 && (
+            <TouchableOpacity style={s.filterBtn} onPress={() => setProjOwnerFilterOpen(true)}>
+              <Text style={s.filterBtnTxt} numberOfLines={1}>
+                {projOwnerFilter != null ? projOwnerOptions.find((o) => o.id === projOwnerFilter)?.name ?? 'Owner' : 'Owner'}
+              </Text>
+              <Ionicons name="chevron-down" size={12} color={colors.textSecondary} />
+            </TouchableOpacity>
+          )}
+        </ScrollView>
+      )}
+      {reportType === 'financial' && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.subtypeScroll} contentContainerStyle={s.filterRow}>
+          <TouchableOpacity style={s.filterBtn} onPress={() => setFinProjectPickerOpen(true)}>
+            <Text style={s.filterBtnTxt} numberOfLines={1}>
+              {finProjectFilter.length > 0 ? `${finProjectFilter.length} project${finProjectFilter.length === 1 ? '' : 's'}` : 'All Projects'}
+            </Text>
+            <Ionicons name="chevron-down" size={12} color={colors.textSecondary} />
+          </TouchableOpacity>
+        </ScrollView>
+      )}
+
       {loading ? (
         <ActivityIndicator style={{ flex: 1 }} color={colors.primary} />
       ) : error ? (
         <LoadError message={error} onRetry={load} />
-      ) : rows.length === 0 ? (
+      ) : filteredRows.length === 0 ? (
         <View style={s.empty}>
           <Ionicons name="stats-chart-outline" size={40} color={colors.gray400} />
-          <Text style={s.emptyText}>No data for this report yet</Text>
+          <Text style={s.emptyText}>{rows.length === 0 ? 'No data for this report yet' : 'No rows match your filters'}</Text>
         </View>
       ) : (
         <ScrollView contentContainerStyle={s.list} showsVerticalScrollIndicator={false}>
@@ -399,7 +627,7 @@ export default function GenericReportScreen() {
             ))}
           </View>
 
-          {rows.map((row, idx) => {
+          {filteredRows.map((row, idx) => {
             const titleCol = columns.find((c) => c.key === titleKey);
             const badgeCol = columns.find((c) => c.key === badgeKey);
             const titleText = titleCol ? cellValue(row, titleCol) : `Row ${idx + 1}`;
@@ -444,6 +672,115 @@ export default function GenericReportScreen() {
           })}
         </ScrollView>
       )}
+
+      <SimplePickerModal
+        visible={cyclePickerOpen}
+        title="Select Cycle"
+        options={[
+          ...(reportType === 'performance' ? [{ key: '__all__', label: 'All Cycles' }] : []),
+          ...cycles.map((c: any) => ({ key: String(c.id), label: `${c.cycle_name}${c.year ? ` (${c.year})` : ''}` })),
+        ]}
+        selectedKey={cycleId != null ? String(cycleId) : '__all__'}
+        onSelect={(k) => { setCycleId(k === '__all__' ? null : Number(k)); setCyclePickerOpen(false); }}
+        onClose={() => setCyclePickerOpen(false)}
+        s={s}
+        colors={colors}
+      />
+      <SimplePickerModal
+        visible={memberFilterOpen}
+        title="Filter by Member"
+        options={[{ key: '__all__', label: 'All Members' }, ...memberOptions.map((m) => ({ key: m, label: m }))]}
+        selectedKey={memberFilter ?? '__all__'}
+        onSelect={(k) => { setMemberFilter(k === '__all__' ? null : k); setMemberFilterOpen(false); }}
+        onClose={() => setMemberFilterOpen(false)}
+        s={s}
+        colors={colors}
+      />
+      <SimplePickerModal
+        visible={statusFilterOpen}
+        title="Filter by Status"
+        options={[{ key: '__all__', label: 'All Statuses' }, ...statusOptions.map((v) => ({ key: v, label: titleCase(v) }))]}
+        selectedKey={statusFilter ?? '__all__'}
+        onSelect={(k) => { setStatusFilter(k === '__all__' ? null : k); setStatusFilterOpen(false); }}
+        onClose={() => setStatusFilterOpen(false)}
+        s={s}
+        colors={colors}
+      />
+      <SimplePickerModal
+        visible={reasonFilterOpen}
+        title="Filter by Reason"
+        options={[{ key: '__all__', label: 'All Reasons' }, ...reasonOptions.map((v) => ({ key: v, label: v }))]}
+        selectedKey={reasonFilter ?? '__all__'}
+        onSelect={(k) => { setReasonFilter(k === '__all__' ? null : k); setReasonFilterOpen(false); }}
+        onClose={() => setReasonFilterOpen(false)}
+        s={s}
+        colors={colors}
+      />
+      <SimplePickerModal
+        visible={projOwnerFilterOpen}
+        title="Filter by Owner"
+        options={[{ key: '__all__', label: 'All Owners' }, ...projOwnerOptions.map((o) => ({ key: String(o.id), label: o.name }))]}
+        selectedKey={projOwnerFilter != null ? String(projOwnerFilter) : '__all__'}
+        onSelect={(k) => { setProjOwnerFilter(k === '__all__' ? null : Number(k)); setProjOwnerFilterOpen(false); }}
+        onClose={() => setProjOwnerFilterOpen(false)}
+        s={s}
+        colors={colors}
+      />
+
+      <Modal visible={finProjectPickerOpen} transparent animationType="fade" onRequestClose={() => setFinProjectPickerOpen(false)}>
+        <TouchableOpacity style={s.modalBackdrop} activeOpacity={1} onPress={() => setFinProjectPickerOpen(false)}>
+          <View style={s.pickerModalCard}>
+            <View style={s.pickerModalHeadRow}>
+              <Text style={s.pickerModalTitle}>Filter by Project</Text>
+              {finProjectFilter.length > 0 && (
+                <TouchableOpacity onPress={() => setFinProjectFilter([])}>
+                  <Text style={s.pickerClearTxt}>Clear</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            <FlatList
+              data={allProjects}
+              keyExtractor={(p) => String(p.id)}
+              style={{ maxHeight: 300 }}
+              renderItem={({ item }) => {
+                const active = finProjectFilter.includes(item.id);
+                return (
+                  <TouchableOpacity
+                    style={[s.pickerOption, active && s.pickerOptionActive]}
+                    onPress={() => setFinProjectFilter((prev) => (prev.includes(item.id) ? prev.filter((x) => x !== item.id) : [...prev, item.id]))}
+                  >
+                    <Text style={[s.pickerOptionTxt, active && s.pickerOptionTxtActive]}>{item.name}</Text>
+                    {active && <Ionicons name="checkmark" size={16} color={colors.primary} />}
+                  </TouchableOpacity>
+                );
+              }}
+            />
+            <View style={s.dateRangeRow}>
+              <Text style={s.fieldLabelSmall}>From</Text>
+              <TouchableOpacity style={s.monthStepBtn} onPress={() => setFinFrom(shiftMonth(finFrom, -1))}>
+                <Ionicons name="chevron-back" size={14} color={colors.primary} />
+              </TouchableOpacity>
+              <Text style={s.monthValTxt}>{finFrom}</Text>
+              <TouchableOpacity style={s.monthStepBtn} onPress={() => setFinFrom(shiftMonth(finFrom, 1))}>
+                <Ionicons name="chevron-forward" size={14} color={colors.primary} />
+              </TouchableOpacity>
+            </View>
+            <View style={s.dateRangeRow}>
+              <Text style={s.fieldLabelSmall}>To</Text>
+              <TouchableOpacity style={s.monthStepBtn} onPress={() => setFinTo(shiftMonth(finTo, -1))}>
+                <Ionicons name="chevron-back" size={14} color={colors.primary} />
+              </TouchableOpacity>
+              <Text style={s.monthValTxt}>{finTo}</Text>
+              <TouchableOpacity style={s.monthStepBtn} onPress={() => setFinTo(shiftMonth(finTo, 1))}>
+                <Ionicons name="chevron-forward" size={14} color={colors.primary} />
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity style={s.doneBtn} onPress={() => setFinProjectPickerOpen(false)}>
+              <Text style={s.doneBtnTxt}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }
@@ -465,6 +802,32 @@ function makeStyles(c: AppColors) {
     subtypeChipActive: { backgroundColor: c.primary, borderColor: c.primary },
     subtypeChipText: { fontSize: 12, fontWeight: '600', color: c.gray600 },
     subtypeChipTextActive: { color: '#fff' },
+    filterRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: c.surface, borderBottomWidth: 1, borderBottomColor: c.border },
+    filterBtn: {
+      flexDirection: 'row', alignItems: 'center', gap: 4, maxWidth: 160,
+      backgroundColor: c.gray50, borderWidth: 1, borderColor: c.border, borderRadius: 16,
+      paddingHorizontal: 12, paddingVertical: 7,
+    },
+    filterBtnTxt: { fontSize: 12, fontWeight: '600', color: c.textSecondary, flexShrink: 1 },
+    filterChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16, backgroundColor: c.gray50, borderWidth: 1, borderColor: c.border },
+    filterChipActive: { backgroundColor: c.primaryLight, borderColor: c.primary },
+    filterChipTxt: { fontSize: 12, fontWeight: '600', color: c.textSecondary },
+    filterChipTxtActive: { color: c.primary, fontWeight: '700' },
+    modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 24 },
+    pickerModalCard: { backgroundColor: c.surface, borderRadius: 16, padding: 12, borderWidth: 1, borderColor: c.border },
+    pickerModalHeadRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 10, paddingTop: 6 },
+    pickerModalTitle: { fontSize: 15, fontWeight: '700', color: c.textPrimary, padding: 10 },
+    pickerClearTxt: { fontSize: 12, fontWeight: '700', color: c.primary },
+    pickerOption: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingVertical: 12, borderRadius: 10 },
+    pickerOptionActive: { backgroundColor: c.primaryLight },
+    pickerOptionTxt: { fontSize: 14, color: c.textPrimary },
+    pickerOptionTxtActive: { fontWeight: '700', color: c.primary },
+    dateRangeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, paddingTop: 10 },
+    fieldLabelSmall: { fontSize: 11, fontWeight: '700', color: c.textMuted, width: 40 },
+    monthStepBtn: { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: c.gray50, borderWidth: 1, borderColor: c.border },
+    monthValTxt: { flex: 1, fontSize: 13, fontWeight: '700', color: c.textPrimary, textAlign: 'center' },
+    doneBtn: { marginTop: 14, marginHorizontal: 10, marginBottom: 4, backgroundColor: c.primary, borderRadius: 10, paddingVertical: 10, alignItems: 'center' },
+    doneBtnTxt: { fontSize: 13, fontWeight: '700', color: '#fff' },
     empty: { alignItems: 'center', gap: 12, paddingTop: 60, flex: 1, justifyContent: 'center' },
     emptyText: { fontSize: 14, color: c.textMuted },
     list: { padding: 16, gap: 12, paddingBottom: 32 },

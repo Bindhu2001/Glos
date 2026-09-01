@@ -33,7 +33,7 @@ const AUDIENCE_OPTIONS: { value: AudienceType; label: string; icon: string }[] =
 
 export default function CreatePostScreen() {
   const route = useRoute<Route>();
-  const { appId, postId, initialContent } = route.params;
+  const { appId, postId, initialContent, initialPostType, initialPoll } = route.params;
   const isEditMode = !!postId;
   const navigation = useNavigation();
   const api = useApi();
@@ -64,14 +64,21 @@ export default function CreatePostScreen() {
     }
     setContent(text);
   };
-  const [postType, setPostType] = useState<'post' | 'announcement' | 'poll'>('post');
+  const [postType, setPostType] = useState<'post' | 'announcement' | 'poll'>(initialPostType ?? 'post');
 
-  // Poll composer
-  const [pollQuestion, setPollQuestion] = useState('');
-  const [pollOptions, setPollOptions] = useState(['', '']);
-  const [pollMulti, setPollMulti] = useState(false);
-  const updatePollOption = (i: number, v: string) => setPollOptions((prev) => prev.map((o, idx) => (idx === i ? v : o)));
-  const addPollOption = () => setPollOptions((prev) => (prev.length < 10 ? [...prev, ''] : prev));
+  // Poll composer — each row tracks its backend option id (null for a
+  // brand-new option) so an edit can reconcile against PATCH /feed/:id's
+  // by-id matching, which keeps an unchanged option's votes instead of
+  // deleting and recreating it.
+  const [pollQuestion, setPollQuestion] = useState(initialPoll?.question ?? '');
+  const [pollOptions, setPollOptions] = useState<{ id: number | null; text: string }[]>(
+    initialPoll?.options?.length
+      ? initialPoll.options.map((o) => ({ id: o.id, text: o.option_text }))
+      : [{ id: null, text: '' }, { id: null, text: '' }]
+  );
+  const [pollMulti, setPollMulti] = useState(initialPoll?.allow_multiple ?? false);
+  const updatePollOption = (i: number, v: string) => setPollOptions((prev) => prev.map((o, idx) => (idx === i ? { ...o, text: v } : o)));
+  const addPollOption = () => setPollOptions((prev) => (prev.length < 10 ? [...prev, { id: null, text: '' }] : prev));
   const removePollOption = (i: number) => setPollOptions((prev) => (prev.length > 2 ? prev.filter((_, idx) => idx !== i) : prev));
   const [audienceType, setAudienceType] = useState<AudienceType>('all');
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
@@ -153,8 +160,12 @@ export default function CreatePostScreen() {
 
   const removePendingFile = (i: number) => setPendingFiles((prev) => prev.filter((_, idx) => idx !== i));
 
-  const isPoll = !isEditMode && postType === 'poll';
-  const trimmedPollOptions = pollOptions.map((o) => o.trim()).filter(Boolean);
+  // Web's EditPostModal fully supports editing poll question/options/multi
+  // (PATCH /feed/:id reconciles poll_options by id) — mobile previously
+  // forced isPoll false in edit mode, so there was no UI to change a poll
+  // at all once posted, only its unrelated `content` note field.
+  const isPoll = postType === 'poll';
+  const trimmedPollOptions = pollOptions.map((o) => ({ id: o.id, text: o.text.trim() })).filter((o) => o.text);
 
   const handleCreate = async () => {
     if (isPoll) {
@@ -171,9 +182,19 @@ export default function CreatePostScreen() {
     setSaving(true);
     try {
       if (isEditMode && postId) {
-        // The edit endpoint only accepts content — no audience/type/attachments,
-        // matching qa-production web's edit scope exactly.
-        await api.feed.update(appId, postId, content.trim());
+        // The edit endpoint only accepts content (plus poll fields for a
+        // poll post) — no audience/type/attachments, matching qa-production
+        // web's edit scope.
+        if (isPoll) {
+          await api.feed.update(appId, postId, {
+            content: content.trim(),
+            poll_question: pollQuestion.trim(),
+            poll_options: trimmedPollOptions.map((o) => ({ id: o.id, option_text: o.text })),
+            poll_multi: pollMulti,
+          });
+        } else {
+          await api.feed.update(appId, postId, content.trim());
+        }
       } else {
         let attachments: Record<string, unknown>[] = [];
         if (pendingFiles.length > 0) {
@@ -190,7 +211,7 @@ export default function CreatePostScreen() {
           attachments,
           ...(isPoll ? {
             poll_question: pollQuestion.trim(),
-            poll_options: trimmedPollOptions,
+            poll_options: trimmedPollOptions.map((o) => o.text),
             poll_multi: pollMulti,
           } : {}),
         });
@@ -214,7 +235,11 @@ export default function CreatePostScreen() {
         />
         <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
           {isEditMode && (
-            <Text style={s.editHint}>Editing only updates the text — audience, type, and attachments can't be changed here.</Text>
+            <Text style={s.editHint}>
+              {isPoll
+                ? "Editing updates the poll's question and options — audience and attachments can't be changed here."
+                : "Editing only updates the text — audience, type, and attachments can't be changed here."}
+            </Text>
           )}
 
           {!isEditMode && (
@@ -347,10 +372,10 @@ export default function CreatePostScreen() {
               />
               <Text style={s.sectionLabel}>OPTIONS</Text>
               {pollOptions.map((opt, i) => (
-                <View key={i} style={s.pollOptionRow}>
+                <View key={opt.id ?? `new-${i}`} style={s.pollOptionRow}>
                   <View style={{ flex: 1 }}>
                     <Input
-                      value={opt}
+                      value={opt.text}
                       onChangeText={(v) => updatePollOption(i, v)}
                       placeholder={`Option ${i + 1}`}
                       maxLength={200}
@@ -374,6 +399,20 @@ export default function CreatePostScreen() {
                 <Ionicons name={pollMulti ? 'checkbox' : 'square-outline'} size={20} color={pollMulti ? colors.primary : colors.gray400} />
                 <Text style={s.pollMultiLabel}>Allow selecting multiple options</Text>
               </TouchableOpacity>
+
+              {/* Matches web — polls get the same note+attachment fields as a
+                  regular post (just relabeled/shorter), not none at all. Only
+                  the table builder is post-only, matching web. */}
+              <Input
+                label="Add a note (optional)"
+                value={content}
+                onChangeText={(v) => handleContentChange(v.slice(0, 1000))}
+                placeholder="Add context for your poll..."
+                multiline
+                numberOfLines={3}
+                maxLength={1000}
+              />
+              <Text style={s.charCount}>{content.length.toLocaleString()}/1,000</Text>
             </>
           ) : (
             <>
@@ -390,13 +429,19 @@ export default function CreatePostScreen() {
             </>
           )}
 
-          {!isEditMode && !isPoll && (
+          {/* Attach File is available for polls too (matches web) — only the
+              table builder is post-only, since web's poll composer has no
+              table support at all. Both stay hidden in edit mode: the edit
+              endpoint only accepts content(+poll fields), no attachments. */}
+          {!isEditMode && (
           <>
           <View style={{ flexDirection: 'row', gap: 8 }}>
-            <TouchableOpacity style={s.addTableBtn} onPress={() => { setPastedRows(null); setShowTableBuilder(true); }}>
-              <Ionicons name="grid-outline" size={16} color={colors.primary} />
-              <Text style={s.addTableBtnText}>Add Table</Text>
-            </TouchableOpacity>
+            {!isPoll && (
+              <TouchableOpacity style={s.addTableBtn} onPress={() => { setPastedRows(null); setShowTableBuilder(true); }}>
+                <Ionicons name="grid-outline" size={16} color={colors.primary} />
+                <Text style={s.addTableBtnText}>Add Table</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity style={s.addTableBtn} onPress={pickFiles} disabled={uploadingFiles}>
               <Ionicons name="attach" size={16} color={colors.primary} />
               <Text style={s.addTableBtnText}>Attach File</Text>
@@ -463,7 +508,7 @@ function makeStyles(c: AppColors) {
       borderRadius: 8, backgroundColor: c.primaryLight,
     },
     addTableBtnText: { fontSize: 13, fontWeight: '700', color: c.primary },
-    pollOptionRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    pollOptionRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
     pollRemoveBtn: { paddingTop: 22 },
     pollMultiRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 16 },
     pollMultiLabel: { fontSize: 13, color: c.textPrimary },

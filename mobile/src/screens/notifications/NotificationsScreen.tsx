@@ -17,6 +17,8 @@ import LoadError from '../../components/common/LoadError';
 import { useLoadWithTimeout } from '../../hooks/useLoadWithTimeout';
 import EmptyState from '../../components/common/EmptyState';
 import { RootStackParamList } from '../../navigation/types';
+import { navigateForNotification } from '../../utils/notificationRouting';
+import { showAlert } from '../../components/common/AlertModal';
 
 interface Notif {
   id: number;
@@ -30,6 +32,9 @@ interface Notif {
   read_at: string | null;
   created_at: string;
   app_name: string | null;
+  // Only populated for type === 'project_join_request' (backend's
+  // enrichJoinRequestStatus) — 'pending' | 'accepted' | 'rejected'.
+  join_request_status?: string;
 }
 
 const TYPE_ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
@@ -85,15 +90,6 @@ export default function NotificationsScreen() {
     setRefreshing(false);
   };
 
-  // Matches qa-production/frontend's NotificationBell.jsx routing table exactly —
-  // entity_id's meaning varies per type (e.g. for mention_feed_comment it's the
-  // *comment* id, not the post id), so — same as web — feed types land on the
-  // Feed tab generally rather than guessing a specific post to deep-link to.
-  const TASK_TYPES = ['mention_task_comment', 'task_assigned', 'task_commented', 'task_reassigned', 'task_overdue'];
-  const FEED_TYPES = ['mention_feed_comment', 'mention_feed_post', 'feed_post', 'appreciation', 'feedback_received', 'wish'];
-  const PERF_TYPES = ['review_started', 'review_rejected', 'review_approved'];
-  const PROJECT_TYPES = ['project_join_request', 'project_join_accepted', 'project_join_rejected', 'project_commented'];
-
   const handleTap = async (item: Notif) => {
     if (!item.read_at) {
       try {
@@ -103,29 +99,27 @@ export default function NotificationsScreen() {
         );
       } catch {}
     }
+    navigateForNotification(navigation as any, item);
+  };
 
-    if (!item.app_id) return;
-
-    if (TASK_TYPES.includes(item.type) && item.task_id) {
-      navigation.navigate('Main', {
-        screen: 'TasksTab',
-        params: { screen: 'TaskDetail', params: { taskId: item.task_id, appId: item.app_id }, initial: false },
-      } as never);
-    } else if (FEED_TYPES.includes(item.type)) {
-      const initialTab = item.type === 'feedback_received' ? 'feedback'
-        : item.type === 'appreciation' ? 'appreciations'
-        : 'feed';
-      navigation.navigate('Main', {
-        screen: 'FeedTab',
-        params: { screen: 'FeedList', params: { initialTab }, initial: false },
-      } as never);
-    } else if (PERF_TYPES.includes(item.type)) {
-      navigation.navigate('Main', { screen: 'PerformanceTab' } as never);
-    } else if (PROJECT_TYPES.includes(item.type)) {
-      navigation.navigate('Main', {
-        screen: 'MoreTab',
-        params: { screen: 'ProjectsList' },
-      } as never);
+  // entity_id is the project id, task_id is the join-request id — matches
+  // web's NotificationBell.jsx handleAcceptJoin/handleRejectJoin exactly.
+  const handleJoinDecision = async (item: Notif, decision: 'accepted' | 'rejected') => {
+    if (!item.entity_id || !item.task_id) return;
+    try {
+      if (decision === 'accepted') {
+        await api.projects.acceptJoin(item.app_id, item.entity_id, item.task_id);
+      } else {
+        await api.projects.rejectJoin(item.app_id, item.entity_id, item.task_id);
+      }
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === item.id ? { ...n, join_request_status: decision, read_at: n.read_at || new Date().toISOString() } : n))
+      );
+      if (!item.read_at) {
+        try { await api.notifications.markRead(item.id); } catch {}
+      }
+    } catch (err: any) {
+      showAlert('Could Not Save', err?.response?.data?.error || `Failed to ${decision === 'accepted' ? 'accept' : 'reject'} join request`);
     }
   };
 
@@ -182,7 +176,26 @@ export default function NotificationsScreen() {
               <Text style={[s.notifTitle, !item.read_at && s.unreadText]} numberOfLines={1}>
                 {item.title}
               </Text>
+              {!!item.preview && (
+                <Text style={s.preview} numberOfLines={2}>{item.preview}</Text>
+              )}
               <Text style={s.time}>{formatRelative(item.created_at)}</Text>
+              {item.type === 'project_join_request' && item.task_id && (
+                item.join_request_status === 'accepted' ? (
+                  <Text style={s.joinAccepted}>✓ Accepted</Text>
+                ) : item.join_request_status === 'rejected' ? (
+                  <Text style={s.joinRejected}>✗ Declined</Text>
+                ) : (
+                  <View style={s.joinActionsRow}>
+                    <TouchableOpacity style={s.joinAcceptBtn} onPress={() => handleJoinDecision(item, 'accepted')}>
+                      <Text style={s.joinAcceptBtnText}>Accept</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={s.joinRejectBtn} onPress={() => handleJoinDecision(item, 'rejected')}>
+                      <Text style={s.joinRejectBtnText}>Reject</Text>
+                    </TouchableOpacity>
+                  </View>
+                )
+              )}
             </View>
             {!item.read_at && <View style={s.dot} />}
           </TouchableOpacity>
@@ -214,6 +227,13 @@ function makeStyles(c: AppColors) {
     unreadText: { fontWeight: '700' },
     preview: { fontSize: 13, color: c.gray500, lineHeight: 18, marginBottom: 4 },
     time: { fontSize: 12, color: c.gray400 },
+    joinAccepted: { fontSize: 12, fontWeight: '600', color: c.success, marginTop: 6 },
+    joinRejected: { fontSize: 12, fontWeight: '600', color: c.danger, marginTop: 6 },
+    joinActionsRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
+    joinAcceptBtn: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 7, backgroundColor: c.primary },
+    joinAcceptBtnText: { fontSize: 12, fontWeight: '700', color: '#fff' },
+    joinRejectBtn: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 7, backgroundColor: c.gray100, borderWidth: 1, borderColor: c.border },
+    joinRejectBtnText: { fontSize: 12, fontWeight: '700', color: c.textSecondary },
     dot: {
       width: 8, height: 8, borderRadius: 4, backgroundColor: c.primary,
       marginTop: 4, flexShrink: 0,

@@ -193,7 +193,21 @@ function InlineAudio({
 
   return (
     <View style={[s.audioRow, { width: maxWidth }]}>
-      <TouchableOpacity onPress={() => (status.playing ? player.pause() : player.play())} style={s.audioPlayBtn}>
+      <TouchableOpacity
+        onPress={() => {
+          if (status.playing) {
+            player.pause();
+            return;
+          }
+          // Playback halts at the end without resetting currentTime, so
+          // play() on a finished track is a no-op unless we seek back first.
+          if (status.duration > 0 && status.currentTime >= status.duration - 0.05) {
+            player.seekTo(0);
+          }
+          player.play();
+        }}
+        style={s.audioPlayBtn}
+      >
         <Ionicons name={status.playing ? 'pause' : 'play'} size={14} color="#fff" />
       </TouchableOpacity>
       <View style={{ flex: 1 }}>

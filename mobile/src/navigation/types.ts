@@ -32,16 +32,34 @@ export type ChatStackParamList = {
   ForwardMessage: { appId: number; body: string; attachments: any[] };
 };
 
+// Shared so the Compliance Board (in MoreStack) can open the same task
+// create/edit screen the Tasks tab uses, pre-filled to an agreement + service.
+export type CreateTaskParams = {
+  appId: number;
+  taskId?: number;
+  presetContractId?: number;
+  presetAgreementServiceId?: number;
+  // When set, the task-type selector is locked to "Agreement" (matches web's
+  // lockTaskType="contract" when opened from the Compliance Board).
+  lockContractType?: boolean;
+};
+
 export type TasksStackParamList = {
   TasksList: undefined;
   TaskDetail: { taskId: number; appId: number };
-  CreateTask: { appId: number; taskId?: number };
+  CreateTask: CreateTaskParams;
 };
 
 export type FeedStackParamList = {
   FeedList: { initialTab?: 'feed' | 'appreciations' | 'feedback' } | undefined;
   PostDetail: { postId: number; appId: number };
-  CreatePost: { appId: number; postId?: number; initialContent?: string };
+  CreatePost: {
+    appId: number;
+    postId?: number;
+    initialContent?: string;
+    initialPostType?: 'post' | 'announcement' | 'poll';
+    initialPoll?: { question: string; options: { id: number; option_text: string }[]; allow_multiple: boolean };
+  };
 };
 
 export type PerformanceStackParamList = {
@@ -71,12 +89,18 @@ export type MoreStackParamList = {
   ProjectsList: undefined;
   ProjectDetail: { projectId: number; appId: number };
   CreateEditProject: { appId: number; projectId?: number };
+  ProjectFinancials: { projectId: number; appId: number };
   AgreementsList: undefined;
   AgreementDetail: { agreementId: number; appId: number };
   CreateEditAgreement: { appId: number; agreementId?: number };
   ServicesList: undefined;
   CreateEditService: { serviceId?: number };
   ComplianceBoard: undefined;
+  ComplianceTasks: undefined;
+  // Registered in MoreStack too so the Compliance Board can open task
+  // create/detail without leaving the More tab.
+  CreateTask: CreateTaskParams;
+  TaskDetail: { taskId: number; appId: number };
   Routines: undefined;
   BusinessReviewsList: undefined;
   BusinessReviewDetail: { reviewId: number; appId: number };

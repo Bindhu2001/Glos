@@ -14,7 +14,6 @@ import { apiErrorMessage } from '../../utils/apiError';
 import { showAlert } from '../../components/common/AlertModal';
 import LoadError from '../../components/common/LoadError';
 import Avatar from '../../components/common/Avatar';
-import { withForwardMarker } from '../../utils/attachments';
 
 type Nav = NativeStackNavigationProp<ChatStackParamList, 'ForwardMessage'>;
 type Rt = RouteProp<ChatStackParamList, 'ForwardMessage'>;
@@ -114,7 +113,6 @@ export default function ForwardMessageScreen() {
       return;
     }
     setSending(true);
-    const forwardedBody = withForwardMarker(params.body ?? '');
     const selectedTargets = targets.filter((t) => selected.has(t.key));
     try {
       // Members without an existing conversation need one created first —
@@ -129,14 +127,13 @@ export default function ForwardMessageScreen() {
       conversationIds.forEach((conversationId) => {
         socket.emit('send_message', {
           conversation_id: conversationId,
-          body: forwardedBody,
+          body: params.body ?? '',
           reply_to_id: null,
           attachments: params.attachments ?? [],
+          forwarded: true,
         });
       });
-      const count = conversationIds.length;
       navigation.goBack();
-      setTimeout(() => showAlert('Forwarded', `Message forwarded to ${count} conversation${count === 1 ? '' : 's'}.`), 300);
     } catch (err) {
       showAlert('Could Not Forward', apiErrorMessage(err));
     } finally {

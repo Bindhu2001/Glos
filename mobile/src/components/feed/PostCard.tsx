@@ -9,20 +9,14 @@ import { AppColors } from '../../utils/colors';
 import { formatRelative } from '../../utils/format';
 import { hasTable, stripNonContentElements, stripTags } from '../../utils/postContent';
 import { stripMentionTokens } from '../../utils/mentions';
+import { BADGE_META } from '../../utils/badges';
 import AttachmentList from '../common/AttachmentList';
 import { Attachment } from '../../utils/attachments';
+import {
+  RecipientNamesInline, RecipientsModal, toRecipients, Recipient,
+} from './RecipientNames';
 
 const EMOJIS = ['👍', '❤️', '🎉', '👏', '🔥'];
-
-const BADGE_META: Record<string, { emoji: string; label: string }> = {
-  teamwork:        { emoji: '🤝', label: 'Teamwork' },
-  innovation:      { emoji: '💡', label: 'Innovation' },
-  leadership:      { emoji: '🌟', label: 'Leadership' },
-  excellence:      { emoji: '🏆', label: 'Excellence' },
-  mentorship:      { emoji: '🎓', label: 'Mentorship' },
-  customer_focus:  { emoji: '💛', label: 'Customer Focus' },
-  problem_solving: { emoji: '🔧', label: 'Problem Solving' },
-};
 
 interface Post {
   id: number;
@@ -33,7 +27,7 @@ interface Post {
   author_user_id?: number;
   author?: { first_name?: string; last_name?: string; email?: string; photo_url?: string | null };
   created_at: string;
-  reactions?: { emoji: string; count: number }[];
+  reactions?: { emoji: string; count: number; user_names?: string[] }[];
   reaction_count?: number;
   comment_count?: number;
   is_pinned?: boolean;
@@ -86,16 +80,6 @@ function uname(u: any): string {
   return [u.first_name, u.last_name].filter(Boolean).join(' ') || u.email || 'Someone';
 }
 
-// Mirrors web's NamesWithMore: "Alice, Bob & +3 more" for multi-recipient
-// appreciations, falling back to the single to_user for older records.
-function namesWithMore(toUsers: any[] | undefined, singleUser: any): string {
-  const list = (toUsers && toUsers.length ? toUsers : [singleUser]).filter(Boolean);
-  if (list.length === 0) return 'Someone';
-  if (list.length === 1) return uname(list[0]);
-  if (list.length === 2) return `${uname(list[0])} & ${uname(list[1])}`;
-  return `${uname(list[0])}, ${uname(list[1])} & +${list.length - 2} more`;
-}
-
 const AUDIENCE_ICON: Record<string, string> = { users: '👤', departments: '🏢', roles: '💼' };
 
 // audience_ids comes back as a JSON string on some responses and an already-parsed
@@ -118,8 +102,10 @@ export default function PostCard({ post, onPress, onReact, onDelete, onEdit, onP
   const { colors } = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [showReactors, setShowReactors] = useState(false);
   const [profileUser, setProfileUser] = useState<ProfileUser | null>(null);
   const [audienceModalOpen, setAudienceModalOpen] = useState(false);
+  const [recipientsModal, setRecipientsModal] = useState<Recipient[] | null>(null);
 
   const audienceNames = resolveAudienceNames(post, members, departments, roles);
 
@@ -160,7 +146,7 @@ export default function PostCard({ post, onPress, onReact, onDelete, onEdit, onP
   const fbPreviewSource = fbHasTable ? fbText.replace(/<table[\s\S]*?<\/table>/gi, '') : fbText;
   const fbPreview = stripMentionTokens(stripTags(stripNonContentElements(fbPreviewSource))).substring(0, 180);
   const fbFromName = post.feedback?.is_anonymous ? null : uname(post.feedback?.from_user);
-  const fbToName = namesWithMore(post.feedback?.to_users, post.feedback?.to_user);
+  const fbToRecipients = toRecipients(post.feedback?.to_users, null, post.feedback?.to_user);
 
   // Appreciation/feedback letter cards show their own from/to identity line —
   // the generic avatar+name header is not just redundant for these, it's a
@@ -222,39 +208,46 @@ export default function PostCard({ post, onPress, onReact, onDelete, onEdit, onP
             </TouchableOpacity>
           )}
         </View>
-        <TouchableOpacity
-          hitSlop={12}
-          style={s.moreBtn}
-          onPress={(e) => {
-            e.stopPropagation();
-            showAlert('Post Options', undefined, [
-              ...(onPin && postType !== 'feedback' ? [{
-                text: post.is_pinned ? 'Unpin Post' : 'Pin Post',
-                icon: (post.is_pinned ? 'pin-outline' : 'pin') as any,
-                onPress: onPin,
-              }] : []),
-              ...(onEdit ? [{
-                text: 'Edit Post',
-                icon: 'create-outline' as any,
-                onPress: onEdit,
-              }] : []),
-              ...(onDelete ? [{
-                text: 'Delete Post',
-                style: 'destructive' as const,
-                icon: 'trash-outline' as any,
-                onPress: () => {
-                  showAlert('Delete Post', 'Are you sure you want to delete this post?', [
-                    { text: 'Cancel', style: 'cancel' },
-                    { text: 'Delete', style: 'destructive', onPress: onDelete },
-                  ]);
-                },
-              }] : []),
-              { text: 'Cancel', style: 'cancel' },
-            ]);
-          }}
-        >
-          <Ionicons name="ellipsis-vertical" size={16} color={colors.gray400} />
-        </TouchableOpacity>
+        {/* Hidden entirely when none of pin/edit/delete apply — otherwise it
+            still showed on other people's posts and opened a menu with
+            nothing in it but Cancel, since those are all owner/admin-gated
+            by the caller (FeedScreen: onEdit/onDelete require authorship,
+            onPin requires admin). */}
+        {((onPin && postType !== 'feedback') || onEdit || onDelete) && (
+          <TouchableOpacity
+            hitSlop={12}
+            style={s.moreBtn}
+            onPress={(e) => {
+              e.stopPropagation();
+              showAlert('Post Options', undefined, [
+                ...(onPin && postType !== 'feedback' ? [{
+                  text: post.is_pinned ? 'Unpin Post' : 'Pin Post',
+                  icon: (post.is_pinned ? 'pin-outline' : 'pin') as any,
+                  onPress: onPin,
+                }] : []),
+                ...(onEdit ? [{
+                  text: 'Edit Post',
+                  icon: 'create-outline' as any,
+                  onPress: onEdit,
+                }] : []),
+                ...(onDelete ? [{
+                  text: 'Delete Post',
+                  style: 'destructive' as const,
+                  icon: 'trash-outline' as any,
+                  onPress: () => {
+                    showAlert('Delete Post', 'Are you sure you want to delete this post?', [
+                      { text: 'Cancel', style: 'cancel' },
+                      { text: 'Delete', style: 'destructive', onPress: onDelete },
+                    ]);
+                  },
+                }] : []),
+                { text: 'Cancel', style: 'cancel' },
+              ]);
+            }}
+          >
+            <Ionicons name="ellipsis-vertical" size={16} color={colors.gray400} />
+          </TouchableOpacity>
+        )}
       </View>
 
       {postType === 'appreciation' && post.appreciation ? (
@@ -262,16 +255,21 @@ export default function PostCard({ post, onPress, onReact, onDelete, onEdit, onP
           {(() => {
             const meta = BADGE_META[post.appreciation.badge ?? ''];
             const fromName = [post.appreciation.from_user?.first_name, post.appreciation.from_user?.last_name].filter(Boolean).join(' ') || post.appreciation.from_user?.email || 'Someone';
-            const toName = namesWithMore(post.appreciation.to_users, post.appreciation.to_user);
+            const toRecs = toRecipients(post.appreciation.to_users, null, post.appreciation.to_user);
             return (
               <>
                 {meta && <Text style={s.apprEmoji}>{meta.emoji}</Text>}
                 <View style={{ flex: 1 }}>
                   <View style={s.apprNameRow}>
-                    <Text style={s.apprNames} numberOfLines={1}>
+                    <Text style={s.apprNames} numberOfLines={2}>
                       <Text style={s.apprBold}>{fromName}</Text>
                       {' → '}
-                      <Text style={s.apprBold}>{toName}</Text>
+                      <RecipientNamesInline
+                        recipients={toRecs}
+                        textStyle={s.apprBold}
+                        linkStyle={s.recipientLink}
+                        onExpand={setRecipientsModal}
+                      />
                     </Text>
                     {meta && (
                       <View style={s.apprChip}>
@@ -280,7 +278,7 @@ export default function PostCard({ post, onPress, onReact, onDelete, onEdit, onP
                     )}
                   </View>
                   {!!post.appreciation.message && (
-                    <Text style={s.apprMsg}>"{post.appreciation.message}"</Text>
+                    <Text style={s.apprMsg}>"{stripTags(stripNonContentElements(post.appreciation.message))}"</Text>
                   )}
                 </View>
               </>
@@ -292,7 +290,12 @@ export default function PostCard({ post, onPress, onReact, onDelete, onEdit, onP
           <Text style={s.fbFromLine}>
             {fbFromName ? <Text style={s.apprBold}>{fbFromName}</Text> : <Text style={s.fbAnon}>Anonymous feedback</Text>}
             {' gave feedback to '}
-            <Text style={s.apprBold}>{fbToName}</Text>
+            <RecipientNamesInline
+              recipients={fbToRecipients}
+              textStyle={s.apprBold}
+              linkStyle={s.recipientLink}
+              onExpand={setRecipientsModal}
+            />
           </Text>
           {!!fbPreview && <Text style={s.content}>{fbPreview}</Text>}
           {!!post.feedback.attachments?.length && (
@@ -301,6 +304,11 @@ export default function PostCard({ post, onPress, onReact, onDelete, onEdit, onP
         </View>
       ) : postType === 'poll' && post.poll ? (
         <View style={s.pollBlock}>
+          {/* post.content doubles as an optional note/context field on a poll
+              post (same field the plain-post branch previews below) — it was
+              never rendered here, so a note added on web was invisible on
+              mobile. */}
+          {!!preview && <Text style={[s.content, { marginBottom: 8 }]} numberOfLines={4}>{preview}</Text>}
           <Text style={s.pollQuestion}>{post.poll.question}</Text>
           {post.poll.options.map((opt) => {
             const pct = totalVotes > 0 ? Math.round((opt.votes / totalVotes) * 100) : 0;
@@ -321,6 +329,9 @@ export default function PostCard({ post, onPress, onReact, onDelete, onEdit, onP
           <Text style={s.pollMeta}>
             {totalVotes} {totalVotes === 1 ? 'vote' : 'votes'}{post.poll.allow_multiple ? ' · Multiple choice' : ''}
           </Text>
+          {!!post.attachments?.length && (
+            <AttachmentList attachments={post.attachments} imageMaxWidth={220} imageMaxHeight={170} />
+          )}
         </View>
       ) : (
         <>
@@ -359,7 +370,11 @@ export default function PostCard({ post, onPress, onReact, onDelete, onEdit, onP
       )}
 
       <View style={s.actions}>
-        <TouchableOpacity style={s.action} onPress={() => setShowEmojiPicker(!showEmojiPicker)}>
+        <TouchableOpacity
+          style={s.action}
+          onPress={() => setShowEmojiPicker(!showEmojiPicker)}
+          onLongPress={() => { if (post.reactions && post.reactions.length > 0) setShowReactors(true); }}
+        >
           {post.reactions && post.reactions.length > 0 ? (
             <Text style={{ fontSize: 16, marginRight: -2 }}>
               {post.reactions.slice(0, 3).map(r => r.emoji).join('')}
@@ -383,6 +398,7 @@ export default function PostCard({ post, onPress, onReact, onDelete, onEdit, onP
       </>
       )}
       <UserProfileModal user={profileUser} onClose={() => setProfileUser(null)} />
+      <RecipientsModal recipients={recipientsModal} onClose={() => setRecipientsModal(null)} />
       <Modal visible={audienceModalOpen} transparent animationType="fade" onRequestClose={() => setAudienceModalOpen(false)}>
         {/* Pressable, not TouchableOpacity, for both layers: legacy Touchable
             claims the responder as soon as a touch starts (it needs to for its
@@ -408,6 +424,42 @@ export default function PostCard({ post, onPress, onReact, onDelete, onEdit, onP
                 <View style={s.audienceModalRow}>
                   <Avatar name={item} size={30} />
                   <Text style={s.audienceModalRowText}>{item}</Text>
+                </View>
+              )}
+            />
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* "Who reacted" — matches web's FeedReactionPill hover tooltip, shown
+          via long-press instead since mobile has no hover. Names come from
+          reactions[].user_names, already returned by the API but previously
+          unused on mobile. */}
+      <Modal visible={showReactors} transparent animationType="fade" onRequestClose={() => setShowReactors(false)}>
+        <Pressable style={s.audienceOverlay} onPress={() => setShowReactors(false)}>
+          <Pressable style={s.audienceModalCard} onPress={(e) => e.stopPropagation()}>
+            <View style={s.audienceModalHead}>
+              <Text style={s.audienceModalTitle}>Reactions</Text>
+              <TouchableOpacity onPress={() => setShowReactors(false)} hitSlop={8}>
+                <Ionicons name="close" size={20} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={post.reactions ?? []}
+              keyExtractor={(r) => r.emoji}
+              style={{ maxHeight: 320 }}
+              renderItem={({ item }) => (
+                <View>
+                  <View style={s.reactorGroupHead}>
+                    <Text style={s.reactorGroupEmoji}>{item.emoji}</Text>
+                    <Text style={s.reactorGroupCount}>{item.count} {item.count === 1 ? 'person' : 'people'}</Text>
+                  </View>
+                  {(item.user_names ?? []).map((name, i) => (
+                    <View key={`${item.emoji}-${i}`} style={s.audienceModalRow}>
+                      <Avatar name={name} size={26} />
+                      <Text style={s.audienceModalRowText}>{name}</Text>
+                    </View>
+                  ))}
                 </View>
               )}
             />
@@ -455,6 +507,9 @@ function makeStyles(c: AppColors) {
     audienceModalTitle: { fontSize: 15, fontWeight: '800', color: c.textPrimary },
     audienceModalRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 },
     audienceModalRowText: { fontSize: 13, fontWeight: '600', color: c.textPrimary },
+    reactorGroupHead: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 4, paddingTop: 10, paddingBottom: 4 },
+    reactorGroupEmoji: { fontSize: 16 },
+    reactorGroupCount: { fontSize: 12, fontWeight: '700', color: c.textMuted },
     moreBtn: { paddingTop: 2 },
     content: { fontSize: 14, color: c.gray700, lineHeight: 21, marginBottom: 12 },
     tableNote: {
@@ -482,6 +537,7 @@ function makeStyles(c: AppColors) {
     apprNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 4 },
     apprNames: { fontSize: 13, color: c.textSecondary, flex: 1 },
     apprBold: { fontWeight: '700', color: c.textPrimary },
+    recipientLink: { fontWeight: '700', color: c.primary, textDecorationLine: 'underline' },
     apprChip: {
       backgroundColor: c.primary, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10,
     },
@@ -497,7 +553,7 @@ function makeStyles(c: AppColors) {
     pollOption: {
       borderWidth: 1, borderColor: c.border, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10,
       overflow: 'hidden', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-      backgroundColor: c.gray50,
+      backgroundColor: c.gray50, marginBottom: 8,
     },
     pollOptionMine: { borderColor: c.primary },
     pollOptionFill: {

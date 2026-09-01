@@ -108,10 +108,20 @@ export default function TasksScreen() {
   const [search, setSearch] = useState('');
   const [activeFilter, setActiveFilter] = useState('My Tasks');
   const [assigneeFilters, setAssigneeFilters] = useState<number[]>([]);
+  // Matches web's Status field in the filter panel — multi-select (view e.g.
+  // "Not Started + In Progress" together), layered on top of whichever
+  // scope chip (All/My Tasks/My Team) is active above, not a replacement
+  // for it. The top chip row's individual status chips remain single-select
+  // shortcuts for the common case; this covers picking more than one.
+  const [statusFilters, setStatusFilters] = useState<string[]>([]);
   const [areaFilter, setAreaFilter] = useState('');
   const [projectFilter, setProjectFilter] = useState<number | ''>('');
   const [priorityFilter, setPriorityFilter] = useState('');
   const [deadlinePreset, setDeadlinePreset] = useState('');
+  // Matches web's independent Created/Completed date-range filters (Tasks.jsx
+  // createdFilter/completedFilter) — mobile previously only had Deadline.
+  const [createdPreset, setCreatedPreset] = useState('');
+  const [completedPreset, setCompletedPreset] = useState('');
   const [needSupport, setNeedSupport] = useState(false);
   const [sortBy, setSortBy] = useState('created_at');
   const [showFilters, setShowFilters] = useState(false);
@@ -230,10 +240,13 @@ export default function TasksScreen() {
 
   const resetFilters = async () => {
     setAssigneeFilters([]);
+    setStatusFilters([]);
     setAreaFilter(''); areaFilterRef.current = '';
     setProjectFilter(''); projectFilterRef.current = '';
     setPriorityFilter('');
     setDeadlinePreset('');
+    setCreatedPreset('');
+    setCompletedPreset('');
     setNeedSupport(false);
     setSortBy('created_at'); sortByRef.current = 'created_at';
     try { await load(); } catch {}
@@ -256,18 +269,24 @@ export default function TasksScreen() {
       const matchAssignee = assigneeFilters.length === 0 || assigneeFilters.includes(t.assigned_to_user_id);
       const matchPriority = !priorityFilter || t.priority === priorityFilter;
       const matchDeadline = !deadlinePreset || matchesDeadlinePreset(t.deadline ?? t.due_on, deadlinePreset, now);
+      const matchCreated = !createdPreset || matchesDeadlinePreset(t.created_at, createdPreset, now);
+      const matchCompleted = !completedPreset || matchesDeadlinePreset(t.completed_at, completedPreset, now);
       const matchNeedSupport = !needSupport || t.review_status === 'need_support';
-      return matchSearch && matchTeam && matchAssignee && matchPriority && matchDeadline && matchNeedSupport;
+      return matchSearch && matchTeam && matchAssignee && matchPriority && matchDeadline && matchCreated && matchCompleted && matchNeedSupport;
     });
   })();
 
   const filtered = (() => {
     const statusKey = STATUS_MAP[activeFilter];
     let base = statusKey ? scoped.filter((t) => t.status === statusKey) : scoped;
+    if (statusFilters.length > 0) {
+      base = base.filter((t) => statusFilters.includes(t.status));
+    }
     // "My Tasks" is a work queue, not an archive — hide Done by default so
     // completed work doesn't clutter it. The Done chip (and All) still show
-    // everything for anyone who wants to see finished tasks.
-    if (activeFilter === 'My Tasks') {
+    // everything for anyone who wants to see finished tasks — same for an
+    // explicit multi-status filter that includes Done.
+    if (activeFilter === 'My Tasks' && !statusFilters.includes('done')) {
       base = base.filter((t) => t.status !== 'done');
     }
     // Running-timer tasks float to the top, stable otherwise.
@@ -275,7 +294,8 @@ export default function TasksScreen() {
   })();
 
   const hasActiveFilters = !!(
-    assigneeFilters.length > 0 || areaFilter || projectFilter || priorityFilter || deadlinePreset || needSupport
+    assigneeFilters.length > 0 || statusFilters.length > 0 || areaFilter || projectFilter || priorityFilter
+    || deadlinePreset || createdPreset || completedPreset || needSupport
     || (sortBy && sortBy !== 'created_at')
   );
 
@@ -508,6 +528,23 @@ export default function TasksScreen() {
                   </>
                 )}
 
+                {/* Status — multi-select, layers on top of the scope chip above */}
+                <Text style={s.sectionLabel}>STATUS</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.sheetChipsScroll} contentContainerStyle={s.sheetChipsRow}>
+                  {Object.entries(STATUS_MAP).map(([label, value]) => {
+                    const active = statusFilters.includes(value);
+                    return (
+                      <TouchableOpacity
+                        key={value}
+                        style={[s.sheetChip, active && s.sheetChipActive]}
+                        onPress={() => setStatusFilters((prev) => (prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]))}
+                      >
+                        <Text style={[s.sheetChipText, active && s.sheetChipTextActive]}>{label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+
                 {/* Priority */}
                 <Text style={s.sectionLabel}>PRIORITY</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.sheetChipsScroll} contentContainerStyle={s.sheetChipsRow}>
@@ -544,6 +581,46 @@ export default function TasksScreen() {
                       onPress={() => setDeadlinePreset(deadlinePreset === d.value ? '' : d.value)}
                     >
                       <Text style={[s.sheetChipText, deadlinePreset === d.value && s.sheetChipTextActive]}>{d.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+
+                {/* Created */}
+                <Text style={s.sectionLabel}>CREATED</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.sheetChipsScroll} contentContainerStyle={s.sheetChipsRow}>
+                  <TouchableOpacity
+                    style={[s.sheetChip, createdPreset === '' && s.sheetChipActive]}
+                    onPress={() => setCreatedPreset('')}
+                  >
+                    <Text style={[s.sheetChipText, createdPreset === '' && s.sheetChipTextActive]}>All</Text>
+                  </TouchableOpacity>
+                  {DEADLINE_PRESETS.map((d) => (
+                    <TouchableOpacity
+                      key={d.value}
+                      style={[s.sheetChip, createdPreset === d.value && s.sheetChipActive]}
+                      onPress={() => setCreatedPreset(createdPreset === d.value ? '' : d.value)}
+                    >
+                      <Text style={[s.sheetChipText, createdPreset === d.value && s.sheetChipTextActive]}>{d.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+
+                {/* Completed */}
+                <Text style={s.sectionLabel}>COMPLETED</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.sheetChipsScroll} contentContainerStyle={s.sheetChipsRow}>
+                  <TouchableOpacity
+                    style={[s.sheetChip, completedPreset === '' && s.sheetChipActive]}
+                    onPress={() => setCompletedPreset('')}
+                  >
+                    <Text style={[s.sheetChipText, completedPreset === '' && s.sheetChipTextActive]}>All</Text>
+                  </TouchableOpacity>
+                  {DEADLINE_PRESETS.map((d) => (
+                    <TouchableOpacity
+                      key={d.value}
+                      style={[s.sheetChip, completedPreset === d.value && s.sheetChipActive]}
+                      onPress={() => setCompletedPreset(completedPreset === d.value ? '' : d.value)}
+                    >
+                      <Text style={[s.sheetChipText, completedPreset === d.value && s.sheetChipTextActive]}>{d.label}</Text>
                     </TouchableOpacity>
                   ))}
                 </ScrollView>

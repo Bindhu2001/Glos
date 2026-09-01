@@ -52,6 +52,7 @@ export default function ChatListScreen() {
   const [search, setSearch] = useState('');
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
   const [drafts, setDrafts] = useState<Record<number, string>>({});
+  const [typingConvIds, setTypingConvIds] = useState<Set<number>>(new Set());
   const hasLoadedRef = useRef(false);
 
   // useFocusEffect below already re-runs this on mount, so a plain mount effect
@@ -94,6 +95,12 @@ export default function ChatListScreen() {
       return name.includes(search.trim().toLowerCase());
     })
     .sort((a, b) => {
+      // Matches web: a conversation with a saved draft floats to the top
+      // regardless of updated_at — it's what you were about to say, so it
+      // should stay easy to find even if nothing new has arrived in it.
+      const aHasDraft = !!drafts[a.id]?.trim();
+      const bHasDraft = !!drafts[b.id]?.trim();
+      if (aHasDraft !== bHasDraft) return aHasDraft ? -1 : 1;
       const at = new Date(a.updated_at ?? a.last_message?.created_at ?? 0).getTime();
       const bt = new Date(b.updated_at ?? b.last_message?.created_at ?? 0).getTime();
       return bt - at;
@@ -121,6 +128,18 @@ export default function ChatListScreen() {
     const appId = workspace.id;
     const onUpdate = () => load(true);
     const onPresence = (payload: any) => setOnlineIds(new Set((payload.online ?? []).map((x: any) => String(x))));
+    // The join handler already puts this socket in every conversation's room
+    // (not just the app-level one), so this fires for typing anywhere in the
+    // list, not only whichever thread happens to be open.
+    const onTyping = (payload: any) => {
+      const convId = Number(payload?.conversation_id);
+      if (!Number.isFinite(convId)) return;
+      setTypingConvIds((prev) => {
+        const next = new Set(prev);
+        if (payload.is_typing) next.add(convId); else next.delete(convId);
+        return next;
+      });
+    };
     const doJoin = () => {
       socket.emit('join', { appId });
       socket.emit('get_presence');
@@ -130,6 +149,7 @@ export default function ChatListScreen() {
       socket.on('conversation_updated', onUpdate);
       socket.on('conversation_deleted', onUpdate);
       socket.on('presence_update', onPresence);
+      socket.on('typing', onTyping);
     };
     if (socket.connected) doJoin();
     else socket.once('connect', doJoin);
@@ -144,6 +164,7 @@ export default function ChatListScreen() {
       socket.off('conversation_updated', onUpdate);
       socket.off('conversation_deleted', onUpdate);
       socket.off('presence_update', onPresence);
+      socket.off('typing', onTyping);
     };
   // getToken is read via getTokenRef (see above) so this only (re)joins when
   // the workspace changes, not on every render.
@@ -220,6 +241,7 @@ export default function ChatListScreen() {
                 : (strippedBody.trim() ? strippedBody : (hasAttachment ? 'Attachment' : 'No messages yet'));
               const draftText = drafts[c.id];
               const unread = c.unread_count > 0;
+              const isTyping = typingConvIds.has(c.id);
               const otherPhotoUrl = c.type === 'direct'
                 ? c.members?.find((m: any) => String(m.id) === String(c.other_user_id))?.photo_url ?? null
                 : null;
@@ -242,7 +264,9 @@ export default function ChatListScreen() {
                       <Text style={[s.time, unread && s.timeUnread]}>{timeAgo(c.last_message?.created_at)}</Text>
                     </View>
                     <View style={s.lastMsgRow}>
-                      {draftText ? (
+                      {isTyping ? (
+                        <Text style={s.typingText} numberOfLines={1}>typing...</Text>
+                      ) : draftText ? (
                         <>
                           <Text style={s.draftLabel}>Draft: </Text>
                           <Text style={s.lastMsg} numberOfLines={1}>{draftText}</Text>
@@ -328,6 +352,7 @@ function makeStyles(c: AppColors) {
     timeUnread: { color: c.primary, fontWeight: '700' },
     lastMsgRow: { flexDirection: 'row', alignItems: 'center' },
     draftLabel: { fontSize: 12, fontWeight: '700', color: c.danger },
+    typingText: { fontSize: 12, fontWeight: '700', color: c.primary },
     lastMsg: { flexShrink: 1, fontSize: 12, color: c.textSecondary },
     lastMsgUnread: { color: c.textPrimary, fontWeight: '600' },
     badge: { backgroundColor: c.primary, borderRadius: 10, minWidth: 20, height: 20, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
