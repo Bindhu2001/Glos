@@ -38,8 +38,10 @@ class NotifActionsModule : Module() {
     }
 
     AsyncFunction("clearCredentials") {
-      val context = appContext.reactContext ?: return@AsyncFunction
-      NotifAuthStore.clear(context)
+      val context = appContext.reactContext
+      if (context != null) {
+        NotifAuthStore.clear(context)
+      }
     }
 
     AsyncFunction("wasHandledNatively") { responseKey: String ->
