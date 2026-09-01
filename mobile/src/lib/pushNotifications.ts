@@ -243,6 +243,36 @@ async function handleMarkAsRead(api: Api, data: unknown, notificationId: string)
   }
 }
 
+// One-shot diagnostic for the "reply/mark-as-read buttons don't show up"
+// class of bug — surfaces the two things that can't be seen from the
+// notification shade itself: whether the OS actually has the chat_reply
+// category persisted (native SharedPreferences store, independent of any
+// particular notification), and whether push is even registered at all.
+// Not wired into any screen by default; call it from a temporary debug
+// button when diagnosing on a real device.
+export async function getNotifDiagnostics(): Promise<string> {
+  const lines: string[] = [];
+  try {
+    const perm = await Notifications.getPermissionsAsync();
+    lines.push(`permission: ${perm.status}`);
+  } catch (e) {
+    lines.push(`permission: ERROR ${String(e)}`);
+  }
+  try {
+    const categories = await Notifications.getNotificationCategoriesAsync();
+    const chatReply = categories.find((c) => c.identifier === CHAT_REPLY_CATEGORY);
+    lines.push(`categories registered: ${categories.map((c) => c.identifier).join(', ') || '(none)'}`);
+    if (chatReply) {
+      lines.push(`chat_reply actions: ${chatReply.actions.map((a) => a.identifier).join(', ')}`);
+    } else {
+      lines.push('chat_reply: NOT REGISTERED');
+    }
+  } catch (e) {
+    lines.push(`categories: ERROR ${String(e)}`);
+  }
+  return lines.join('\n');
+}
+
 // Cold start via notification tap: the tap happened before any JS was
 // running, so there's no live event for it — Expo instead remembers it and
 // hands it back via this call once the app finishes launching. Must run

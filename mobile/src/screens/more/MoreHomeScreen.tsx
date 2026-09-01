@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -9,6 +9,7 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { useWorkspace } from '../../contexts/WorkspaceContext';
 import { AppColors } from '../../utils/colors';
 import { MoreStackParamList } from '../../navigation/types';
+import { getNotifDiagnostics } from '../../lib/pushNotifications';
 
 type Nav = NativeStackNavigationProp<MoreStackParamList, 'MoreHome'>;
 
@@ -93,6 +94,12 @@ export default function MoreHomeScreen() {
             </View>
           </View>
         ))}
+        <TouchableOpacity
+          style={s.debugRow}
+          onPress={() => getNotifDiagnostics().then((msg) => Alert.alert('Notification diagnostics', msg))}
+        >
+          <Text style={s.debugRowText}>Notification diagnostics (temp)</Text>
+        </TouchableOpacity>
       </ScrollView>
     </View>
   );
@@ -129,5 +136,7 @@ function makeStyles(c: AppColors) {
     rowBody: { flex: 1, gap: 2 },
     rowLabel: { fontSize: 15, fontWeight: '700', color: c.textPrimary },
     rowDesc: { fontSize: 12, color: c.textSecondary },
+    debugRow: { alignItems: 'center', paddingVertical: 16 },
+    debugRowText: { fontSize: 11, color: c.textMuted },
   });
 }
