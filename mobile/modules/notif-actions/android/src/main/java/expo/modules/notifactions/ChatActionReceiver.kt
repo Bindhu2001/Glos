@@ -102,11 +102,15 @@ class ChatActionReceiver : BroadcastReceiver() {
     // receiver processes the broadcast before we let the process go.
     private const val SETTLE_MS = 1_200L
 
-    // How long to wait after forwarding a chat push to expo-notifications
-    // before checking whether it actually posted the notification (so we can
-    // patch actions onto it). One retry covers a slower first attempt.
-    private const val PATCH_DELAY_MS = 1_200L
-    private const val PATCH_RETRY_DELAY_MS = 900L
+    // How long to wait, and how many times to check, after forwarding a chat
+    // push to expo-notifications before giving up on finding the notification
+    // it posted (so we can patch actions onto it). A cold-started process
+    // (app fully killed) needs much more slack here than a warm foreground
+    // one — class loading plus expo's own broadcast dispatch can easily blow
+    // past one or two retries — so this polls generously; worst case
+    // (10 * 800ms = 8s) still leaves comfortable headroom under WATCHDOG_MS.
+    private const val PATCH_POLL_INTERVAL_MS = 800L
+    private const val PATCH_POLL_MAX_ATTEMPTS = 10
   }
 
   override fun onReceive(context: Context, intent: Intent) {
@@ -134,8 +138,8 @@ class ChatActionReceiver : BroadcastReceiver() {
             else -> forwardAndSettle(app, intent)
           }
         }
-      } catch (e: Exception) {
-        Log.w(TAG, "worker crashed, forwarding: ${e.message}")
+      } catch (t: Throwable) {
+        Log.w(TAG, "worker crashed, forwarding: ${t.message}")
         runCatching { forwardAndSettle(app, intent) }
       } finally {
         finishOnce()
@@ -145,62 +149,71 @@ class ChatActionReceiver : BroadcastReceiver() {
 
   private fun safeEventType(intent: Intent): String? = try {
     intent.getStringExtra(EVENT_TYPE_KEY)
-  } catch (e: Exception) {
+  } catch (t: Throwable) {
     null
   }
 
   /** Worker thread, under the goAsync() hold. Handles a tap on an action we patched in. */
   private fun processSelfAction(app: Context, intent: Intent) {
-    val actionId = intent.getStringExtra(SELF_ACTION_ID) ?: return
-    val appId = intent.getIntExtra(SELF_APP_ID, -1)
-    val convId = intent.getIntExtra(SELF_CONV_ID, -1)
-    val tag = intent.getStringExtra(SELF_TAG)
-    if (appId <= 0 || convId <= 0) return
-    val rawUserText = if (actionId == REPLY_ACTION) {
-      runCatching { RemoteInput.getResultsFromIntent(intent)?.getString(SELF_TEXT_KEY) }.getOrNull().orEmpty()
-    } else {
-      ""
+    try {
+      val actionId = intent.getStringExtra(SELF_ACTION_ID) ?: return
+      val appId = intent.getIntExtra(SELF_APP_ID, -1)
+      val convId = intent.getIntExtra(SELF_CONV_ID, -1)
+      val tag = intent.getStringExtra(SELF_TAG)
+      if (appId <= 0 || convId <= 0) return
+      val rawUserText = if (actionId == REPLY_ACTION) {
+        runCatching { RemoteInput.getResultsFromIntent(intent)?.getString(SELF_TEXT_KEY) }.getOrNull().orEmpty()
+      } else {
+        ""
+      }
+      // No expo-side fallback to forward to here — the notification this button
+      // lives on was posted by expo, but the action itself is ours end-to-end,
+      // so a failure here (e.g. expired credentials) is a silent best-effort
+      // miss rather than falling back to the JS replay-on-open path, which only
+      // covers expo's own response bookkeeping.
+      performChatAction(app, actionId, appId, convId, rawUserText, tag)
+    } catch (t: Throwable) {
+      Log.w(TAG, "processSelfAction failed: ${t.message}")
     }
-    // No expo-side fallback to forward to here — the notification this button
-    // lives on was posted by expo, but the action itself is ours end-to-end,
-    // so a failure here (e.g. expired credentials) is a silent best-effort
-    // miss rather than falling back to the JS replay-on-open path, which only
-    // covers expo's own response bookkeeping.
-    performChatAction(app, actionId, appId, convId, rawUserText, tag)
   }
 
   /** Worker thread, under the goAsync() hold. Handles an expo NOTIFICATION_EVENT response (e.g. a plain tap, or a legacy pre-patch action). */
   private fun process(app: Context, intent: Intent) {
-    runCatching { intent.setExtrasClassLoader(app.classLoader) }
+    try {
+      runCatching { intent.setExtrasClassLoader(app.classLoader) }
 
-    val actionId = reflectActionId(intent)
-    if (actionId != REPLY_ACTION && actionId != MARK_READ_ACTION) {
-      forwardAndSettle(app, intent) // default tap / other action → expo routes it
-      return
+      val actionId = reflectActionId(intent)
+      if (actionId != REPLY_ACTION && actionId != MARK_READ_ACTION) {
+        forwardAndSettle(app, intent) // default tap / other action → expo routes it
+        return
+      }
+
+      val data = reflectData(intent)
+      val type = data?.optString("type").orEmpty()
+      val appId = data?.optInt("app_id", -1) ?: -1
+      val convId = data?.optInt("conversation_id", -1) ?: -1
+      if (type != "chat_message" || appId <= 0 || convId <= 0) {
+        forwardAndSettle(app, intent)
+        return
+      }
+
+      // Raw (untrimmed) text — the dedup key must match JS's exactly:
+      //   `${notifId}:${actionId}:${response.userText ?? ''}`
+      val rawUserText = if (actionId == REPLY_ACTION) {
+        runCatching {
+          RemoteInput.getResultsFromIntent(intent)?.getString(USER_TEXT_RESPONSE_KEY)
+        }.getOrNull().orEmpty()
+      } else {
+        ""
+      }
+
+      val notifTag = reflectNotificationId(intent)
+      val ok = performChatAction(app, actionId, appId, convId, rawUserText, notifTag)
+      if (!ok) forwardAndSettle(app, intent)
+    } catch (t: Throwable) {
+      Log.w(TAG, "process failed, forwarding: ${t.message}")
+      runCatching { forwardAndSettle(app, intent) }
     }
-
-    val data = reflectData(intent)
-    val type = data?.optString("type").orEmpty()
-    val appId = data?.optInt("app_id", -1) ?: -1
-    val convId = data?.optInt("conversation_id", -1) ?: -1
-    if (type != "chat_message" || appId <= 0 || convId <= 0) {
-      forwardAndSettle(app, intent)
-      return
-    }
-
-    // Raw (untrimmed) text — the dedup key must match JS's exactly:
-    //   `${notifId}:${actionId}:${response.userText ?? ''}`
-    val rawUserText = if (actionId == REPLY_ACTION) {
-      runCatching {
-        RemoteInput.getResultsFromIntent(intent)?.getString(USER_TEXT_RESPONSE_KEY)
-      }.getOrNull().orEmpty()
-    } else {
-      ""
-    }
-
-    val notifTag = reflectNotificationId(intent)
-    val ok = performChatAction(app, actionId, appId, convId, rawUserText, notifTag)
-    if (!ok) forwardAndSettle(app, intent)
   }
 
   /** Shared by both action-tap paths above. */
@@ -234,8 +247,8 @@ class ChatActionReceiver : BroadcastReceiver() {
         if (read) dismiss(app, notifTag)
         read
       }
-    } catch (e: Exception) {
-      Log.w(TAG, "chat action '$actionId' failed: ${e.message}")
+    } catch (t: Throwable) {
+      Log.w(TAG, "chat action '$actionId' failed: ${t.message}")
     }
 
     if (!ok) NotifAuthStore.unmarkHandled(app, handledKey)
@@ -251,16 +264,17 @@ class ChatActionReceiver : BroadcastReceiver() {
       val info = reflectChatInfo(intent)
       forwardToExpo(context, intent) // unchanged: expo still builds/posts, so tap-to-open, icon etc. are untouched
       if (info != null) {
-        Thread.sleep(PATCH_DELAY_MS)
-        if (!patchInActions(context, info)) {
-          Thread.sleep(PATCH_RETRY_DELAY_MS)
-          patchInActions(context, info)
+        var patched = false
+        for (attempt in 1..PATCH_POLL_MAX_ATTEMPTS) {
+          Thread.sleep(PATCH_POLL_INTERVAL_MS)
+          if (patchInActions(context, info)) { patched = true; break }
         }
+        if (!patched) Log.w(TAG, "gave up waiting for expo to post the chat notification (tag=${info.tag})")
       } else {
         Thread.sleep(SETTLE_MS)
       }
-    } catch (e: Exception) {
-      Log.w(TAG, "presentAndPatch failed: ${e.message}")
+    } catch (t: Throwable) {
+      Log.w(TAG, "presentAndPatch failed: ${t.message}")
     } finally {
       receiver?.let { runCatching { it.send(0, Bundle()) } }
     }
@@ -315,8 +329,8 @@ class ChatActionReceiver : BroadcastReceiver() {
 
       NotificationManagerCompat.from(context).notify(tag, EXPO_NOTIFY_ID, builder.build())
       return true
-    } catch (e: Exception) {
-      Log.w(TAG, "patchInActions failed: ${e.message}")
+    } catch (t: Throwable) {
+      Log.w(TAG, "patchInActions failed: ${t.message}")
       return false
     }
   }
@@ -353,7 +367,7 @@ class ChatActionReceiver : BroadcastReceiver() {
     } else {
       intent.getParcelableExtra(RECEIVER_KEY)
     }
-  } catch (e: Exception) {
+  } catch (t: Throwable) {
     null
   }
 
@@ -371,8 +385,8 @@ class ChatActionReceiver : BroadcastReceiver() {
         component = ComponentName(context.packageName, EXPO_RECEIVER)
       }
       context.sendBroadcast(fwd)
-    } catch (e: Exception) {
-      Log.w(TAG, "forwardToExpo failed: ${e.message}")
+    } catch (t: Throwable) {
+      Log.w(TAG, "forwardToExpo failed: ${t.message}")
     }
   }
 
@@ -392,8 +406,8 @@ class ChatActionReceiver : BroadcastReceiver() {
     val convId = data?.optInt("conversation_id", -1) ?: -1
     if (data?.optString("type") != "chat_message" || appId <= 0 || convId <= 0) null
     else ChatNotifInfo(tag, appId, convId)
-  } catch (e: Exception) {
-    Log.w(TAG, "reflectChatInfo failed: ${e.message}"); null
+  } catch (t: Throwable) {
+    Log.w(TAG, "reflectChatInfo failed: ${t.message}"); null
   }
 
   private fun reflectActionId(intent: Intent): String? = try {
@@ -509,8 +523,8 @@ class ChatActionReceiver : BroadcastReceiver() {
     if (tag == null) return
     try {
       NotificationManagerCompat.from(context).cancel(tag, EXPO_NOTIFY_ID)
-    } catch (e: Exception) {
-      Log.w(TAG, "dismiss failed: ${e.message}")
+    } catch (t: Throwable) {
+      Log.w(TAG, "dismiss failed: ${t.message}")
     }
   }
 }
