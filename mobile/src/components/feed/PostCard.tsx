@@ -15,6 +15,7 @@ import { Attachment } from '../../utils/attachments';
 import {
   RecipientNamesInline, RecipientsModal, toRecipients, Recipient,
 } from './RecipientNames';
+import { FrameWrap } from './FrameWrap';
 
 const EMOJIS = ['👍', '❤️', '🎉', '👏', '🔥'];
 
@@ -35,6 +36,7 @@ interface Post {
   audience_type?: 'all' | 'users' | 'departments' | 'roles' | null;
   audience_ids?: number[] | string | null;
   attachments?: Attachment[];
+  frame_style?: string | null;
   appreciation?: {
     from_user?: { first_name?: string; last_name?: string; email?: string };
     to_user?: { first_name?: string; last_name?: string; email?: string };
@@ -169,7 +171,8 @@ export default function PostCard({ post, onPress, onReact, onDelete, onEdit, onP
   };
 
   return (
-    <TouchableOpacity style={s.card} onPress={onPress} activeOpacity={0.9}>
+    <FrameWrap frameStyle={post.frame_style}>
+    <TouchableOpacity style={[s.card, post.frame_style && { marginBottom: 0 }]} onPress={onPress} activeOpacity={0.9}>
       <View style={s.header}>
         {!isLetter && (
           <Avatar
@@ -467,6 +470,7 @@ export default function PostCard({ post, onPress, onReact, onDelete, onEdit, onP
         </Pressable>
       </Modal>
     </TouchableOpacity>
+    </FrameWrap>
   );
 }
 

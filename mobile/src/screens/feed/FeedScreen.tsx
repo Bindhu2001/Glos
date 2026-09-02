@@ -14,6 +14,7 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { AppColors } from '../../utils/colors';
 import PostCard from '../../components/feed/PostCard';
 import GiveAppreciationModal from '../../components/feed/GiveAppreciationModal';
+import { FramePickerRow } from '../../components/feed/FrameWrap';
 import Avatar from '../../components/common/Avatar';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import LoadError from '../../components/common/LoadError';
@@ -90,6 +91,7 @@ export default function FeedScreen() {
   const [fbSearch, setFbSearch] = useState('');
   const [fbSelected, setFbSelected] = useState<any[]>([]);
   const [fbFeedbackText, setFbFeedbackText] = useState('');
+  const [fbFrameStyle, setFbFrameStyle] = useState<string | null>(null);
   const [fbIsAnonymous, setFbIsAnonymous] = useState(false);
   const [fbSubmitting, setFbSubmitting] = useState(false);
   const [fbCycles, setFbCycles] = useState<any[]>([]);
@@ -367,10 +369,12 @@ export default function FeedScreen() {
         feedback_text: fbFeedbackText.trim(),
         is_anonymous: fbIsAnonymous,
         cycle_id: fbCycleId ?? null,
+        frame_style: fbFrameStyle,
       });
       setShowGiveFeedback(false);
       setFbSelected([]);
       setFbFeedbackText('');
+      setFbFrameStyle(null);
       setFbIsAnonymous(false);
       setFbSearch('');
       setFbCycleId(null);
@@ -387,6 +391,7 @@ export default function FeedScreen() {
     setShowGiveFeedback(false);
     setFbSelected([]);
     setFbFeedbackText('');
+    setFbFrameStyle(null);
     setFbSearch('');
     setFbCycleId(null);
   };
@@ -817,6 +822,9 @@ export default function FeedScreen() {
                 numberOfLines={4}
                 textAlignVertical="top"
               />
+
+              <Text style={s.formLabel}>Frame (optional)</Text>
+              <FramePickerRow value={fbFrameStyle} onChange={setFbFrameStyle} />
 
               <TouchableOpacity
                 style={s.anonRow}

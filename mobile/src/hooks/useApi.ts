@@ -410,7 +410,7 @@ export function useApi() {
           const client = await mkClient();
           return feedApi(client).pin(appId, postId);
         },
-        giveFeedback: async (appId: number, data: { to_user_ids: number[]; feedback_text: string; is_anonymous?: boolean; cycle_id?: number | null; type?: string }) => {
+        giveFeedback: async (appId: number, data: { to_user_ids: number[]; feedback_text: string; is_anonymous?: boolean; cycle_id?: number | null; type?: string; frame_style?: string | null }) => {
           const client = await mkClient();
           return feedApi(client).giveFeedback(appId, data);
         },

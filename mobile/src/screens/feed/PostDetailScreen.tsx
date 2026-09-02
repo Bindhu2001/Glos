@@ -27,6 +27,7 @@ import { BADGE_META } from '../../utils/badges';
 import {
   RecipientNamesInline, RecipientsModal, toRecipients, recipientName as uname, Recipient,
 } from '../../components/feed/RecipientNames';
+import { FrameWrap } from '../../components/feed/FrameWrap';
 
 type Route = RouteProp<FeedStackParamList, 'PostDetail'>;
 
@@ -214,7 +215,8 @@ export default function PostDetailScreen() {
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
-        <View style={s.postCard}>
+        <FrameWrap frameStyle={post.frame_style}>
+        <View style={[s.postCard, post.frame_style && { marginBottom: 0 }]}>
           {!isLetter && (
             <View style={s.postHeader}>
               <Avatar name={authorName} photoUrl={post.author?.photo_url} size={42} />
@@ -323,6 +325,7 @@ export default function PostDetailScreen() {
             </View>
           )}
         </View>
+        </FrameWrap>
 
         {/* Comments aren't applicable to feedback — private, no discussion thread, matching web. */}
         {postType !== 'feedback' && (

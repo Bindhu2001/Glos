@@ -20,6 +20,7 @@ import TableBuilderModal from '../../components/feed/TableBuilderModal';
 import AttachmentChips from '../../components/common/AttachmentChips';
 import { tableToHtml, detectPastedTable, guardedTextChange, CONTENT_MAX_LEN } from '../../utils/postContent';
 import { pickAttachmentFiles, uploadAttachments, PickedFile } from '../../utils/attachments';
+import { FramePickerRow } from '../../components/feed/FrameWrap';
 
 type Route = RouteProp<FeedStackParamList, 'CreatePost'>;
 type AudienceType = 'all' | 'users' | 'departments' | 'roles';
@@ -81,6 +82,7 @@ export default function CreatePostScreen() {
   const addPollOption = () => setPollOptions((prev) => (prev.length < 10 ? [...prev, { id: null, text: '' }] : prev));
   const removePollOption = (i: number) => setPollOptions((prev) => (prev.length > 2 ? prev.filter((_, idx) => idx !== i) : prev));
   const [audienceType, setAudienceType] = useState<AudienceType>('all');
+  const [frameStyle, setFrameStyle] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [saving, setSaving] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<PickedFile[]>([]);
@@ -209,6 +211,7 @@ export default function CreatePostScreen() {
           audience_type: audienceType,
           audience_ids: audienceType === 'all' ? [] : selectedIds,
           attachments,
+          frame_style: frameStyle,
           ...(isPoll ? {
             poll_question: pollQuestion.trim(),
             poll_options: trimmedPollOptions.map((o) => o.text),
@@ -359,6 +362,13 @@ export default function CreatePostScreen() {
             </View>
           )}
           </>
+          )}
+
+          {!isEditMode && (
+            <>
+              <Text style={s.sectionLabel}>FRAME (OPTIONAL)</Text>
+              <FramePickerRow value={frameStyle} onChange={setFrameStyle} />
+            </>
           )}
 
           {isPoll ? (

@@ -12,6 +12,7 @@ import Avatar from '../common/Avatar';
 import { showAlert } from '../common/AlertModal';
 import { guardedTextChange, CONTENT_MAX_LEN } from '../../utils/postContent';
 import { BADGES } from '../../utils/badges';
+import { FramePickerRow } from './FrameWrap';
 
 interface Props {
   visible: boolean;
@@ -30,6 +31,7 @@ export default function GiveAppreciationModal({ visible, onClose, onSuccess, app
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<any[]>([]);
   const [badge, setBadge] = useState<string | null>(null);
+  const [frameStyle, setFrameStyle] = useState<string | null>(null);
   const [message, setMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [loadingMembers, setLoadingMembers] = useState(true);
@@ -56,6 +58,7 @@ export default function GiveAppreciationModal({ visible, onClose, onSuccess, app
     setSearch('');
     setSelected([]);
     setBadge(null);
+    setFrameStyle(null);
     setMessage('');
   };
 
@@ -72,6 +75,7 @@ export default function GiveAppreciationModal({ visible, onClose, onSuccess, app
         to_user_ids: recipientIds,
         message: message.trim(),
         ...(badge ? { badge } : {}),
+        frame_style: frameStyle,
       });
       reset();
       onSuccess();
@@ -209,6 +213,10 @@ export default function GiveAppreciationModal({ visible, onClose, onSuccess, app
                 </TouchableOpacity>
               ))}
             </View>
+
+            {/* Frame */}
+            <Text style={s.label}>Frame (optional)</Text>
+            <FramePickerRow value={frameStyle} onChange={setFrameStyle} />
 
             {/* Message */}
             <Text style={s.label}>Message</Text>

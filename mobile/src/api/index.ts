@@ -378,7 +378,7 @@ export const feedApi = (client: AxiosInstance) => ({
   deleteComment: (appId: number, postId: number, commentId: number) =>
     client.delete(`/apps/${appId}/hr/feed/${postId}/comments/${commentId}`),
   // Feedback
-  giveFeedback: (appId: number, data: { to_user_ids: number[]; feedback_text: string; is_anonymous?: boolean; cycle_id?: number | null; type?: string }) =>
+  giveFeedback: (appId: number, data: { to_user_ids: number[]; feedback_text: string; is_anonymous?: boolean; cycle_id?: number | null; type?: string; frame_style?: string | null }) =>
     client.post(`/apps/${appId}/hr/feedback`, data),
   getReceivedFeedback: (appId: number) =>
     client.get(`/apps/${appId}/hr/feedback/received`),
@@ -466,7 +466,7 @@ export const employeesApi = (client: AxiosInstance) => ({
 
 // ── Appreciations ────────────────────────────────────────────
 export const appreciationsApi = (client: AxiosInstance) => ({
-  give: (appId: number, data: { to_user_ids: number[]; message: string; badge?: string }) =>
+  give: (appId: number, data: { to_user_ids: number[]; message: string; badge?: string; frame_style?: string | null }) =>
     client.post(`/apps/${appId}/hr/appreciations`, data),
   listReceived: (appId: number) =>
     client.get(`/apps/${appId}/hr/appreciations`),
