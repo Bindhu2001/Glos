@@ -18,7 +18,7 @@ import AlertModal, { alertRef } from '../components/common/AlertModal';
 import { navigationRef } from '../lib/navigationRef';
 import {
   registerForPushNotificationsAsync, addNotificationTapListener, checkLastNotificationResponse,
-  registerChatReplyCategory,
+  registerChatReplyCategory, registerBackgroundNotificationTask,
 } from '../lib/pushNotifications';
 import { syncNotifAuth, clearNotifAuth } from '../lib/notifAuthSync';
 
@@ -90,6 +90,8 @@ function Navigator() {
   useEffect(() => addNotificationTapListener(api), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { registerChatReplyCategory(); }, []);
+
+  useEffect(() => { registerBackgroundNotificationTask(); }, []);
 
   // Registers this device's push token once signed in — the mobile-side half
   // of push support. Only ever registers once per app session (ref guard)
