@@ -96,37 +96,14 @@ export async function registerBackgroundNotificationTask(): Promise<void> {
 // Without this, Expo suppresses the OS banner/sound for a notification that
 // arrives while the app is already open in the foreground — the app would
 // silently update its badge/in-app list with nothing visible to the user.
-//
-// Android chat_message notifications are the one exception: since those now
-// arrive as pure data messages (see push.js), onMessageReceived fires this
-// handler AND our BACKGROUND_NOTIFICATION_TASK above for the very same
-// message, in every app state (foreground included) — both would otherwise
-// try to build/present the exact same notification, racing each other and
-// occasionally leaving ChatActionReceiver's patch-in-actions polling unable
-// to find whichever one lands last. Suppressing this path for that one type
-// makes the background task the single, deterministic source of
-// presentation instead — everything else (iOS entirely, other Android
-// notification types) is untouched.
 Notifications.setNotificationHandler({
-  handleNotification: async (notification) => {
-    const data = notification.request.content.data as { type?: string } | undefined;
-    if (Platform.OS === 'android' && data?.type === 'chat_message') {
-      return {
-        shouldShowAlert: false,
-        shouldPlaySound: false,
-        shouldSetBadge: true,
-        shouldShowBanner: false,
-        shouldShowList: false,
-      };
-    }
-    return {
-      shouldShowAlert: true,
-      shouldPlaySound: true,
-      shouldSetBadge: true,
-      shouldShowBanner: true,
-      shouldShowList: true,
-    };
-  },
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
 });
 
 // Android requires an explicit channel (API 26+) or notifications are
