@@ -69,15 +69,7 @@ TaskManager.defineTask<Notifications.NotificationTaskPayload>(BACKGROUND_NOTIFIC
       content: {
         title: payload.title || 'New message',
         body: payload.body || '',
-        // __local marks this as our own explicitly-built notification, not
-        // the raw incoming push — scheduleNotificationAsync(trigger: null)
-        // is, under the hood, just another `receive()` call into the same
-        // handleNotification gate below (confirmed against
-        // ExpoSchedulingDelegate.scheduleNotification's trigger==null path),
-        // so without this marker the handler below can't tell "the message
-        // this task is about to build" apart from "the message this task
-        // already built" and would suppress both, showing nothing at all.
-        data: { type: payload.type, app_id: payload.app_id, conversation_id: payload.conversation_id, __local: true },
+        data: { type: payload.type, app_id: payload.app_id, conversation_id: payload.conversation_id },
         categoryIdentifier: CHAT_REPLY_CATEGORY,
       },
       // Same conversation replaces its own prior notification instead of
@@ -107,19 +99,18 @@ export async function registerBackgroundNotificationTask(): Promise<void> {
 //
 // Android chat_message notifications are the one exception: since those now
 // arrive as pure data messages (see push.js), onMessageReceived fires this
-// handler for the raw incoming push AND separately triggers our
-// BACKGROUND_NOTIFICATION_TASK above, in every app state (foreground
-// included) — both would otherwise try to build/present the exact same
-// notification, racing each other and occasionally leaving
-// ChatActionReceiver's patch-in-actions polling unable to find whichever
-// one lands last. Suppressing the *raw push's* attempt (not our own
-// re-presentation — see the __local check) makes the background task the
-// single, deterministic source of presentation instead — everything else
-// (iOS entirely, other Android notification types) is untouched.
+// handler AND our BACKGROUND_NOTIFICATION_TASK above for the very same
+// message, in every app state (foreground included) — both would otherwise
+// try to build/present the exact same notification, racing each other and
+// occasionally leaving ChatActionReceiver's patch-in-actions polling unable
+// to find whichever one lands last. Suppressing this path for that one type
+// makes the background task the single, deterministic source of
+// presentation instead — everything else (iOS entirely, other Android
+// notification types) is untouched.
 Notifications.setNotificationHandler({
   handleNotification: async (notification) => {
-    const data = notification.request.content.data as { type?: string; __local?: boolean } | undefined;
-    if (Platform.OS === 'android' && data?.type === 'chat_message' && !data?.__local) {
+    const data = notification.request.content.data as { type?: string } | undefined;
+    if (Platform.OS === 'android' && data?.type === 'chat_message') {
       return {
         shouldShowAlert: false,
         shouldPlaySound: false,
