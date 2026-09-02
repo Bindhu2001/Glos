@@ -1,6 +1,5 @@
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
-import * as TaskManager from 'expo-task-manager';
 import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -37,60 +36,6 @@ async function claimResponse(key: string): Promise<boolean> {
 
 async function markResponseProcessed(key: string): Promise<void> {
   try { await AsyncStorage.setItem(PROCESSED_RESPONSE_KEY, key); } catch { /* ignore */ }
-}
-
-const BACKGROUND_NOTIFICATION_TASK = 'BACKGROUND-NOTIFICATION-TASK';
-
-// Android-only half of the "show Reply/Mark-as-read even with the app fully
-// killed" fix: the backend sends chat/nudge pushes as pure FCM data messages
-// on Android (see push.js) specifically so the OS never auto-displays them
-// itself — a native `notification` block bypasses all app code (including
-// this) the moment the app is backgrounded/killed. But with no such block,
-// nothing shows up at all unless something builds one — this task is that
-// something. It runs in a headless JS context even with the app fully
-// killed, reads the chat payload out of the data message, and calls
-// scheduleNotificationAsync to present it locally with the chat_reply
-// category — from there it flows through the same ChatActionReceiver
-// patch-in-actions pipeline (native side) as any other notification.
-// Must be defined at module scope (not inside a component), since a
-// headless launch re-evaluates this module without ever mounting the app.
-// Only handles the "a notification arrived" case — a Reply/Mark-as-read
-// *response* also reaches this task (per Notifications.NotificationTaskPayload),
-// but that's already handled entirely natively by ChatActionReceiver with
-// the app killed, so it's ignored here to avoid double-handling it.
-TaskManager.defineTask<Notifications.NotificationTaskPayload>(BACKGROUND_NOTIFICATION_TASK, async ({ data, error }) => {
-  if (error || !data || 'actionIdentifier' in data) return;
-  try {
-    const raw = data.data?.dataString;
-    if (!raw) return;
-    const payload = JSON.parse(raw) as RoutableNotif & { title?: string; body?: string };
-    if (payload.type !== 'chat_message' || !payload.conversation_id) return;
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: payload.title || 'New message',
-        body: payload.body || '',
-        data: { type: payload.type, app_id: payload.app_id, conversation_id: payload.conversation_id },
-        categoryIdentifier: CHAT_REPLY_CATEGORY,
-      },
-      // Same conversation replaces its own prior notification instead of
-      // stacking a new one — matches the "tag" collapsing used elsewhere.
-      identifier: `chat_${payload.conversation_id}`,
-      trigger: null,
-    });
-  } catch {
-    // best-effort — a missed background notification isn't worth crashing the task over
-  }
-});
-
-// Must be called once at app startup (any app state resumes registration)
-// or the OS has nothing to invoke for a killed-app data message — safe to
-// call every launch, same idempotency as registerChatReplyCategory below.
-export async function registerBackgroundNotificationTask(): Promise<void> {
-  try {
-    await Notifications.registerTaskAsync(BACKGROUND_NOTIFICATION_TASK);
-  } catch {
-    // unsupported/unavailable on this device — foreground/alive-app delivery still works
-  }
 }
 
 // Without this, Expo suppresses the OS banner/sound for a notification that
