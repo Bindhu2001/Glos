@@ -731,12 +731,24 @@ export default function DashboardScreen() {
                   const onTrack = myRoutines.filter((r) => r.status === 'completed' || (r.status as string) === 'on_track').length;
                   const needsAttn = myRoutines.filter((r) => ['pending', 'incomplete', 'not_started'].includes(r.status)).length;
                   return (
-                    <View style={s.routineKpiRow}>
-                      <View style={s.routineKpiCell}><Text style={[s.routineKpiVal, { color: effColor }]}>{eff != null ? `${eff}%` : '—'}</Text><Text style={s.routineKpiLbl}>Efficiency</Text></View>
-                      <View style={s.routineKpiCell}><Text style={s.routineKpiVal}>{onTrack}</Text><Text style={s.routineKpiLbl}>On Track</Text></View>
-                      <View style={s.routineKpiCell}><Text style={[s.routineKpiVal, needsAttn > 0 && { color: colors.danger }]}>{needsAttn}</Text><Text style={s.routineKpiLbl}>Attention</Text></View>
-                      <View style={s.routineKpiCell}><Text style={s.routineKpiVal}>{myRoutines.length}</Text><Text style={s.routineKpiLbl}>Total</Text></View>
-                    </View>
+                    <>
+                      <View style={s.routineKpiRow}>
+                        <View style={s.routineKpiCell}><Text style={[s.routineKpiVal, { color: effColor }]}>{eff != null ? `${eff}%` : '—'}</Text><Text style={s.routineKpiLbl}>Efficiency</Text></View>
+                        <View style={s.routineKpiCell}><Text style={s.routineKpiVal}>{onTrack}</Text><Text style={s.routineKpiLbl}>On Track</Text></View>
+                        <View style={s.routineKpiCell}><Text style={[s.routineKpiVal, needsAttn > 0 && { color: colors.danger }]}>{needsAttn}</Text><Text style={s.routineKpiLbl}>Attention</Text></View>
+                        <View style={s.routineKpiCell}><Text style={s.routineKpiVal}>{myRoutines.length}</Text><Text style={s.routineKpiLbl}>Total</Text></View>
+                      </View>
+                      {/* Matches web's MyDashboard.jsx: same overall-efficiency bar
+                          the Areas tab already has above, just missing here before. */}
+                      {eff != null && (
+                        <View style={s.rtBarWrap}>
+                          <View style={s.rtBarTrack}>
+                            <View style={[s.rtBarFill, { width: `${eff}%` as any, backgroundColor: effColor }]} />
+                          </View>
+                          <Text style={s.rtBarLabel}>{eff}% overall</Text>
+                        </View>
+                      )}
+                    </>
                   );
                 })()}
                 {/* Matches web's MyDashboard.jsx exactly — 'not_applicable' (this
