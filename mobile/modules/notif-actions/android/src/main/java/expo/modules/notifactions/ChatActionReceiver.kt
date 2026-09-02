@@ -7,9 +7,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Build
-import android.os.Bundle
 import android.os.Parcelable
-import android.os.ResultReceiver
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -66,7 +64,6 @@ class ChatActionReceiver : BroadcastReceiver() {
     private const val NOTIFICATION_KEY = "notification"
     private const val NOTIFICATION_ACTION_KEY = "notificationAction"
     private const val USER_TEXT_RESPONSE_KEY = "userTextResponse"
-    private const val RECEIVER_KEY = "receiver"
 
     // Our own action-tap contract for the actions we patch in — deliberately
     // separate from expo's NOTIFICATION_EVENT shape above, since these
@@ -258,7 +255,16 @@ class ChatActionReceiver : BroadcastReceiver() {
   // ---- posting: forward to expo, then patch in the actions it drops ----
 
   private fun presentAndPatch(context: Context, intent: Intent) {
-    val receiver = getResultReceiver(intent)
+    // NOTE: deliberately not touching intent's RECEIVER_KEY/ResultReceiver here.
+    // forwardToExpo() below re-dispatches this SAME intent (receiver extra
+    // included) to expo's own NotificationsService, which acks it after
+    // presenting — exactly as it always did before this class intercepted
+    // PRESENT_TYPE at all. An earlier version of this method *also* sent its
+    // own ack in a `finally` block; expo's own ack then fired a second time
+    // on the same ResultReceiver, throwing PromiseAlreadySettledException on
+    // expo's NotificationsHandlerThread — an uncaught exception on a thread
+    // this class doesn't own, which crashed the whole app (not something any
+    // try/catch here could have prevented). Ack it once, by forwarding once.
     try {
       runCatching { intent.setExtrasClassLoader(context.classLoader) }
       val info = reflectChatInfo(intent)
@@ -275,8 +281,6 @@ class ChatActionReceiver : BroadcastReceiver() {
       }
     } catch (t: Throwable) {
       Log.w(TAG, "presentAndPatch failed: ${t.message}")
-    } finally {
-      receiver?.let { runCatching { it.send(0, Bundle()) } }
     }
   }
 
@@ -358,17 +362,6 @@ class ChatActionReceiver : BroadcastReceiver() {
       else -> PendingIntent.FLAG_IMMUTABLE
     }
     return PendingIntent.getBroadcast(context, "$actionId:$tag".hashCode(), intent, flags)
-  }
-
-  @Suppress("DEPRECATION")
-  private fun getResultReceiver(intent: Intent): ResultReceiver? = try {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-      intent.getParcelableExtra(RECEIVER_KEY, ResultReceiver::class.java)
-    } else {
-      intent.getParcelableExtra(RECEIVER_KEY)
-    }
-  } catch (t: Throwable) {
-    null
   }
 
   // ---- forwarding -----------------------------------------------------
