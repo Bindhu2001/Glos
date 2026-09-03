@@ -27,7 +27,7 @@
         "backgroundColor": "#1a56db"
       },
       "package": "com.greatleap.glos",
-      "versionCode": 5,
+      "versionCode": 6,
       "softwareKeyboardLayoutMode": "resize",
       "googleServicesFile": "./google-services.json"
     },
